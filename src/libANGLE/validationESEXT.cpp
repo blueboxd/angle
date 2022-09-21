@@ -3145,4 +3145,17 @@ bool ValidateShadingRateQCOM(const Context *context, angle::EntryPoint entryPoin
 
     return true;
 }
+
+bool ValidateLogicOpANGLE(const Context *context,
+                          angle::EntryPoint entryPoint,
+                          LogicalOperation opcodePacked)
+{
+    if (!context->getExtensions().logicOpANGLE)
+    {
+        context->validationError(entryPoint, GL_INVALID_OPERATION, kExtensionNotEnabled);
+        return false;
+    }
+
+    return ValidateLogicOpCommon(context, entryPoint, opcodePacked);
+}
 }  // namespace gl
