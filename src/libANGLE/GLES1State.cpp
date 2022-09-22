@@ -334,6 +334,12 @@ void GLES1State::multMatrix(const angle::Mat4 &m)
     currentMatrixStack().back() = currentMatrix.product(m);
 }
 
+void GLES1State::setLogicOpEnabled(bool enabled)
+{
+    setDirty(DIRTY_GLES1_LOGIC_OP);
+    mLogicOpEnabled = enabled;
+}
+
 void GLES1State::setLogicOp(LogicalOperation opcodePacked)
 {
     setDirty(DIRTY_GLES1_LOGIC_OP);
@@ -492,6 +498,16 @@ const TextureEnvironmentParameters &GLES1State::textureEnvironment(unsigned int 
 {
     assert(unit < mTextureEnvironments.size());
     return mTextureEnvironments[unit];
+}
+
+bool operator==(const TextureEnvironmentParameters &a, const TextureEnvironmentParameters &b)
+{
+    return a.tie() == b.tie();
+}
+
+bool operator!=(const TextureEnvironmentParameters &a, const TextureEnvironmentParameters &b)
+{
+    return !(a == b);
 }
 
 PointParameters &GLES1State::pointParameters()

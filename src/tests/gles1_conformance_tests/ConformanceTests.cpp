@@ -270,7 +270,16 @@ TEST_P(GLES1ConformanceTest, LineRaster)
 
 TEST_P(GLES1ConformanceTest, LogicOp)
 {
-    ANGLE_SKIP_TEST_IF(true);
+    // Only supported if logicOp or framebuffer fetch is supported by the backend.
+    //
+    // - Desktop GL: has logicOp support
+    // - GLES: has framebuffer fetch support
+    // - Vulkan: has logicOp support on desktop, and framebuffer fetch support otherwise.
+    //    * Non-coherent framebuffer fetch is disabled on Qualcomm due to app bugs, and coherent is
+    //      not supported.
+    ANGLE_SKIP_TEST_IF(!IsOpenGL() && !IsVulkan());
+    ANGLE_SKIP_TEST_IF(IsVulkan() && IsQualcomm());
+
     ASSERT_NE(CONFORMANCE_TEST_ERROR, LogicOpExec());
 }
 
@@ -281,7 +290,6 @@ TEST_P(GLES1ConformanceTest, Mip)
 
 TEST_P(GLES1ConformanceTest, MipLevels)
 {
-    ANGLE_SKIP_TEST_IF(true);
     ASSERT_NE(CONFORMANCE_TEST_ERROR, MipLevelsExec());
 }
 
@@ -323,7 +331,6 @@ TEST_P(GLES1ConformanceTest, PackedPixels)
 
 TEST_P(GLES1ConformanceTest, PointAntiAlias)
 {
-    ANGLE_SKIP_TEST_IF(true);
     ASSERT_NE(CONFORMANCE_TEST_ERROR, PointAntiAliasExec());
 }
 
@@ -344,7 +351,6 @@ TEST_P(GLES1ConformanceTest, ReadFormat)
 
 TEST_P(GLES1ConformanceTest, RescaleNormal)
 {
-    ANGLE_SKIP_TEST_IF(true);
     ASSERT_NE(CONFORMANCE_TEST_ERROR, RescaleNormalExec());
 }
 

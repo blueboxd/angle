@@ -763,6 +763,10 @@
 
 7625 WIN SWIFTSHADER : VulkanPerformanceCounterTest.EndXfbAfterRenderPassClosed/* = SKIP
 
+// ANGLE's FF shader computes lighting correctly
+6201 : LightsTest.Bug6201/* = SKIP
+6201 : LightsTest.*LitMesh/* = SKIP
+
 // Slow tests, should appear last in this file
 5076 : GLSLTest.VerifyMaxVertexUniformVectors* = TIMEOUT
 5076 : GLSLTest.VerifyMaxFragmentUniformVectors* = TIMEOUT
@@ -771,9 +775,3 @@
 // so that TIMEOUT expectations above don't override more precise SKIP expectations
 
 7629 VULKAN : EGLRobustnessTestES3.Context*ResetOnInvalidLocalShaderVariableAccess_ShareGroupAfterProgramCreation/* = SKIP
-
-// Renders incorrectly on ANGLE
-7598 VULKAN : FogBlendTest.ShadowEffect/* = SKIP
-7598 OpenGL : FogBlendTest.ShadowEffect/* = SKIP
-7598 GLES : FogBlendTest.ShadowEffect/* = SKIP
-7598 D3D11 : FogBlendTest.ShadowEffect/* = SKIP
