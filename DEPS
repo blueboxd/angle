@@ -561,7 +561,7 @@ deps = {
   },
 
   'third_party/SwiftShader': {
-    'url': '{swiftshader_git}/SwiftShader@bd8f8a8fc544ec74858ebe4dc0f38c7e3442fc4c',
+    'url': '{swiftshader_git}/SwiftShader@0dd58092b204b28ca3779cee3c8a9266be2a3e20',
     'condition': 'not build_with_chromium',
   },
 
@@ -581,7 +581,7 @@ deps = {
   },
 
   'third_party/vulkan-deps': {
-    'url': '{chromium_git}/vulkan-deps@90c58209c2e3643e1c5d7401e8e57a9f992fe77d',
+    'url': '{chromium_git}/vulkan-deps@9af2b2b2ef978f828eb9d0f9e92d472d86799160',
     'condition': 'not build_with_chromium',
   },
 
@@ -1221,6 +1221,16 @@ deps = {
         {
             'package': 'angle/traces/eight_ball_pool',
             'version': 'version:5',
+        },
+      ],
+      'dep_type': 'cipd',
+      'condition': 'checkout_angle_restricted_traces',
+  },
+  'src/tests/restricted_traces/eve_echoes': {
+      'packages': [
+        {
+            'package': 'angle/traces/eve_echoes',
+            'version': 'version:1',
         },
       ],
       'dep_type': 'cipd',
