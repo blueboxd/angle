@@ -109,6 +109,8 @@ void StateSetup(void);
 
 #define CONFORMANCE_TEST_ERROR (-1)
 
+#include "conform.h"
+
 #ifdef __cplusplus
 }
 
@@ -120,8 +122,8 @@ class GLES1ConformanceTest : public ANGLETest<>
   protected:
     GLES1ConformanceTest()
     {
-        setWindowWidth(48);
-        setWindowHeight(48);
+        setWindowWidth(WINDSIZEX);
+        setWindowHeight(WINDSIZEY);
         setConfigRedBits(8);
         setConfigGreenBits(8);
         setConfigBlueBits(8);
@@ -135,6 +137,13 @@ class GLES1ConformanceTest : public ANGLETest<>
         BufferSetup();
         EpsilonSetup();
         StateSetup();
+
+        machine = {};
+        // Default parameters taken from shell.c.  Verbosity is increased so test failures come with
+        // information.
+        machine.randSeed       = 1;
+        machine.verboseLevel   = 2;
+        machine.stateCheckFlag = GL_TRUE;
     }
 };
 
@@ -361,8 +370,8 @@ TEST_P(GLES1ConformanceTest, Scissor)
 
 TEST_P(GLES1ConformanceTest, SPClear)
 {
-    // http://g.co/anglebug/3863
-    ANGLE_SKIP_TEST_IF(IsVulkan());
+    // http://anglebug.com/7676
+    ANGLE_SKIP_TEST_IF(IsQualcomm() && IsVulkan());
     ASSERT_NE(CONFORMANCE_TEST_ERROR, SPClearExec());
 }
 
@@ -490,8 +499,6 @@ TEST_P(GLES1ConformanceTest, XFormHomogenous)
 
 TEST_P(GLES1ConformanceTest, ZBClear)
 {
-    // http://g.co/anglebug/3864
-    ANGLE_SKIP_TEST_IF(IsVulkan());
     ASSERT_NE(CONFORMANCE_TEST_ERROR, ZBClearExec());
 }
 

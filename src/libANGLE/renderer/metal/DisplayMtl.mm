@@ -27,7 +27,7 @@
 #include "libANGLE/renderer/metal/mtl_common.h"
 #include "libANGLE/renderer/metal/shaders/mtl_default_shaders_src_autogen.inc"
 #include "libANGLE/trace.h"
-#include "platform/Platform.h"
+#include "platform/PlatformMethods.h"
 
 #ifdef ANGLE_METAL_XCODE_BUILDS_SHADERS
 #    include "libANGLE/renderer/metal/mtl_default_shaders_compiled.inc"
@@ -1143,7 +1143,7 @@ void DisplayMtl::initializeFeatures()
 
     ANGLE_FEATURE_CONDITION((&mFeatures), multisampleColorFormatShaderReadWorkaround, isAMD());
     ANGLE_FEATURE_CONDITION((&mFeatures), copyIOSurfaceToNonIOSurfaceForReadOptimization,
-                            isIntel());
+                            isIntel() || isAMD());
     ANGLE_FEATURE_CONDITION((&mFeatures), copyTextureToBufferForReadOptimization, isAMD());
 
     ANGLE_FEATURE_CONDITION((&mFeatures), forceNonCSBaseMipmapGeneration, isIntel());
@@ -1153,7 +1153,7 @@ void DisplayMtl::initializeFeatures()
     bool defaultDirectToMetal = true;
     ANGLE_FEATURE_CONDITION((&mFeatures), directMetalGeneration, defaultDirectToMetal);
 
-    ANGLE_FEATURE_CONDITION((&mFeatures), unpackLastRowSeparatelyForPaddingInclusion, isAMD());
+    ANGLE_FEATURE_CONDITION((&mFeatures), uploadDataToIosurfacesWithStagingBuffers, isAMD());
 
     ApplyFeatureOverrides(&mFeatures, getState());
 #ifdef ANGLE_ENABLE_ASSERTS

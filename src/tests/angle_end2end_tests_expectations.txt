@@ -763,9 +763,8 @@
 
 7625 WIN SWIFTSHADER : VulkanPerformanceCounterTest.EndXfbAfterRenderPassClosed/* = SKIP
 
-// ANGLE's FF shader computes lighting correctly
-6201 : LightsTest.Bug6201/* = SKIP
-6201 : LightsTest.*LitMesh/* = SKIP
+// Flat shading bug with lighting
+6201 VULKAN : LightsTest.FlatLitMesh/* = SKIP
 
 // Slow tests, should appear last in this file
 5076 : GLSLTest.VerifyMaxVertexUniformVectors* = TIMEOUT
@@ -775,3 +774,6 @@
 // so that TIMEOUT expectations above don't override more precise SKIP expectations
 
 7629 VULKAN : EGLRobustnessTestES3.Context*ResetOnInvalidLocalShaderVariableAccess_ShareGroupAfterProgramCreation/* = SKIP
+
+// EXT_multisample_compatibility exposed for the sake of GLES1, but not implemented on Vulkan
+7657 VULKAN : EXTMultisampleCompatibilityTest.* = SKIP
