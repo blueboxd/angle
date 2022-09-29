@@ -37,7 +37,7 @@ vars = {
   'checkout_android_native_support': 'checkout_android or checkout_chromeos',
 
   # Version of Chromium our Chromium-based DEPS are mirrored from.
-  'chromium_revision': '401265d5586d6c58b7ccac5f4dc799ecdfbc3ed8',
+  'chromium_revision': '5c4a77844a5d8dbba25362b8ca122e387c462f03',
   # We never want to checkout chromium,
   # but need a dummy DEPS entry for the autoroller
   'dummy_checkout_chromium': False,
@@ -86,7 +86,7 @@ vars = {
 
   # the commit queue can handle CLs rolling Fuchsia sdk
   # and whatever else without interference from each other.
-  'fuchsia_version': 'version:9.20220926.3.1',
+  'fuchsia_version': 'version:9.20220928.2.1',
 
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling luci-go
@@ -126,12 +126,12 @@ vars = {
 deps = {
 
   'build': {
-    'url': '{chromium_git}/chromium/src/build.git@4c6e936292218e56a00c08599acb55e6cfcf327e',
+    'url': '{chromium_git}/chromium/src/build.git@9868184629470a1ee517073a4218b1742bd9c1f6',
     'condition': 'not build_with_chromium',
   },
 
   'buildtools': {
-    'url': '{chromium_git}/chromium/src/buildtools.git@7fca26a6d1f24d2898bceff41cd43c75493d0457',
+    'url': '{chromium_git}/chromium/src/buildtools.git@133d7cdb35bf80c4a17bd4977bfc385ffeb4743d',
     'condition': 'not build_with_chromium',
   },
 
@@ -163,7 +163,7 @@ deps = {
   },
 
   'buildtools/third_party/libc++/trunk': {
-    'url': '{chromium_git}/external/github.com/llvm/llvm-project/libcxx.git@c23f69f322353518166ec969533b64dfb2a1cf98',
+    'url': '{chromium_git}/external/github.com/llvm/llvm-project/libcxx.git@11bdb46a42a9947797fb273821769a59fa2becbb',
     'condition': 'not build_with_chromium',
   },
 
@@ -189,12 +189,12 @@ deps = {
   },
 
   'testing': {
-    'url': '{chromium_git}/chromium/src/testing@cddecff250725136464acb2294e50401e4a8f1e9',
+    'url': '{chromium_git}/chromium/src/testing@b1c37f6f10f362aa276faf5528e999514a0f7353',
     'condition': 'not build_with_chromium',
   },
 
   'third_party/abseil-cpp': {
-    'url': '{chromium_git}/chromium/src/third_party/abseil-cpp@fa30a0badb7b13a9cfa9c885c21377028487e03a',
+    'url': '{chromium_git}/chromium/src/third_party/abseil-cpp@751b72a8c1370f4586f5f726e396262f98f4dcdb',
     'condition': 'not build_with_chromium',
   },
 
@@ -240,7 +240,7 @@ deps = {
       'packages': [
           {
                'package': 'chromium/third_party/android_build_tools/lint',
-               'version': '5VEarWAn_3EKCg2sfWwuJwgimmh4wV86NgyCEVR-1GYC',
+               'version': 'DO1bMH_JFEfZXSkAknIs7AfgNh4IwLtJaeMJTdzfuJwC',
           },
       ],
       'condition': 'checkout_android and not build_with_chromium',
@@ -251,7 +251,7 @@ deps = {
       'packages': [
           {
                'package': 'chromium/third_party/android_build_tools/manifest_merger',
-               'version': 'XhGZiPc3z6aGVUr2C_t4rtWPdqtON_KEjj1eAl4ubgAC',
+               'version': '0cYQOUjN8K9fAtfcm6Vwi30XcO6mPJU_5v4-pUkBg0sC',
           },
       ],
       'condition': 'checkout_android and not build_with_chromium',
@@ -259,7 +259,7 @@ deps = {
   },
 
   'third_party/android_deps': {
-    'url': '{chromium_git}/chromium/src/third_party/android_deps@47a0ef5311538ad849a7d3b5b646aa2154dbfb0e',
+    'url': '{chromium_git}/chromium/src/third_party/android_deps@e594b95790de4c234092a2410986e3f5bbd6adb0',
     'condition': 'checkout_android and not build_with_chromium',
   },
 
@@ -362,7 +362,7 @@ deps = {
   },
 
   'third_party/depot_tools': {
-    'url': '{chromium_git}/chromium/tools/depot_tools.git@9ef048cd501f4e52fcb8f29f93c063ed5955175e',
+    'url': '{chromium_git}/chromium/tools/depot_tools.git@e3ed6a8e015bada7f2708d990b5e8c4d01bcf047',
     'condition': 'not build_with_chromium',
   },
 
@@ -539,7 +539,7 @@ deps = {
       'packages': [
           {
               'package': 'chromium/third_party/r8',
-              'version': 'xSIcikL1PDal0LfVuHAK-q1NOalVeNp3x9KaFZ8Yju4C',
+              'version': 'ph4ji7m0nOipD5V48QjtM23WPzpNxYAOFUzDJ6cHBXUC',
           },
       ],
       'condition': 'checkout_android and not build_with_chromium',
@@ -561,7 +561,7 @@ deps = {
   },
 
   'third_party/SwiftShader': {
-    'url': '{swiftshader_git}/SwiftShader@49e4cc58722e3ca5759b34143992dca9eb4afd11',
+    'url': '{swiftshader_git}/SwiftShader@52e0004a627b2d7f980cad442b5f55569727bfd5',
     'condition': 'not build_with_chromium',
   },
 
@@ -596,7 +596,7 @@ deps = {
   },
 
   'third_party/zlib': {
-    'url': '{chromium_git}/chromium/src/third_party/zlib@8f22e90f007a7dd466b426513725c13191248315',
+    'url': '{chromium_git}/chromium/src/third_party/zlib@cbb6b98dc2ff90596044efe2572c3c1f7abf1010',
     'condition': 'not build_with_chromium',
   },
 
@@ -637,7 +637,7 @@ deps = {
   },
 
   'tools/mb': {
-    'url': '{chromium_git}/chromium/src/tools/mb@0c9138dee3594b645e97dbb02e922f60b9c48ff4',
+    'url': '{chromium_git}/chromium/src/tools/mb@92b729fbc4fc0c94d6c618e4a4e31c99774a3c34',
     'condition': 'not build_with_chromium',
   },
 
@@ -652,7 +652,7 @@ deps = {
   },
 
   'tools/perf': {
-    'url': '{chromium_git}/chromium/src/tools/perf@9a43283e093c100b3a392513f026ea5bbf4fc744',
+    'url': '{chromium_git}/chromium/src/tools/perf@d88a81a644f5f9e42e001a5c9ad0db09f924363b',
     'condition': 'not build_with_chromium',
   },
 
@@ -1346,6 +1346,16 @@ deps = {
       'dep_type': 'cipd',
       'condition': 'checkout_angle_restricted_traces',
   },
+  'src/tests/restricted_traces/gacha_club': {
+      'packages': [
+        {
+            'package': 'angle/traces/gacha_club',
+            'version': 'version:1',
+        },
+      ],
+      'dep_type': 'cipd',
+      'condition': 'checkout_angle_restricted_traces',
+  },
   'src/tests/restricted_traces/gardenscapes': {
       'packages': [
         {
@@ -2030,6 +2040,16 @@ deps = {
       'packages': [
         {
             'package': 'angle/traces/shadowgun_legends',
+            'version': 'version:1',
+        },
+      ],
+      'dep_type': 'cipd',
+      'condition': 'checkout_angle_restricted_traces',
+  },
+  'src/tests/restricted_traces/sky_force_reloaded': {
+      'packages': [
+        {
+            'package': 'angle/traces/sky_force_reloaded',
             'version': 'version:1',
         },
       ],
