@@ -526,7 +526,20 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessages[] = {
      "Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
      "prior_usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_WRITE, "
      "write_barriers: 0"},
-
+    // From: TracePerfTest.Run/vulkan_life_is_strange http://anglebug.com/7711
+    {"SYNC-HAZARD-WRITE-AFTER-READ",
+     "vkCmdEndRenderPass: Hazard WRITE_AFTER_READ in subpass 0 for attachment 1 "
+     "depth aspect during store with storeOp VK_ATTACHMENT_STORE_OP_DONT_CARE. "
+     "Access info (usage: SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, "
+     "prior_usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
+     "read_barriers: VK_PIPELINE_STAGE_2_NONE, command: vkCmdDrawIndexed,"},
+    // From: TracePerfTest.Run/vulkan_life_is_strange http://anglebug.com/7711
+    {"SYNC-HAZARD-READ-AFTER-WRITE",
+     "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, "
+     "imageLayout: VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL",
+     "usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
+     "prior_usage: SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, "
+     "write_barriers: 0, command: vkCmdEndRenderPass"},
 };
 
 // Messages that shouldn't be generated if storeOp=NONE is supported, otherwise they are expected.
@@ -1866,10 +1879,13 @@ angle::Result RendererVk::initializeMemoryAllocator(DisplayVk *displayVk)
         static_cast<size_t>(mPhysicalDeviceProperties.limits.minMemoryMapAlignment);
     ASSERT(gl::isPow2(mPhysicalDeviceProperties.limits.nonCoherentAtomSize));
     ASSERT(gl::isPow2(mPhysicalDeviceProperties.limits.optimalBufferCopyOffsetAlignment));
+    // Usually minTexelBufferOffsetAlignment is much smaller than  nonCoherentAtomSize
+    ASSERT(gl::isPow2(mPhysicalDeviceProperties.limits.minTexelBufferOffsetAlignment));
     mStagingBufferAlignment = std::max(
         {mStagingBufferAlignment,
          static_cast<size_t>(mPhysicalDeviceProperties.limits.optimalBufferCopyOffsetAlignment),
-         static_cast<size_t>(mPhysicalDeviceProperties.limits.nonCoherentAtomSize)});
+         static_cast<size_t>(mPhysicalDeviceProperties.limits.nonCoherentAtomSize),
+         static_cast<size_t>(mPhysicalDeviceProperties.limits.minTexelBufferOffsetAlignment)});
     ASSERT(gl::isPow2(mStagingBufferAlignment));
 
     // Device local vertex conversion buffer
@@ -3903,6 +3919,25 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsTimestampSurfaceAttribute,
                             IsAndroid() && ExtensionFound(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME,
                                                           deviceExtensionNames));
+
+    // 1) host vk driver does not natively support ETC format.
+    // 2) host vk driver supports BC format.
+    // 3) host vk driver supports subgroup instructions: clustered, shuffle.
+    //    * This limitation can be removed if necessary.
+    // 4) host vk driver has maxTexelBufferSize >= 64M.
+    //    * Usually on desktop device the limit is more than 128M. we may switch to dynamic
+    //    decide cpu or gpu upload texture based on texture size.
+    constexpr VkSubgroupFeatureFlags kRequiredSubgroupOp =
+        VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_CLUSTERED_BIT;
+    static constexpr bool kSupportTranscodeEtcToBc = false;
+    static constexpr uint32_t kMaxTexelBufferSize  = 64 * 1024 * 1024;
+    const VkPhysicalDeviceLimits &limitsVk         = mPhysicalDeviceProperties.limits;
+    ANGLE_FEATURE_CONDITION(&mFeatures, supportsComputeTranscodeEtcToBc,
+                            !mPhysicalDeviceFeatures.textureCompressionETC2 &&
+                                kSupportTranscodeEtcToBc &&
+                                (mSubgroupProperties.supportedOperations & kRequiredSubgroupOp) ==
+                                    kRequiredSubgroupOp &&
+                                (limitsVk.maxTexelBufferElements >= kMaxTexelBufferSize));
 
     // Allow passthrough of EGL colorspace attributes on Android platform and for vendors that
     // are known to support wide color gamut.

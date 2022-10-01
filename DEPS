@@ -37,13 +37,13 @@ vars = {
   'checkout_android_native_support': 'checkout_android or checkout_chromeos',
 
   # Version of Chromium our Chromium-based DEPS are mirrored from.
-  'chromium_revision': '5c4a77844a5d8dbba25362b8ca122e387c462f03',
+  'chromium_revision': '82e52bf17d2f82e23f459b886a8c37297e60bb24',
   # We never want to checkout chromium,
   # but need a dummy DEPS entry for the autoroller
   'dummy_checkout_chromium': False,
 
   # Current revision of VK-GL-CTS (a.k.a dEQP).
-  'vk_gl_cts_revision': '7bbdc916a41493523c9f28d8bce725ca9a2fdc6b',
+  'vk_gl_cts_revision': '3739dbc26ccf9d85007b20a47176d4c8fcedbd1c',
 
   # Current revision of googletest.
   # Note: this dep cannot be auto-rolled b/c of nesting.
@@ -86,7 +86,7 @@ vars = {
 
   # the commit queue can handle CLs rolling Fuchsia sdk
   # and whatever else without interference from each other.
-  'fuchsia_version': 'version:9.20220928.2.1',
+  'fuchsia_version': 'version:9.20220929.2.1',
 
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling luci-go
@@ -126,12 +126,12 @@ vars = {
 deps = {
 
   'build': {
-    'url': '{chromium_git}/chromium/src/build.git@9868184629470a1ee517073a4218b1742bd9c1f6',
+    'url': '{chromium_git}/chromium/src/build.git@2d2482275fd42c4bd89ba741299161bad6a231c9',
     'condition': 'not build_with_chromium',
   },
 
   'buildtools': {
-    'url': '{chromium_git}/chromium/src/buildtools.git@133d7cdb35bf80c4a17bd4977bfc385ffeb4743d',
+    'url': '{chromium_git}/chromium/src/buildtools.git@cccaf48c82bcf4ddafa6f8aa9f06014a1ef434bf',
     'condition': 'not build_with_chromium',
   },
 
@@ -163,7 +163,7 @@ deps = {
   },
 
   'buildtools/third_party/libc++/trunk': {
-    'url': '{chromium_git}/external/github.com/llvm/llvm-project/libcxx.git@11bdb46a42a9947797fb273821769a59fa2becbb',
+    'url': '{chromium_git}/external/github.com/llvm/llvm-project/libcxx.git@5ee02b299379896f90faa88f576be98c61156f26',
     'condition': 'not build_with_chromium',
   },
 
@@ -189,7 +189,7 @@ deps = {
   },
 
   'testing': {
-    'url': '{chromium_git}/chromium/src/testing@b1c37f6f10f362aa276faf5528e999514a0f7353',
+    'url': '{chromium_git}/chromium/src/testing@94b0e722f5871f187c0f8a1f6268914f3864cfdb',
     'condition': 'not build_with_chromium',
   },
 
@@ -259,7 +259,7 @@ deps = {
   },
 
   'third_party/android_deps': {
-    'url': '{chromium_git}/chromium/src/third_party/android_deps@e594b95790de4c234092a2410986e3f5bbd6adb0',
+    'url': '{chromium_git}/chromium/src/third_party/android_deps@b44f27b1377dcc950b88df31a4a58e35e907141c',
     'condition': 'checkout_android and not build_with_chromium',
   },
 
@@ -539,7 +539,7 @@ deps = {
       'packages': [
           {
               'package': 'chromium/third_party/r8',
-              'version': 'ph4ji7m0nOipD5V48QjtM23WPzpNxYAOFUzDJ6cHBXUC',
+              'version': 'YRMWFybrAcIrgAxXJdeWJ3Qn_MbhEUGC5vZAcOAHnJIC',
           },
       ],
       'condition': 'checkout_android and not build_with_chromium',
@@ -561,7 +561,7 @@ deps = {
   },
 
   'third_party/SwiftShader': {
-    'url': '{swiftshader_git}/SwiftShader@4dbbcd05ce72795a0fff806562e7a4bc519deee3',
+    'url': '{swiftshader_git}/SwiftShader@666fb5f89f5a17e4f730fb0c93cc89bb7365250b',
     'condition': 'not build_with_chromium',
   },
 
@@ -581,7 +581,7 @@ deps = {
   },
 
   'third_party/vulkan-deps': {
-    'url': '{chromium_git}/vulkan-deps@9af2b2b2ef978f828eb9d0f9e92d472d86799160',
+    'url': '{chromium_git}/vulkan-deps@cce3d29fab2be8318c2753a014c0a2a7d477daad',
     'condition': 'not build_with_chromium',
   },
 
@@ -606,7 +606,7 @@ deps = {
   },
 
   'tools/clang': {
-    'url': '{chromium_git}/chromium/src/tools/clang.git@209fff0a4f6b87435669c94b4aa6ed4da73bdbf5',
+    'url': '{chromium_git}/chromium/src/tools/clang.git@c398c4a9c1a3c9ffdb431e075b8ec0bc61747c48',
     'condition': 'not build_with_chromium',
   },
 
@@ -637,7 +637,7 @@ deps = {
   },
 
   'tools/mb': {
-    'url': '{chromium_git}/chromium/src/tools/mb@92b729fbc4fc0c94d6c618e4a4e31c99774a3c34',
+    'url': '{chromium_git}/chromium/src/tools/mb@faa6164498416bbca3684af8b1282d9545a27105',
     'condition': 'not build_with_chromium',
   },
 
@@ -652,7 +652,7 @@ deps = {
   },
 
   'tools/perf': {
-    'url': '{chromium_git}/chromium/src/tools/perf@d88a81a644f5f9e42e001a5c9ad0db09f924363b',
+    'url': '{chromium_git}/chromium/src/tools/perf@3cb8993fff7291783f6ac4a38bb988205f262ac4',
     'condition': 'not build_with_chromium',
   },
 
@@ -1096,6 +1096,16 @@ deps = {
       'dep_type': 'cipd',
       'condition': 'checkout_angle_restricted_traces',
   },
+  'src/tests/restricted_traces/darkness_rises': {
+      'packages': [
+        {
+            'package': 'angle/traces/darkness_rises',
+            'version': 'version:1',
+        },
+      ],
+      'dep_type': 'cipd',
+      'condition': 'checkout_angle_restricted_traces',
+  },
   'src/tests/restricted_traces/dead_by_daylight': {
       'packages': [
         {
@@ -1521,6 +1531,16 @@ deps = {
         {
             'package': 'angle/traces/lego_legacy',
             'version': 'version:5',
+        },
+      ],
+      'dep_type': 'cipd',
+      'condition': 'checkout_angle_restricted_traces',
+  },
+  'src/tests/restricted_traces/life_is_strange': {
+      'packages': [
+        {
+            'package': 'angle/traces/life_is_strange',
+            'version': 'version:1',
         },
       ],
       'dep_type': 'cipd',
@@ -3745,7 +3765,18 @@ deps = {
       'packages': [
           {
               'package': 'chromium/third_party/android_deps/libs/org_checkerframework_checker_qual',
-              'version': 'version:2@3.22.1.cr1',
+              'version': 'version:2@3.25.0.cr1',
+          },
+      ],
+      'condition': 'checkout_android and not build_with_chromium',
+      'dep_type': 'cipd',
+  },
+
+  'third_party/android_deps/libs/org_checkerframework_checker_util': {
+      'packages': [
+          {
+              'package': 'chromium/third_party/android_deps/libs/org_checkerframework_checker_util',
+              'version': 'version:2@3.25.0.cr1',
           },
       ],
       'condition': 'checkout_android and not build_with_chromium',
