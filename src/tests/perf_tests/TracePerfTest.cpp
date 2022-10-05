@@ -1312,6 +1312,21 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         addExtensionPrerequisite("GL_EXT_texture_cube_map_array");
     }
 
+    if (traceNameIs("survivor_io"))
+    {
+        if (IsWindows() && IsNVIDIA() && mParams->isVulkan() && !mParams->isSwiftshader())
+        {
+            skipTest("http://anglebug.com/7733 Renders incorrectly on Nvidia Windows");
+        }
+
+        if (IsWindows() && IsIntel() && mParams->driver != GLESDriverType::AngleEGL)
+        {
+            skipTest(
+                "http://anglebug.com/7737 Programs fail to link on Intel Windows native driver, "
+                "citing MAX_UNIFORM_LOCATIONS exceeded");
+        }
+    }
+
     // glDebugMessageControlKHR and glDebugMessageCallbackKHR crash on ARM GLES1.
     if (IsARM() && mParams->traceInfo.contextClientMajorVersion == 1)
     {
@@ -1342,8 +1357,8 @@ void TracePerfTest::initializeBenchmark()
     std::string traceName = traceNameStr.str();
     mTraceLibrary.reset(new TraceLibrary(traceName.c_str()));
 
-    trace_angle::LoadEGL(TraceLoadProc);
-    trace_angle::LoadGLES(TraceLoadProc);
+    LoadTraceEGL(TraceLoadProc);
+    LoadTraceGLES(TraceLoadProc);
 
     if (!mTraceLibrary->valid())
     {
