@@ -708,9 +708,19 @@ DebugMessageReport ShouldReportDebugMessage(RendererVk *renderer,
             continue;
         }
 
-        // If the error is due to exposing coherent framebuffer fetch, but framebuffer fetch has not
-        // been used by the application, report it.
-        if (msg.isDueToNonConformantCoherentFramebufferFetch && !isFramebufferFetchUsed)
+        // If the error is due to exposing coherent framebuffer fetch (without
+        // VK_EXT_rasterization_order_attachment_access), but framebuffer fetch has not been used by
+        // the application, report it.
+        //
+        // Note that currently syncval doesn't support the
+        // VK_EXT_rasterization_order_attachment_access extension, so the syncval messages would
+        // continue to be produced despite the extension.
+        constexpr bool kSyncValSupportsRasterizationOrderExtension = false;
+        const bool hasRasterizationOrderExtension =
+            renderer->getFeatures().supportsRasterizationOrderAttachmentAccess.enabled &&
+            kSyncValSupportsRasterizationOrderExtension;
+        if (msg.isDueToNonConformantCoherentFramebufferFetch &&
+            (!isFramebufferFetchUsed || hasRasterizationOrderExtension))
         {
             return DebugMessageReport::Print;
         }
@@ -1786,17 +1796,17 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
     }
     ANGLE_VK_CHECK(displayVk, queueFamilyMatchCount > 0, VK_ERROR_INITIALIZATION_FAILED);
 
+    // Store the physical device memory properties so we can find the right memory pools.
+    mMemoryProperties.init(mPhysicalDevice);
+    ANGLE_VK_CHECK(displayVk, mMemoryProperties.getMemoryTypeCount() > 0,
+                   VK_ERROR_INITIALIZATION_FAILED);
+
     // If only one queue family, go ahead and initialize the device. If there is more than one
     // queue, we'll have to wait until we see a WindowSurface to know which supports present.
     if (queueFamilyMatchCount == 1)
     {
         ANGLE_TRY(initializeDevice(displayVk, firstGraphicsQueueFamily));
     }
-
-    // Store the physical device memory properties so we can find the right memory pools.
-    mMemoryProperties.init(mPhysicalDevice);
-    ANGLE_VK_CHECK(displayVk, mMemoryProperties.getMemoryTypeCount() > 0,
-                   VK_ERROR_INITIALIZATION_FAILED);
 
     ANGLE_TRY(initializeMemoryAllocator(displayVk));
 
@@ -2047,6 +2057,10 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
     mPipelineRobustnessFeatures.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_ROBUSTNESS_FEATURES_EXT;
 
+    mRasterizationOrderAttachmentAccessFeatures = {};
+    mRasterizationOrderAttachmentAccessFeatures.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_FEATURES_EXT;
+
     if (!vkGetPhysicalDeviceProperties2KHR || !vkGetPhysicalDeviceFeatures2KHR)
     {
         return;
@@ -2234,6 +2248,18 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
         vk::AddToPNextChain(&deviceFeatures, &mPipelineRobustnessFeatures);
     }
 
+    // The EXT and ARM versions are interchangeable. The structs and enums alias each other.
+    if (ExtensionFound(VK_EXT_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_EXTENSION_NAME,
+                       deviceExtensionNames))
+    {
+        vk::AddToPNextChain(&deviceFeatures, &mRasterizationOrderAttachmentAccessFeatures);
+    }
+    else if (ExtensionFound(VK_ARM_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_EXTENSION_NAME,
+                            deviceExtensionNames))
+    {
+        vk::AddToPNextChain(&deviceFeatures, &mRasterizationOrderAttachmentAccessFeatures);
+    }
+
     vkGetPhysicalDeviceFeatures2KHR(mPhysicalDevice, &deviceFeatures);
     vkGetPhysicalDeviceProperties2KHR(mPhysicalDevice, &deviceProperties);
 
@@ -2272,6 +2298,7 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
     mFragmentShaderInterlockFeatures.pNext                  = nullptr;
     mImagelessFramebufferFeatures.pNext                     = nullptr;
     mPipelineRobustnessFeatures.pNext                       = nullptr;
+    mRasterizationOrderAttachmentAccessFeatures.pNext       = nullptr;
 }
 
 angle::Result RendererVk::initializeDevice(DisplayVk *displayVk, uint32_t queueFamilyIndex)
@@ -2807,6 +2834,24 @@ angle::Result RendererVk::initializeDevice(DisplayVk *displayVk, uint32_t queueF
         vk::AddToPNextChain(&mEnabledFeatures, &mPipelineRobustnessFeatures);
     }
 
+    if (getFeatures().supportsRasterizationOrderAttachmentAccess.enabled)
+    {
+        if (ExtensionFound(VK_EXT_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_EXTENSION_NAME,
+                           deviceExtensionNames))
+        {
+            mEnabledDeviceExtensions.push_back(
+                VK_EXT_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_EXTENSION_NAME);
+        }
+        else
+        {
+            ASSERT(ExtensionFound(VK_ARM_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_EXTENSION_NAME,
+                                  deviceExtensionNames));
+            mEnabledDeviceExtensions.push_back(
+                VK_ARM_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_EXTENSION_NAME);
+        }
+        vk::AddToPNextChain(&mEnabledFeatures, &mRasterizationOrderAttachmentAccessFeatures);
+    }
+
     mCurrentQueueFamilyIndex = queueFamilyIndex;
 
     vk::QueueFamily queueFamily;
@@ -3293,6 +3338,38 @@ bool RendererVk::canSupportFragmentShadingRate(const vk::ExtensionNameList &devi
            mSupportedFragmentShadingRates.test(gl::ShadingRate::_2x2);
 }
 
+bool RendererVk::canPreferDeviceLocalMemoryHostVisible(VkPhysicalDeviceType deviceType)
+{
+    if (deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU)
+    {
+        const vk::MemoryProperties &memoryProperties = getMemoryProperties();
+        static constexpr VkMemoryPropertyFlags kHostVisiableDeviceLocalFlags =
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+        VkDeviceSize minHostVisiableDeviceLocalHeapSize = std::numeric_limits<VkDeviceSize>::max();
+        VkDeviceSize maxDeviceLocalHeapSize             = 0;
+        for (uint32_t i = 0; i < memoryProperties.getMemoryTypeCount(); ++i)
+        {
+            if ((memoryProperties.getMemoryType(i).propertyFlags &
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0)
+            {
+                maxDeviceLocalHeapSize =
+                    std::max(maxDeviceLocalHeapSize, memoryProperties.getHeapSizeForMemoryType(i));
+            }
+            if ((memoryProperties.getMemoryType(i).propertyFlags & kHostVisiableDeviceLocalFlags) ==
+                kHostVisiableDeviceLocalFlags)
+            {
+                minHostVisiableDeviceLocalHeapSize =
+                    std::min(minHostVisiableDeviceLocalHeapSize,
+                             memoryProperties.getHeapSizeForMemoryType(i));
+            }
+        }
+        return minHostVisiableDeviceLocalHeapSize != std::numeric_limits<VkDeviceSize>::max() &&
+               minHostVisiableDeviceLocalHeapSize >=
+                   static_cast<VkDeviceSize>(maxDeviceLocalHeapSize * 0.8);
+    }
+    return deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+}
+
 void RendererVk::initFeatures(DisplayVk *displayVk,
                               const vk::ExtensionNameList &deviceExtensionNames)
 {
@@ -3338,9 +3415,6 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // the device architecture for optimal performance on both.
     const bool isImmediateModeRenderer = isNvidia || isAMD || isIntel || isSamsung || isSwiftShader;
     const bool isTileBasedRenderer     = isARM || isPowerVR || isQualcomm || isBroadcom;
-
-    bool isDiscreteGPU =
-        mPhysicalDeviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
     // Make sure all known architectures are accounted for.
     if (!isImmediateModeRenderer && !isTileBasedRenderer && !isMockICDEnabled())
@@ -3707,7 +3781,10 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
         &mFeatures, supportsImageFormatList,
         ExtensionFound(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME, deviceExtensionNames));
 
-    // Feature disabled due to driver bugs:
+    // Emulation of GL_EXT_multisampled_render_to_texture is only really useful on tiling hardware,
+    // but is exposed on any configuration deployed on Android, such as Samsung's AMD-based GPU.
+    //
+    // During testing, it was also discovered that emulation triggers bugs on some platforms:
     //
     // - Swiftshader:
     //   * Failure on mac: http://anglebug.com/4937
@@ -3715,8 +3792,6 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // - Intel on windows: http://anglebug.com/5032
     // - AMD on windows: http://crbug.com/1132366
     //
-    // Note that emulation of GL_EXT_multisampled_render_to_texture is only really useful on tiling
-    // hardware, but is exposed on desktop platforms purely to increase testing coverage.
     const bool supportsIndependentDepthStencilResolve =
         mFeatures.supportsDepthStencilResolve.enabled &&
         mDepthStencilResolveProperties.independentResolveNone == VK_TRUE;
@@ -3724,8 +3799,7 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
         &mFeatures, enableMultisampledRenderToTexture,
         mFeatures.supportsMultisampledRenderToSingleSampled.enabled ||
             mFeatures.supportsMultisampledRenderToSingleSampledGOOGLEX.enabled ||
-            (supportsIndependentDepthStencilResolve && !isSwiftShader &&
-             !(IsWindows() && (isIntel || isAMD))));
+            (supportsIndependentDepthStencilResolve && (isTileBasedRenderer || isSamsung)));
 
     // Currently we enable cube map arrays based on the imageCubeArray Vk feature.
     // TODO: Check device caps for full cube map array support. http://anglebug.com/5143
@@ -3778,11 +3852,17 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // natively anyway.
     ANGLE_FEATURE_CONDITION(&mFeatures, overrideSurfaceFormatRGB8ToRGBA8, true);
 
+    ANGLE_FEATURE_CONDITION(
+        &mFeatures, supportsRasterizationOrderAttachmentAccess,
+        mRasterizationOrderAttachmentAccessFeatures.rasterizationOrderColorAttachmentAccess ==
+            VK_TRUE);
+
     // http://anglebug.com/6872
     // On ARM hardware, framebuffer-fetch-like behavior on Vulkan is already coherent, so we can
     // expose the coherent version of the GL extension despite unofficial Vulkan support.
-    ANGLE_FEATURE_CONDITION(&mFeatures, supportsShaderFramebufferFetch,
-                            (IsAndroid() && isARM) || isSwiftShader);
+    ANGLE_FEATURE_CONDITION(
+        &mFeatures, supportsShaderFramebufferFetch,
+        (IsAndroid() && isARM) || mFeatures.supportsRasterizationOrderAttachmentAccess.enabled);
 
     // Important games are not checking supported extensions properly, and are confusing the
     // GL_EXT_shader_framebuffer_fetch_non_coherent as the GL_EXT_shader_framebuffer_fetch
@@ -3845,7 +3925,9 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
 
     // For discrete GPUs, most of device local memory is host invisible. We should not force the
     // host visible flag for them and result in allocation failure.
-    ANGLE_FEATURE_CONDITION(&mFeatures, preferDeviceLocalMemoryHostVisible, !isDiscreteGPU);
+    ANGLE_FEATURE_CONDITION(
+        &mFeatures, preferDeviceLocalMemoryHostVisible,
+        canPreferDeviceLocalMemoryHostVisible(mPhysicalDeviceProperties.deviceType));
 
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsExtendedDynamicState,
                             mExtendedDynamicStateFeatures.extendedDynamicState == VK_TRUE);
