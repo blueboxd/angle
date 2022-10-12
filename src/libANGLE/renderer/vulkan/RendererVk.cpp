@@ -2908,6 +2908,13 @@ angle::Result RendererVk::initializeDevice(DisplayVk *displayVk, uint32_t queueF
     volkLoadDevice(mDevice);
 #endif  // defined(ANGLE_SHARED_LIBVULKAN)
 
+    // crbug:1273344 In some driver we are seeing vkResetQueryPoolEXT is null but feature is
+    // enabled. Disable the feature flag in this case
+    if (mFeatures.supportsHostQueryReset.enabled && vkResetQueryPoolEXT == nullptr)
+    {
+        mFeatures.supportsHostQueryReset.enabled = false;
+    }
+
     vk::DeviceQueueMap graphicsQueueMap =
         queueFamily.initializeQueueMap(mDevice, enableProtectedContent, 0, queueCount);
 
@@ -3407,6 +3414,13 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     const ARMDriverVersion armDriverVersion =
         ParseARMDriverVersion(mPhysicalDeviceProperties.driverVersion);
 
+    angle::VersionInfo nvidiaVersion;
+    if (isNvidia)
+    {
+        nvidiaVersion =
+            angle::ParseNvidiaDriverVersion(this->mPhysicalDeviceProperties.driverVersion);
+    }
+
     // Classify devices based on general architecture:
     //
     // - IMR (Immediate-Mode Rendering) devices generally progress through draw calls once and use
@@ -3451,9 +3465,12 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsProtectedMemory,
                             (mProtectedMemoryFeatures.protectedMemory == VK_TRUE) && !isARM);
 
-    // http://anglebug.com/6692
+    // Workaround for nvidia earlier version driver which appears having a bug that
+    // vkGetQueryPoolResult() with VK_QUERY_RESULT_WAIT_BIT may result in incorrect result. In that
+    // case we force into CPU wait for submission to complete. http://anglebug.com/6692
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsHostQueryReset,
-                            (mHostQueryResetFeatures.hostQueryReset == VK_TRUE));
+                            (mHostQueryResetFeatures.hostQueryReset == VK_TRUE &&
+                             !(isNvidia && nvidiaVersion.major < 470u)));
 
     // VK_EXT_pipeline_creation_feedback is promoted to core in Vulkan 1.3.
     ANGLE_FEATURE_CONDITION(
@@ -3476,12 +3493,6 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // Clamp if driver version is:
     //   < 430 on Windows
     //   < 421 otherwise
-    angle::VersionInfo nvidiaVersion;
-    if (isNvidia)
-    {
-        nvidiaVersion =
-            angle::ParseNvidiaDriverVersion(this->mPhysicalDeviceProperties.driverVersion);
-    }
     ANGLE_FEATURE_CONDITION(&mFeatures, clampPointSize,
                             isNvidia && nvidiaVersion.major < uint32_t(IsWindows() ? 430 : 421));
     // http://anglebug.com/3970#c25.
@@ -4033,6 +4044,15 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
 
     // GBM does not have a VkSurface hence it does not support presentation through a Vulkan queue.
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsPresentation, !displayVk->isGBM());
+
+    // For tiled renderer, the renderpass query result may not available until the entire renderpass
+    // is completed. This may cause a bubble in the application thread waiting result to be
+    // available. When this feature flag is enabled, we will issue an immediate flush when we detect
+    // there is switch from query enabled draw to query disabled draw. Since most apps uses bunch of
+    // query back to back, this should only introduce one extra flush per frame.
+    // https://issuetracker.google.com/250706693
+    ANGLE_FEATURE_CONDITION(&mFeatures, preferSubmitOnAnySamplesPassedQueryEnd,
+                            isTileBasedRenderer);
 
     ApplyFeatureOverrides(&mFeatures, displayVk->getState());
 
