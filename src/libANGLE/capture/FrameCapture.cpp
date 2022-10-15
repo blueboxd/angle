@@ -32,7 +32,7 @@
 #include "libANGLE/Shader.h"
 #include "libANGLE/Surface.h"
 #include "libANGLE/VertexArray.h"
-#include "libANGLE/capture/capture_egl.h"
+#include "libANGLE/capture/capture_egl_autogen.h"
 #include "libANGLE/capture/capture_gles_1_0_autogen.h"
 #include "libANGLE/capture/capture_gles_2_0_autogen.h"
 #include "libANGLE/capture/capture_gles_3_0_autogen.h"
@@ -683,7 +683,7 @@ void WriteCppReplayForCall(const CallCapture &call,
 
     if (call.entryPoint == EntryPoint::EGLCreatePbufferSurface)
     {
-        EGLSurface surface = call.params.getReturnValue().value.EGLSurfaceVal;
+        egl::Surface *surface = call.params.getReturnValue().value.egl_SurfacePointerVal;
         callOut << "gSurfaceMap[" << reinterpret_cast<uintptr_t>(surface) << "ul] = ";
     }
 
@@ -860,16 +860,16 @@ size_t MaxClientArraySize(const gl::AttribArray<size_t> &clientArraySizes)
     return found;
 }
 
-CallCapture CaptureMakeCurrent(EGLDisplay display,
-                               EGLSurface draw,
-                               EGLSurface read,
-                               EGLContext context)
+CallCapture CaptureMakeCurrent(egl::Display *display,
+                               egl::Surface *draw,
+                               egl::Surface *read,
+                               gl::Context *context)
 {
     ParamBuffer paramBuffer;
-    paramBuffer.addValueParam("display", ParamType::TEGLDisplay, display);
-    paramBuffer.addValueParam("draw", ParamType::TEGLSurface, draw);
-    paramBuffer.addValueParam("read", ParamType::TEGLSurface, read);
-    paramBuffer.addValueParam("context", ParamType::TEGLContext, context);
+    paramBuffer.addValueParam("display", ParamType::Tegl_DisplayPointer, display);
+    paramBuffer.addValueParam("draw", ParamType::Tegl_SurfacePointer, draw);
+    paramBuffer.addValueParam("read", ParamType::Tegl_SurfacePointer, read);
+    paramBuffer.addValueParam("context", ParamType::Tgl_ContextPointer, context);
 
     return CallCapture(angle::EntryPoint::EGLMakeCurrent, std::move(paramBuffer));
 }
@@ -3437,7 +3437,7 @@ void CaptureDefaultVertexAttribs(const gl::State &replayState,
 // Capture the setup of the state that's shared by all of the contexts in the share group
 // See IsSharedObjectResource for the list of objects covered here.
 void CaptureShareGroupMidExecutionSetup(
-    const gl::Context *context,
+    gl::Context *context,
     std::vector<CallCapture> *setupCalls,
     ResourceTracker *resourceTracker,
     gl::State &replayState,
@@ -3843,11 +3843,11 @@ void CaptureShareGroupMidExecutionSetup(
 
                     // Create the image on demand
                     egl::Image *image = nullptr;
-                    Capture(setupCalls,
-                            CaptureEGLCreateImage(context, EGL_GL_TEXTURE_2D_KHR,
-                                                  reinterpret_cast<EGLClientBuffer>(
-                                                      static_cast<GLuint64>(stagingTexId.value)),
-                                                  retrievedAttribs, image));
+                    Capture(setupCalls, egl::CaptureCreateImage(
+                                            nullptr, true, nullptr, context, EGL_GL_TEXTURE_2D_KHR,
+                                            reinterpret_cast<EGLClientBuffer>(
+                                                static_cast<GLuint64>(stagingTexId.value)),
+                                            retrievedAttribs, image));
 
                     // Pass the eglImage to the texture that is bound to GL_TEXTURE_EXTERNAL_OES
                     // target
@@ -4116,7 +4116,7 @@ void CaptureShareGroupMidExecutionSetup(
     }
 }
 
-void CaptureMidExecutionSetup(const gl::Context *context,
+void CaptureMidExecutionSetup(gl::Context *context,
                               std::vector<CallCapture> *setupCalls,
                               CallResetMap &resetCalls,
                               std::vector<CallCapture> *shareGroupSetupCalls,
@@ -4130,13 +4130,7 @@ void CaptureMidExecutionSetup(const gl::Context *context,
     // Small helper function to make the code more readable.
     auto cap = [setupCalls](CallCapture &&call) { setupCalls->emplace_back(std::move(call)); };
 
-    // Need to go from uint32 -> uint64 -> EGLContext (void*) to handle MSVC compiler
-    // warning on 64b systems:
-    //   error C4312: 'reinterpret_cast': conversion from 'uint32_t' to 'EGLContext' of
-    //   greater size
-    uint64_t contextID    = static_cast<uint64_t>(context->id().value);
-    EGLContext eglContext = reinterpret_cast<EGLContext>(contextID);
-    cap(CaptureMakeCurrent(EGL_NO_DISPLAY, EGL_NO_SURFACE, EGL_NO_SURFACE, eglContext));
+    cap(CaptureMakeCurrent(nullptr, nullptr, nullptr, context));
 
     // Vertex input states. Must happen after buffer data initialization. Do not capture on GLES1.
     if (!context->isGLES1())
@@ -5081,6 +5075,22 @@ bool SkipCall(EntryPoint entryPoint)
             // Skip these calls because:
             // - We don't use the return values.
             // - Same as uniforms, the value can vary, asking above GL_ACTIVE_ATTRIBUTES is an error
+            return true;
+
+        case EntryPoint::EGLChooseConfig:
+        case EntryPoint::EGLGetProcAddress:
+        case EntryPoint::EGLGetConfigAttrib:
+        case EntryPoint::EGLGetConfigs:
+        case EntryPoint::EGLGetSyncAttrib:
+        case EntryPoint::EGLGetSyncAttribKHR:
+        case EntryPoint::EGLQuerySurface:
+            // Skip these calls because:
+            // - Some EGL types and pointer parameters aren't yet implemented in EGL capture.
+            return true;
+
+        case EntryPoint::EGLSwapBuffers:
+            // Skip these calls because:
+            // - Swap is handled specially by the trace harness.
             return true;
 
         default:
@@ -6241,6 +6251,22 @@ void FrameCaptureShared::maybeCaptureDrawElementsClientData(const gl::Context *c
     captureClientArraySnapshot(context, indexRange.end + 1, instanceCount);
 }
 
+template <typename AttribT, typename FactoryT>
+void CreateEGLImagePreCallUpdate(const CallCapture &call,
+                                 ResourceTracker &resourceTracker,
+                                 ParamType paramType,
+                                 FactoryT factory)
+{
+    GLeglImageOES image       = call.params.getReturnValue().value.voidPointerVal;
+    const ParamCapture &param = call.params.getParam("attrib_list", paramType, 4);
+    const AttribT *attribs =
+        param.data.empty() ? nullptr : reinterpret_cast<const AttribT *>(param.data[0].data());
+    egl::AttributeMap attributeMap = factory(attribs);
+    attributeMap.initializeWithoutValidation();
+    resourceTracker.getImageToAttribTable().insert(
+        std::pair<void *, egl::AttributeMap>(image, attributeMap));
+}
+
 void FrameCaptureShared::maybeCapturePreCallUpdates(
     const gl::Context *context,
     CallCapture &call,
@@ -6787,15 +6813,16 @@ void FrameCaptureShared::maybeCapturePreCallUpdates(
         }
 
         case EntryPoint::EGLCreateImage:
+        {
+            CreateEGLImagePreCallUpdate<EGLAttrib>(call, mResourceTracker,
+                                                   ParamType::TEGLAttribPointer,
+                                                   egl::AttributeMap::CreateFromAttribArray);
+            break;
+        }
         case EntryPoint::EGLCreateImageKHR:
         {
-            GLeglImageOES image      = call.params.getReturnValue().value.voidPointerVal;
-            const EGLAttrib *attribs = reinterpret_cast<const EGLAttrib *>(
-                call.params.getParam("attrib_list", ParamType::TGLint64Pointer, 4).data[0].data());
-            egl::AttributeMap attributeMap = egl::AttributeMap::CreateFromAttribArray(attribs);
-            attributeMap.initializeWithoutValidation();
-            mResourceTracker.getImageToAttribTable().insert(
-                std::pair<void *, egl::AttributeMap>(image, attributeMap));
+            CreateEGLImagePreCallUpdate<EGLint>(call, mResourceTracker, ParamType::TEGLintPointer,
+                                                egl::AttributeMap::CreateFromIntArray);
             break;
         }
 
@@ -6921,9 +6948,7 @@ void FrameCaptureShared::updateResourceCountsFromCallCapture(const CallCapture &
     }
 }
 
-void FrameCaptureShared::captureCall(const gl::Context *context,
-                                     CallCapture &&inCall,
-                                     bool isCallValid)
+void FrameCaptureShared::captureCall(gl::Context *context, CallCapture &&inCall, bool isCallValid)
 {
     if (SkipCall(inCall.entryPoint))
     {
@@ -6938,19 +6963,8 @@ void FrameCaptureShared::captureCall(const gl::Context *context,
         size_t contextCount = context->getShareGroup()->getShareGroupContextCount();
         if (contextCount > 1 && mLastContextId != context->id())
         {
-            // Inject the eglMakeCurrent() call.
-            // The EGLDisplay and EGLSurface values can't be known here, since we may not even be
-            // running the trace with ANGLE.
-            // The EGLContext value is actually the context ID, so we can look it up in
-            // 'gContextMap'.
-            // Need to go from uint32 -> uint64 -> EGLContext (void*) to handle MSVC compiler
-            // warning on 64b systems:
-            //   error C4312: 'reinterpret_cast': conversion from 'uint32_t' to 'EGLContext' of
-            //   greater size
-            uint64_t contextID    = static_cast<uint64_t>(context->id().value);
-            EGLContext eglContext = reinterpret_cast<EGLContext>(contextID);
-            CallCapture makeCurrentCall =
-                CaptureMakeCurrent(EGL_NO_DISPLAY, EGL_NO_SURFACE, EGL_NO_SURFACE, eglContext);
+            // Inject the eglMakeCurrent() call. Ignore the display and surface.
+            CallCapture makeCurrentCall = CaptureMakeCurrent(nullptr, nullptr, nullptr, context);
             mFrameCalls.emplace_back(std::move(makeCurrentCall));
             mLastContextId = context->id();
         }
@@ -7289,7 +7303,7 @@ void FrameCaptureShared::scanSetupCalls(const gl::Context *context,
     }
 }
 
-void FrameCaptureShared::runMidExecutionCapture(const gl::Context *mainContext)
+void FrameCaptureShared::runMidExecutionCapture(gl::Context *mainContext)
 {
     // Set the capture active to ensure all GLES commands issued by the next frame are
     // handled correctly by maybeCapturePreCallUpdates() and maybeCapturePostCallUpdates().
@@ -7313,7 +7327,7 @@ void FrameCaptureShared::runMidExecutionCapture(const gl::Context *mainContext)
 
     scanSetupCalls(mainContext, mShareGroupSetupCalls);
 
-    for (const gl::Context *shareContext : shareGroup->getContexts())
+    for (gl::Context *shareContext : shareGroup->getContexts())
     {
         FrameCapture *frameCapture = shareContext->getFrameCapture();
         ASSERT(frameCapture->getSetupCalls().empty());
@@ -7352,7 +7366,7 @@ void FrameCaptureShared::runMidExecutionCapture(const gl::Context *mainContext)
     }
 }
 
-void FrameCaptureShared::onEndFrame(const gl::Context *context)
+void FrameCaptureShared::onEndFrame(gl::Context *context)
 {
     if (!enabled() || mFrameIndex > mCaptureEndFrame)
     {
@@ -7996,9 +8010,8 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
 
             out << proto << "\n";
             out << "{\n";
-            out << "    gContextMap[0] = EGL_NO_CONTEXT;\n";
             out << "    EGLContext context = eglGetCurrentContext();\n";
-            out << "    gContextMap[" << context->id().value << "] = context;\n";
+            out << "    gContextMap[" << reinterpret_cast<uintptr_t>(context) << "ul] = context;\n";
             out << "\n";
 
             // Setup all of the shared objects.
@@ -8029,8 +8042,8 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
                 // beginning of the setup call stream.
                 out << "    EGLContext context" << shareContext->id()
                     << " = eglCreateContext(nullptr, nullptr, context, nullptr);\n";
-                out << "    gContextMap[" << shareContext->id().value << "] = context"
-                    << shareContext->id() << ";\n";
+                out << "    gContextMap[" << reinterpret_cast<uintptr_t>(shareContext)
+                    << "ul] = context" << shareContext->id() << ";\n";
                 // The SetupReplayContextXX() calls only exist if this is a mid-execution capture
                 // and we can only call them if they exist, so only output the calls if this is a
                 // MEC.
@@ -8155,7 +8168,8 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
                     bodyStream << "    // Switching contexts for non-shared Reset\n"
                                << "    eglMakeCurrent("
                                << "EGL_NO_DISPLAY, EGL_NO_SURFACE, EGL_NO_SURFACE, "
-                               << "gContextMap[" << contextID.value << "]);\n\n";
+                               << "gContextMap[" << reinterpret_cast<uintptr_t>(context)
+                               << "ul]);\n\n";
                 }
 
                 // Then append the Reset calls
@@ -8735,10 +8749,8 @@ void WriteParamValueReplay<ParamType::TEGLDEBUGPROCKHR>(std::ostream &os,
                                                         const CallCapture &call,
                                                         EGLDEBUGPROCKHR value)
 {
-    // The value isn't actually useful, but this fixes MSVC compile errors:
-    // error: implicit conversion between pointer-to-function and pointer-to-object is a Microsoft
-    // extension [-Werror,-Wmicrosoft-cast]
-    os << reinterpret_cast<void *>(value);
+    // It's not necessary to implement correct capture for these types.
+    os << "0";
 }
 
 template <>
@@ -8746,10 +8758,8 @@ void WriteParamValueReplay<ParamType::TEGLGetBlobFuncANDROID>(std::ostream &os,
                                                               const CallCapture &call,
                                                               EGLGetBlobFuncANDROID value)
 {
-    // The value isn't actually useful, but this fixes MSVC compile errors:
-    // error: implicit conversion between pointer-to-function and pointer-to-object is a Microsoft
-    // extension [-Werror,-Wmicrosoft-cast]
-    os << reinterpret_cast<void *>(value);
+    // It's not necessary to implement correct capture for these types.
+    os << "0";
 }
 
 template <>
@@ -8757,10 +8767,96 @@ void WriteParamValueReplay<ParamType::TEGLSetBlobFuncANDROID>(std::ostream &os,
                                                               const CallCapture &call,
                                                               EGLSetBlobFuncANDROID value)
 {
-    // The value isn't actually useful, but this fixes MSVC compile errors:
-    // error: implicit conversion between pointer-to-function and pointer-to-object is a Microsoft
-    // extension [-Werror,-Wmicrosoft-cast]
-    os << reinterpret_cast<void *>(value);
+    // It's not necessary to implement correct capture for these types.
+    os << "0";
+}
+
+template <>
+void WriteParamValueReplay<ParamType::Tegl_ConfigPointer>(std::ostream &os,
+                                                          const CallCapture &call,
+                                                          egl::Config *value)
+{
+    os << "EGL_NO_CONFIG_KHR";
+}
+
+template <>
+void WriteParamValueReplay<ParamType::Tegl_SurfacePointer>(std::ostream &os,
+                                                           const CallCapture &call,
+                                                           egl::Surface *value)
+{
+    if (value == nullptr)
+    {
+        os << "EGL_NO_SURFACE";
+    }
+    else
+    {
+        os << "gSurfaceMap[" << reinterpret_cast<uintptr_t>(value) << "ul]";
+    }
+}
+
+template <>
+void WriteParamValueReplay<ParamType::Tgl_ContextPointer>(std::ostream &os,
+                                                          const CallCapture &call,
+                                                          gl::Context *value)
+{
+    if (value == nullptr)
+    {
+        os << "EGL_NO_CONTEXT";
+    }
+    else
+    {
+        os << "gContextMap[" << reinterpret_cast<uintptr_t>(value) << "ul]";
+    }
+}
+
+template <>
+void WriteParamValueReplay<ParamType::Tegl_DisplayPointer>(std::ostream &os,
+                                                           const CallCapture &call,
+                                                           egl::Display *value)
+{
+    os << "EGL_NO_DISPLAY";
+}
+
+template <>
+void WriteParamValueReplay<ParamType::Tegl_ImagePointer>(std::ostream &os,
+                                                         const CallCapture &call,
+                                                         egl::Image *value)
+{
+    uint64_t pointerValue = reinterpret_cast<uint64_t>(value);
+    os << "gEGLImageMap[" << pointerValue << "ul]";
+}
+
+template <>
+void WriteParamValueReplay<ParamType::TEGLClientBuffer>(std::ostream &os,
+                                                        const CallCapture &call,
+                                                        EGLClientBuffer value)
+{
+    const ParamCapture &targetParam = call.params.getParam("target", ParamType::TEGLenum, 2);
+    os << "GetClientBuffer(" << targetParam.value.EGLenumVal << ", " << value << ")";
+}
+
+template <>
+void WriteParamValueReplay<ParamType::Tegl_SyncPointer>(std::ostream &os,
+                                                        const CallCapture &call,
+                                                        egl::Sync *value)
+{
+    os << "EGL_NO_SYNC_KHR";
+}
+
+template <>
+void WriteParamValueReplay<ParamType::TEGLTime>(std::ostream &os,
+                                                const CallCapture &call,
+                                                EGLTime value)
+{
+    os << value << "ul";
+}
+
+template <>
+void WriteParamValueReplay<ParamType::TEGLTimeKHR>(std::ostream &os,
+                                                   const CallCapture &call,
+                                                   EGLTimeKHR value)
+{
+    os << value << "ul";
 }
 
 // ReplayWriter implementation.
@@ -9050,3 +9146,62 @@ std::vector<std::string> ReplayWriter::getAndResetWrittenFiles()
     return results;
 }
 }  // namespace angle
+
+namespace egl
+{
+angle::ParamCapture CaptureAttributeMap(const egl::AttributeMap &attribMap)
+{
+    switch (attribMap.getType())
+    {
+        case AttributeMapType::Attrib:
+        {
+            angle::ParamCapture paramCapture("attrib_list", angle::ParamType::TEGLAttribPointer);
+            if (attribMap.isEmpty())
+            {
+                paramCapture.value.EGLAttribPointerVal = nullptr;
+            }
+            else
+            {
+                std::vector<EGLAttrib> attribs;
+                for (const auto &[key, value] : attribMap)
+                {
+                    attribs.push_back(key);
+                    attribs.push_back(value);
+                }
+                attribs.push_back(EGL_NONE);
+
+                angle::CaptureMemory(attribs.data(), attribs.size() * sizeof(EGLAttrib),
+                                     &paramCapture);
+            }
+            return paramCapture;
+        }
+
+        case AttributeMapType::Int:
+        {
+            angle::ParamCapture paramCapture("attrib_list", angle::ParamType::TEGLintPointer);
+            if (attribMap.isEmpty())
+            {
+                paramCapture.value.EGLintPointerVal = nullptr;
+            }
+            else
+            {
+                std::vector<EGLint> attribs;
+                for (const auto &[key, value] : attribMap)
+                {
+                    attribs.push_back(static_cast<EGLint>(key));
+                    attribs.push_back(static_cast<EGLint>(value));
+                }
+                attribs.push_back(EGL_NONE);
+
+                angle::CaptureMemory(attribs.data(), attribs.size() * sizeof(EGLint),
+                                     &paramCapture);
+            }
+            return paramCapture;
+        }
+
+        default:
+            UNREACHABLE();
+            return angle::ParamCapture();
+    }
+}
+}  // namespace egl

@@ -686,9 +686,9 @@
 // Regression after a buffer change.
 6881 INTEL VULKAN LINUX : Texture2DTest.TexStorageWithPBOMiddlePixelDifferent/* = SKIP
 
-// Flaky on Linux/Vulkan/NV/Async Command Queue.
-7548 NVIDIA LINUX VULKAN : TimerQueriesTest.TimeElapsed/*_AsyncCommandQueue = SKIP
-7548 NVIDIA LINUX VULKAN : TimerQueriesTest.Timestamp/*_AsyncCommandQueue = SKIP
+// Flaky Generally on AsyncCommandQueue.
+7548 VULKAN : TimerQueriesTest.TimeElapsed/*_AsyncCommandQueue = SKIP
+7548 VULKAN : TimerQueriesTest.Timestamp/*_AsyncCommandQueue = SKIP
 
 // Cubemap sampling with explicit derivatives
 3814 PIXEL4ORXL VULKAN : CubeMapTextureTest.SampleCoordinateTransformGrad/* = SKIP
@@ -783,7 +783,6 @@
 // so that TIMEOUT expectations above don't override more precise SKIP expectations
 
 7629 VULKAN : EGLRobustnessTestES3.Context*ResetOnInvalidLocalShaderVariableAccess_ShareGroupAfterProgramCreation/* = SKIP
-7629 SWIFTSHADER : EGLRobustnessTestES31.NonRobustContextThenOOBInSharedRobustContext/* = SKIP
 
 // EXT_multisample_compatibility exposed for the sake of GLES1, but not implemented on Vulkan
 7657 VULKAN : EXTMultisampleCompatibilityTest.* = SKIP
