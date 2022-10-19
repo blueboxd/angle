@@ -3707,9 +3707,6 @@ Extensions Context::generateSupportedExtensions() const
         // GL_EXT_YUV_target requires ESSL3
         supportedExtensions.YUVTargetEXT = false;
 
-        // GL_EXT_clip_cull_distance requires ESSL3
-        supportedExtensions.clipCullDistanceEXT = false;
-
         // ANGLE_shader_pixel_local_storage requires ES3
         supportedExtensions.shaderPixelLocalStorageANGLE         = false;
         supportedExtensions.shaderPixelLocalStorageCoherentANGLE = false;
@@ -4414,12 +4411,11 @@ void Context::updateCaps()
 
     if (!mState.mExtensions.parallelShaderCompileKHR)
     {
-        mSingleThreadPool = angle::WorkerThreadPool::Create(1);
+        mSingleThreadPool = angle::WorkerThreadPool::Create(false);
     }
-    const bool multithreaded =
+    mMultiThreadPool = angle::WorkerThreadPool::Create(
         mState.mExtensions.parallelShaderCompileKHR ||
-        getFrontendFeatures().enableCompressingPipelineCacheInThreadPool.enabled;
-    mMultiThreadPool = angle::WorkerThreadPool::Create(multithreaded ? 0 : 1);
+        getFrontendFeatures().enableCompressingPipelineCacheInThreadPool.enabled);
 
     // Reinitialize some dirty bits that depend on extensions.
     if (mState.isRobustResourceInitEnabled())
@@ -9455,9 +9451,9 @@ void Context::maxShaderCompilerThreads(GLuint count)
     // A count of zero specifies a request for no parallel compiling or linking.
     if ((oldCount == 0 || count == 0) && (oldCount != 0 || count != 0))
     {
-        const bool multithreaded = count > 0;
-        mMultiThreadPool         = angle::WorkerThreadPool::Create(multithreaded ? count : 1);
+        mMultiThreadPool = angle::WorkerThreadPool::Create(count > 0);
     }
+    mMultiThreadPool->setMaxThreads(count);
     mImplementation->setMaxShaderCompilerThreads(count);
 }
 

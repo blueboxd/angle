@@ -693,35 +693,6 @@ void WriteCppReplayForCall(const CallCapture &call,
         callOut << "gClientBufferMap[" << reinterpret_cast<EGLClientBuffer>(buffer) << "] = ";
     }
 
-    // Depending on how a buffer is mapped, we may need to track its location for readback
-    bool trackBufferPointer = false;
-
-    if (call.entryPoint == EntryPoint::GLMapBufferRange ||
-        call.entryPoint == EntryPoint::GLMapBufferRangeEXT)
-    {
-        GLbitfield access =
-            call.params.getParam("access", ParamType::TGLbitfield, 3).value.GLbitfieldVal;
-
-        trackBufferPointer = access & GL_MAP_WRITE_BIT;
-    }
-
-    if (call.entryPoint == EntryPoint::GLMapBuffer || call.entryPoint == EntryPoint::GLMapBufferOES)
-    {
-        GLenum access = call.params.getParam("access", ParamType::TGLenum, 1).value.GLenumVal;
-
-        trackBufferPointer =
-            access == GL_WRITE_ONLY_OES || access == GL_WRITE_ONLY || access == GL_READ_WRITE;
-    }
-
-    if (trackBufferPointer)
-    {
-        // Track the returned pointer so we update its data when unmapped
-        gl::BufferID bufferID = call.params.getMappedBufferID();
-        callOut << "gMappedBufferData[";
-        WriteParamValueReplay<ParamType::TBufferID>(callOut, call, bufferID);
-        callOut << "] = ";
-    }
-
     callOut << call.name() << "(";
 
     bool first = true;
@@ -3149,6 +3120,35 @@ void CaptureTextureContents(std::vector<CallCapture> *setupCalls,
     }
 }
 
+void CaptureCustomUniformBlockBinding(const CallCapture &callIn, std::vector<CallCapture> &callsOut)
+{
+    const ParamBuffer &paramsIn = callIn.params;
+
+    const ParamCapture &programID =
+        paramsIn.getParam("programPacked", ParamType::TShaderProgramID, 0);
+    const ParamCapture &blockIndex =
+        paramsIn.getParam("uniformBlockIndexPacked", ParamType::TUniformBlockIndex, 1);
+    const ParamCapture &blockBinding =
+        paramsIn.getParam("uniformBlockBinding", ParamType::TGLuint, 2);
+
+    ParamBuffer params;
+    params.addValueParam("program", ParamType::TGLuint, programID.value.ShaderProgramIDVal.value);
+    params.addValueParam("uniformBlockIndex", ParamType::TGLuint,
+                         blockIndex.value.UniformBlockIndexVal.value);
+    params.addValueParam("uniformBlockBinding", ParamType::TGLuint, blockBinding.value.GLuintVal);
+
+    callsOut.emplace_back("UniformBlockBinding", std::move(params));
+}
+
+void CaptureCustomMapBuffer(const char *entryPointName,
+                            CallCapture &call,
+                            std::vector<CallCapture> &callsOut,
+                            gl::BufferID mappedBufferID)
+{
+    call.params.addValueParam("buffer", ParamType::TGLuint, mappedBufferID.value);
+    callsOut.emplace_back(entryPointName, std::move(call.params));
+}
+
 void GenerateLinkedProgram(const gl::Context *context,
                            const gl::State &replayState,
                            ResourceTracker *resourceTracker,
@@ -3250,8 +3250,9 @@ void GenerateLinkedProgram(const gl::Context *context,
          uniformBlockIndex < program->getActiveUniformBlockCount(); uniformBlockIndex++)
     {
         GLuint blockBinding = program->getUniformBlockBinding(uniformBlockIndex);
-        Capture(setupCalls, CaptureUniformBlockBinding(replayState, true, id, {uniformBlockIndex},
-                                                       blockBinding));
+        CallCapture updateCallCapture =
+            CaptureUniformBlockBinding(replayState, true, id, {uniformBlockIndex}, blockBinding);
+        CaptureCustomUniformBlockBinding(updateCallCapture, *setupCalls);
     }
 
     // Add DetachShader call if that's what the app does, so that the
@@ -3329,15 +3330,13 @@ void CaptureBufferResetCalls(const gl::Context *context,
         Capture(&bufferMapCalls[bufferID],
                 CaptureBindBuffer(replayState, true, gl::BufferBinding::Array, *id));
 
-        void *dontCare = nullptr;
-        Capture(&bufferMapCalls[bufferID],
-                CaptureMapBufferRange(replayState, true, gl::BufferBinding::Array,
-                                      static_cast<GLsizeiptr>(buffer->getMapOffset()),
-                                      static_cast<GLsizeiptr>(buffer->getMapLength()),
-                                      buffer->getAccessFlags(), dontCare));
-
-        // Track the bufferID that was just mapped
-        bufferMapCalls[bufferID].back().params.setMappedBufferID(buffer->id());
+        void *dontCare             = nullptr;
+        CallCapture mapBufferRange = CaptureMapBufferRange(
+            replayState, true, gl::BufferBinding::Array,
+            static_cast<GLsizeiptr>(buffer->getMapOffset()),
+            static_cast<GLsizeiptr>(buffer->getMapLength()), buffer->getAccessFlags(), dontCare);
+        CaptureCustomMapBuffer("MapBufferRange", mapBufferRange, bufferMapCalls[bufferID],
+                               buffer->id());
 
         // Restore immutable mapped buffers. Needs to happen after mapping.
         if (buffer->isImmutable())
@@ -3512,11 +3511,12 @@ void CaptureShareGroupMidExecutionSetup(
         if (bufferMapped)
         {
             void *dontCare = nullptr;
-            Capture(setupCalls,
-                    CaptureMapBufferRange(replayState, true, gl::BufferBinding::Array,
-                                          static_cast<GLsizeiptr>(buffer->getMapOffset()),
-                                          static_cast<GLsizeiptr>(buffer->getMapLength()),
-                                          buffer->getAccessFlags(), dontCare));
+            CallCapture mapBufferRange =
+                CaptureMapBufferRange(replayState, true, gl::BufferBinding::Array,
+                                      static_cast<GLsizeiptr>(buffer->getMapOffset()),
+                                      static_cast<GLsizeiptr>(buffer->getMapLength()),
+                                      buffer->getAccessFlags(), dontCare);
+            CaptureCustomMapBuffer("MapBufferRange", mapBufferRange, *setupCalls, buffer->id());
 
             resourceTracker->setStartingBufferMapped(buffer->id().value, true);
 
@@ -5077,6 +5077,13 @@ bool SkipCall(EntryPoint entryPoint)
             // - Same as uniforms, the value can vary, asking above GL_ACTIVE_ATTRIBUTES is an error
             return true;
 
+        case EntryPoint::GLGetActiveUniformBlockiv:
+        case EntryPoint::GLGetActiveUniformName:
+            // Skip these calls because:
+            // - We don't use the return values.
+            // - It reduces the number of references to the uniform block index map.
+            return true;
+
         case EntryPoint::EGLChooseConfig:
         case EntryPoint::EGLGetProcAddress:
         case EntryPoint::EGLGetConfigAttrib:
@@ -5192,12 +5199,12 @@ ParamBuffer &ParamBuffer::operator=(ParamBuffer &&other)
     std::swap(mClientArrayDataParam, other.mClientArrayDataParam);
     std::swap(mReadBufferSize, other.mReadBufferSize);
     std::swap(mReturnValueCapture, other.mReturnValueCapture);
-    std::swap(mMappedBufferID, other.mMappedBufferID);
     return *this;
 }
 
 ParamCapture &ParamBuffer::getParam(const char *paramName, ParamType paramType, int index)
 {
+    ASSERT(index < static_cast<int>(mParamCaptures.size()));
     ParamCapture &capture = mParamCaptures[index];
     ASSERT(capture.name == paramName);
     ASSERT(capture.type == paramType);
@@ -5877,9 +5884,6 @@ void FrameCaptureShared::trackBufferMapping(const gl::Context *context,
         mResourceTracker.getTrackedResource(context->id(), ResourceIDType::Buffer)
             .setModifiedResource(id.value);
 
-        // Track the bufferID that was just mapped for use when writing return value
-        call->params.setMappedBufferID(id);
-
         // Track coherent buffer
         // Check if capture is active to not initialize the coherent buffer tracker on the
         // first coherent glMapBufferRange call.
@@ -6140,6 +6144,40 @@ void FrameCaptureShared::overrideProgramBinary(const gl::Context *context,
                           tempShaderStartID, getProgramSources(id));
 }
 
+void FrameCaptureShared::captureCustomMapBufferFromContext(const gl::Context *context,
+                                                           const char *entryPointName,
+                                                           CallCapture &call,
+                                                           std::vector<CallCapture> &callsOut)
+{
+    gl::BufferBinding binding =
+        call.params.getParam("targetPacked", ParamType::TBufferBinding, 0).value.BufferBindingVal;
+    gl::Buffer *buffer = context->getState().getTargetBuffer(binding);
+
+    if (call.entryPoint == EntryPoint::GLMapBufferRange ||
+        call.entryPoint == EntryPoint::GLMapBufferRangeEXT)
+    {
+        GLintptr offset = call.params.getParam("offset", ParamType::TGLintptr, 1).value.GLintptrVal;
+        GLsizeiptr length =
+            call.params.getParam("length", ParamType::TGLsizeiptr, 2).value.GLsizeiptrVal;
+        GLbitfield access =
+            call.params.getParam("access", ParamType::TGLbitfield, 3).value.GLbitfieldVal;
+
+        trackBufferMapping(context, &call, buffer->id(), buffer, offset, length,
+                           access & GL_MAP_WRITE_BIT, access & GL_MAP_COHERENT_BIT_EXT);
+    }
+    else
+    {
+        ASSERT(call.entryPoint == EntryPoint::GLMapBufferOES);
+        GLenum access = call.params.getParam("access", ParamType::TGLenum, 1).value.GLenumVal;
+        bool writeAccess =
+            (access == GL_WRITE_ONLY_OES || access == GL_WRITE_ONLY || access == GL_READ_WRITE);
+        trackBufferMapping(context, &call, buffer->id(), buffer, 0,
+                           static_cast<GLsizeiptr>(buffer->getSize()), writeAccess, false);
+    }
+
+    CaptureCustomMapBuffer(entryPointName, call, callsOut, buffer->id());
+}
+
 void FrameCaptureShared::maybeOverrideEntryPoint(const gl::Context *context,
                                                  CallCapture &inCall,
                                                  std::vector<CallCapture> &outCalls)
@@ -6163,6 +6201,33 @@ void FrameCaptureShared::maybeOverrideEntryPoint(const gl::Context *context,
             overrideProgramBinary(context, inCall, outCalls);
             break;
         }
+        case EntryPoint::GLUniformBlockBinding:
+        {
+            CaptureCustomUniformBlockBinding(inCall, outCalls);
+            break;
+        }
+        case EntryPoint::GLMapBufferRange:
+        {
+            captureCustomMapBufferFromContext(context, "MapBufferRange", inCall, outCalls);
+            break;
+        }
+        case EntryPoint::GLMapBufferRangeEXT:
+        {
+            captureCustomMapBufferFromContext(context, "MapBufferRangeEXT", inCall, outCalls);
+            break;
+        }
+        case EntryPoint::GLMapBuffer:
+        {
+            // Currently desktop GL is not implemented.
+            UNREACHABLE();
+            break;
+        }
+        case EntryPoint::GLMapBufferOES:
+        {
+            captureCustomMapBufferFromContext(context, "MapBufferOES", inCall, outCalls);
+            break;
+        }
+
         default:
         {
             // Pass the single call through
@@ -6654,29 +6719,6 @@ void FrameCaptureShared::maybeCapturePreCallUpdates(
         case EntryPoint::GLUnmapNamedBuffer:
         {
             UNIMPLEMENTED();
-            break;
-        }
-
-        case EntryPoint::GLMapBufferRange:
-        case EntryPoint::GLMapBufferRangeEXT:
-        {
-            GLintptr offset =
-                call.params.getParam("offset", ParamType::TGLintptr, 1).value.GLintptrVal;
-            GLsizeiptr length =
-                call.params.getParam("length", ParamType::TGLsizeiptr, 2).value.GLsizeiptrVal;
-            GLbitfield access =
-                call.params.getParam("access", ParamType::TGLbitfield, 3).value.GLbitfieldVal;
-
-            gl::BufferBinding target =
-                call.params.getParam("targetPacked", ParamType::TBufferBinding, 0)
-                    .value.BufferBindingVal;
-            gl::Buffer *buffer = context->getState().getTargetBuffer(target);
-
-            FrameCaptureShared *frameCaptureShared =
-                context->getShareGroup()->getFrameCaptureShared();
-            frameCaptureShared->trackBufferMapping(context, &call, buffer->id(), buffer, offset,
-                                                   length, access & GL_MAP_WRITE_BIT,
-                                                   access & GL_MAP_COHERENT_BIT_EXT);
             break;
         }
 
@@ -8717,13 +8759,9 @@ void WriteParamValueReplay<ParamType::TUniformBlockIndex>(std::ostream &os,
                                                           const CallCapture &call,
                                                           gl::UniformBlockIndex value)
 {
-    // Find the program from the call parameters.
-    std::vector<gl::ShaderProgramID> programIDs;
-    bool foundProgram = FindShaderProgramIDsInCall(call, programIDs);
-    ASSERT(foundProgram && programIDs.size() == 1);
-
-    os << "gUniformBlockIndexes[gShaderProgramMap[" << programIDs[0].value << "]][" << value.value
-       << "]";
+    // We do not support directly using uniform block indexes due to their multiple indirections.
+    // Use CaptureCustomUniformBlockBinding if you end up hitting this assertion.
+    UNREACHABLE();
 }
 
 template <>
