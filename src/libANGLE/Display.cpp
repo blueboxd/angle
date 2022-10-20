@@ -28,6 +28,7 @@
 #include "common/tls.h"
 #include "common/utilities.h"
 #include "gpu_info_util/SystemInfo.h"
+#include "image_util/loadimage.h"
 #include "libANGLE/Context.h"
 #include "libANGLE/Device.h"
 #include "libANGLE/EGLSync.h"
@@ -874,7 +875,9 @@ Display::Display(EGLenum platform, EGLNativeDisplayType displayId, Device *eglDe
       mGlobalTextureShareGroupUsers(0),
       mGlobalSemaphoreShareGroupUsers(0),
       mTerminatedByApi(false),
-      mActiveThreads()
+      mActiveThreads(),
+      mSingleThreadPool(nullptr),
+      mMultiThreadPool(nullptr)
 {}
 
 Display::~Display()
@@ -1070,6 +1073,9 @@ Error Display::initialize()
         mDevice = nullptr;
     }
 
+    mSingleThreadPool = angle::WorkerThreadPool::Create(1, ANGLEPlatformCurrent());
+    mMultiThreadPool  = angle::WorkerThreadPool::Create(0, ANGLEPlatformCurrent());
+
     mInitialized = true;
 
     return NoError();
@@ -1214,6 +1220,9 @@ Error Display::terminate(Thread *thread, TerminateReason terminateReason)
     }
 
     mImplementation->terminate();
+
+    mSingleThreadPool.reset();
+    mMultiThreadPool.reset();
 
     mDeviceLost = false;
 
@@ -2509,6 +2518,16 @@ Error Display::queryDmaBufModifiers(EGLint format,
     ANGLE_TRY(mImplementation->queryDmaBufModifiers(format, max_modifiers, modifiers, external_only,
                                                     num_modifiers));
     return NoError();
+}
+
+angle::ImageLoadContext Display::getImageLoadContext() const
+{
+    angle::ImageLoadContext imageLoadContext;
+
+    imageLoadContext.singleThreadPool = mSingleThreadPool;
+    imageLoadContext.multiThreadPool  = mMultiThreadPool;
+
+    return imageLoadContext;
 }
 
 }  // namespace egl

@@ -215,6 +215,10 @@ config("internal_config") {
   if (angle_test_enable_system_egl) {
     defines += [ "ANGLE_TEST_ENABLE_SYSTEM_EGL" ]
   }
+
+  if (angle_debug_layers_enabled) {
+    defines += [ "ANGLE_DEBUG_LAYERS_ENABLED" ]
+  }
 }
 
 config("constructor_and_destructor_warnings") {
@@ -389,6 +393,11 @@ config("angle_common_config") {
   include_dirs = [ "src/common/third_party/base" ]
   if (is_android) {
     libs = [ "log" ]
+  }
+
+  defines = []
+  if (angle_delegate_workers) {
+    defines += [ "ANGLE_DELEGATE_WORKERS" ]
   }
 }
 
@@ -812,10 +821,6 @@ angle_source_set("angle_version_info") {
 
 config("angle_backend_config") {
   defines = []
-
-  if (angle_delegate_workers) {
-    defines += [ "ANGLE_DELEGATE_WORKERS" ]
-  }
 
   if (angle_force_context_check_every_call) {
     defines += [ "ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL=1" ]

@@ -22,6 +22,7 @@
 #include "common/platform.h"
 #include "common/system_utils.h"
 #include "common/utilities.h"
+#include "image_util/loadimage.h"
 #include "libANGLE/Buffer.h"
 #include "libANGLE/Compiler.h"
 #include "libANGLE/Display.h"
@@ -498,8 +499,6 @@ Context::Context(egl::Display *display,
       mDrawFramebufferObserverBinding(this, kDrawFramebufferSubjectIndex),
       mReadFramebufferObserverBinding(this, kReadFramebufferSubjectIndex),
       mProgramPipelineObserverBinding(this, kProgramPipelineSubjectIndex),
-      mSingleThreadPool(nullptr),
-      mMultiThreadPool(nullptr),
       mFrameCapture(new angle::FrameCapture),
       mRefCount(0),
       mOverlay(mImplementation.get()),
@@ -845,9 +844,6 @@ egl::Error Context::onDestroy(const egl::Display *display)
     mState.mFramebufferManager->release(this);
     mState.mMemoryObjectManager->release(this);
     mState.mSemaphoreManager->release(this);
-
-    mSingleThreadPool.reset();
-    mMultiThreadPool.reset();
 
     mImplementation->onDestroy(this);
 
@@ -4408,14 +4404,6 @@ void Context::updateCaps()
     {
         mValidBufferBindings.set(BufferBinding::Texture);
     }
-
-    if (!mState.mExtensions.parallelShaderCompileKHR)
-    {
-        mSingleThreadPool = angle::WorkerThreadPool::Create(false);
-    }
-    mMultiThreadPool = angle::WorkerThreadPool::Create(
-        mState.mExtensions.parallelShaderCompileKHR ||
-        getFrontendFeatures().enableCompressingPipelineCacheInThreadPool.enabled);
 
     // Reinitialize some dirty bits that depend on extensions.
     if (mState.isRobustResourceInitEnabled())
@@ -9446,14 +9434,10 @@ GLenum Context::getConvertedRenderbufferFormat(GLenum internalformat) const
 
 void Context::maxShaderCompilerThreads(GLuint count)
 {
-    GLuint oldCount = mState.getMaxShaderCompilerThreads();
+    // A count of zero specifies a request for no parallel compiling or linking.  This is handled in
+    // getShaderCompileThreadPool.  Otherwise the count itself has no effect as the pool is shared
+    // between contexts.
     mState.setMaxShaderCompilerThreads(count);
-    // A count of zero specifies a request for no parallel compiling or linking.
-    if ((oldCount == 0 || count == 0) && (oldCount != 0 || count != 0))
-    {
-        mMultiThreadPool = angle::WorkerThreadPool::Create(count > 0);
-    }
-    mMultiThreadPool->setMaxThreads(count);
     mImplementation->setMaxShaderCompilerThreads(count);
 }
 
@@ -9470,6 +9454,20 @@ void Context::getFramebufferParameterivMESA(GLenum target, GLenum pname, GLint *
 bool Context::isGLES1() const
 {
     return mState.isGLES1();
+}
+
+std::shared_ptr<angle::WorkerThreadPool> Context::getShaderCompileThreadPool() const
+{
+    if (mState.mExtensions.parallelShaderCompileKHR && mState.getMaxShaderCompilerThreads() > 0)
+    {
+        return mDisplay->getMultiThreadPool();
+    }
+    return mDisplay->getSingleThreadPool();
+}
+
+std::shared_ptr<angle::WorkerThreadPool> Context::getWorkerThreadPool() const
+{
+    return mDisplay->getMultiThreadPool();
 }
 
 void Context::onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMessage message)

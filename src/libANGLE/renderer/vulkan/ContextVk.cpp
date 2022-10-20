@@ -12,6 +12,7 @@
 #include "common/bitset_utils.h"
 #include "common/debug.h"
 #include "common/utilities.h"
+#include "image_util/loadimage.h"
 #include "libANGLE/Context.h"
 #include "libANGLE/Display.h"
 #include "libANGLE/Program.h"
@@ -39,8 +40,6 @@
 #include "libANGLE/renderer/vulkan/TextureVk.h"
 #include "libANGLE/renderer/vulkan/TransformFeedbackVk.h"
 #include "libANGLE/renderer/vulkan/VertexArrayVk.h"
-
-#include "libANGLE/trace.h"
 
 #include <iostream>
 
@@ -7888,5 +7887,10 @@ vk::ComputePipelineFlags ContextVk::getComputePipelineFlags() const
     }
 
     return pipelineFlags;
+}
+
+angle::ImageLoadContext ContextVk::getImageLoadContext() const
+{
+    return getRenderer()->getDisplay()->getImageLoadContext();
 }
 }  // namespace rx

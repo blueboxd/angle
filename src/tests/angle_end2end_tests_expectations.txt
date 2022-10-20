@@ -577,6 +577,9 @@
 // skipped.
 7376 PIXEL6 VULKAN : *_EmulateTransformFeedback_NoSupportsTransformFeedbackExtension_NoSupportsGeometryStreamsCapability = SKIP
 
+// Crashing in Mali shader compiler
+217922015 PIXEL6 VULKAN : GLSLTest_ES3.NestedPowFromUniform/* = SKIP
+
 // iOS
 7653 IOS : BufferDataTestES3.DrawWithNotCallingBufferData/ES3_OpenGL = SKIP
 7653 IOS : DepthStencilFormatsTest.DepthStencilReadback_DepthStencil/ES2_OpenGL = SKIP
@@ -661,6 +664,13 @@
 5491 IOS : IOSurfaceClientBufferTest.ReadFromToP010IOSurface/ES3_OpenGL = SKIP
 5491 IOS : IOSurfaceClientBufferTest.MakeCurrent/ES2_OpenGL = SKIP
 5491 IOS : IOSurfaceClientBufferTest.MakeCurrent/ES3_OpenGL = SKIP
+
+7768 IOS : ClipDistanceTest.OneClipDistance/ES2_OpenGL = SKIP
+7768 IOS : ClipDistanceTest.OneClipDistance/ES3_OpenGL = SKIP
+7768 IOS : ClipDistanceTest.ThreeClipDistances/ES2_OpenGL = SKIP
+7768 IOS : ClipDistanceTest.ThreeClipDistances/ES3_OpenGL = SKIP
+7768 IOS : ClipDistanceTest.ThreeClipDistancesRedeclared/ES2_OpenGL = SKIP
+7768 IOS : ClipDistanceTest.ThreeClipDistancesRedeclared/ES3_OpenGL = SKIP
 
 // Test is disabled as it only pertains to desktop GLSL
 6197 : GLSLTest_ES31.InterpolateAtWithSwizzle/* = SKIP

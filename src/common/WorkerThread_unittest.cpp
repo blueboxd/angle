@@ -9,7 +9,7 @@
 #include <gtest/gtest.h>
 #include <array>
 
-#include "libANGLE/WorkerThread.h"
+#include "common/WorkerThread.h"
 
 using namespace angle;
 
@@ -28,17 +28,16 @@ TEST(WorkerPoolTest, SimpleTask)
     };
 
     std::array<std::shared_ptr<WorkerThreadPool>, 2> pools = {
-        {WorkerThreadPool::Create(false), WorkerThreadPool::Create(true)}};
+        {WorkerThreadPool::Create(1, ANGLEPlatformCurrent()),
+         WorkerThreadPool::Create(0, ANGLEPlatformCurrent())}};
     for (auto &pool : pools)
     {
         std::array<std::shared_ptr<TestTask>, 4> tasks = {
             {std::make_shared<TestTask>(), std::make_shared<TestTask>(),
              std::make_shared<TestTask>(), std::make_shared<TestTask>()}};
         std::array<std::shared_ptr<WaitableEvent>, 4> waitables = {
-            {WorkerThreadPool::PostWorkerTask(pool, tasks[0]),
-             WorkerThreadPool::PostWorkerTask(pool, tasks[1]),
-             WorkerThreadPool::PostWorkerTask(pool, tasks[2]),
-             WorkerThreadPool::PostWorkerTask(pool, tasks[3])}};
+            {pool->postWorkerTask(tasks[0]), pool->postWorkerTask(tasks[1]),
+             pool->postWorkerTask(tasks[2]), pool->postWorkerTask(tasks[3])}};
 
         WaitableEvent::WaitMany(&waitables);
 

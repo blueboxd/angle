@@ -8,15 +8,15 @@
 //   Can be implemented as different targets, depending on platform.
 //
 
-#ifndef LIBANGLE_WORKER_THREAD_H_
-#define LIBANGLE_WORKER_THREAD_H_
+#ifndef COMMON_WORKER_THREAD_H_
+#define COMMON_WORKER_THREAD_H_
 
 #include <array>
 #include <memory>
 #include <vector>
 
 #include "common/debug.h"
-#include "libANGLE/features.h"
+#include "platform/PlatformMethods.h"
 
 namespace angle
 {
@@ -43,7 +43,6 @@ class WaitableEvent : angle::NonCopyable
 
     // Peeks whether the event is ready. If ready, wait() will not block.
     virtual bool isReady() = 0;
-    void setWorkerThreadPool(std::shared_ptr<WorkerThreadPool> pool) { mPool = pool; }
 
     template <size_t Count>
     static void WaitMany(std::array<std::shared_ptr<WaitableEvent>, Count> *waitables)
@@ -54,12 +53,9 @@ class WaitableEvent : angle::NonCopyable
             (*waitables)[index]->wait();
         }
     }
-
-  private:
-    std::shared_ptr<WorkerThreadPool> mPool;
 };
 
-// A mock waitable event.
+// A waitable event that is always ready.
 class WaitableEventDone final : public WaitableEvent
 {
   public:
@@ -75,20 +71,23 @@ class WorkerThreadPool : angle::NonCopyable
     WorkerThreadPool();
     virtual ~WorkerThreadPool();
 
-    static std::shared_ptr<WorkerThreadPool> Create(bool multithreaded);
-    static std::shared_ptr<WaitableEvent> PostWorkerTask(std::shared_ptr<WorkerThreadPool> pool,
-                                                         std::shared_ptr<Closure> task);
+    // Creates a new thread pool.
+    // If numThreads is 0, the pool will choose the best number of threads to run.
+    // If numThreads is 1, the pool will be single-threaded. Tasks will run on the calling thread.
+    // Other numbers indicate how many threads the pool should spawn.
+    // Note that based on build options, this class may not actually run tasks in threads, or it may
+    // hook into the provided PlatformMethods::postWorkerTask, in which case numThreads is ignored.
+    static std::shared_ptr<WorkerThreadPool> Create(size_t numThreads, PlatformMethods *platform);
 
-    virtual void setMaxThreads(size_t maxThreads) = 0;
+    // Returns an event to wait on for the task to finish.  If the pool fails to create the task,
+    // returns null.  This function is thread-safe.
+    virtual std::shared_ptr<WaitableEvent> postWorkerTask(std::shared_ptr<Closure> task) = 0;
 
     virtual bool isAsync() = 0;
 
   private:
-    // Returns an event to wait on for the task to finish.
-    // If the pool fails to create the task, returns null.
-    virtual std::shared_ptr<WaitableEvent> postWorkerTask(std::shared_ptr<Closure> task) = 0;
 };
 
 }  // namespace angle
 
-#endif  // LIBANGLE_WORKER_THREAD_H_
+#endif  // COMMON_WORKER_THREAD_H_
