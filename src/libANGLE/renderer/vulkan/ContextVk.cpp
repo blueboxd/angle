@@ -4283,6 +4283,22 @@ void ContextVk::updateColorMasks()
     onColorAccessChange();
 }
 
+void ContextVk::updateMissingOutputsMask()
+{
+    const gl::ProgramExecutable *executable = mState.getProgramExecutable();
+    if (executable == nullptr)
+    {
+        return;
+    }
+
+    const gl::DrawBufferMask framebufferMask    = mState.getDrawFramebuffer()->getDrawBufferMask();
+    const gl::DrawBufferMask shaderOutMask      = executable->getActiveOutputVariablesMask();
+    const gl::DrawBufferMask missingOutputsMask = ~shaderOutMask & framebufferMask;
+
+    mGraphicsPipelineDesc->updateMissingOutputsMask(&mGraphicsPipelineTransition,
+                                                    missingOutputsMask);
+}
+
 void ContextVk::updateBlendFuncsAndEquations()
 {
     const gl::BlendStateExt &blendStateExt = mState.getBlendStateExt();
@@ -4764,6 +4780,12 @@ angle::Result ContextVk::invalidateProgramExecutableHelper(const gl::Context *co
         }
 
         updateStencilWriteWorkaround();
+
+        mGraphicsPipelineDesc->updateVertexShaderComponentTypes(
+            &mGraphicsPipelineTransition, executable->getNonBuiltinAttribLocationsMask(),
+            executable->getAttributesTypeMask());
+
+        updateMissingOutputsMask();
     }
 
     return angle::Result::Continue;
@@ -5037,6 +5059,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 updateViewport(drawFramebufferVk, glState.getViewport(), glState.getNearPlane(),
                                glState.getFarPlane());
                 updateColorMasks();
+                updateMissingOutputsMask();
                 updateRasterizationSamples(drawFramebufferVk->getSamples());
                 updateRasterizerDiscardEnabled(
                     mState.isQueryActive(gl::QueryType::PrimitivesGenerated));
@@ -5669,6 +5692,9 @@ angle::Result ContextVk::onFramebufferChange(FramebufferVk *framebufferVk, gl::C
     // Update dither based on attachment formats.
     updateDither();
 
+    // Attachments might have changed.
+    updateMissingOutputsMask();
+
     if (mState.getProgramExecutable())
     {
         ANGLE_TRY(invalidateCurrentShaderResources(command));
@@ -6089,7 +6115,7 @@ vk::DynamicQueryPool *ContextVk::getQueryPool(gl::QueryType queryType)
     }
 
     // Assert that timestamp extension is available if needed.
-    ASSERT(queryType != gl::QueryType::Timestamp && queryType != gl::QueryType::TimeElapsed ||
+    ASSERT((queryType != gl::QueryType::Timestamp && queryType != gl::QueryType::TimeElapsed) ||
            mRenderer->getQueueFamilyProperties().timestampValidBits > 0);
     ASSERT(mQueryPools[queryType].isValid());
     return &mQueryPools[queryType];

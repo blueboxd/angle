@@ -1649,11 +1649,12 @@ constexpr char kDescriptorTypeNameMap[][30] = {"sampler",
 enum class PipelineState
 {
     VertexAttribFormat,
-    VertexAttribDivisor    = VertexAttribFormat + gl::MAX_VERTEX_ATTRIBS,
-    VertexAttribOffset     = VertexAttribDivisor + gl::MAX_VERTEX_ATTRIBS,
-    VertexAttribStride     = VertexAttribOffset + gl::MAX_VERTEX_ATTRIBS,
-    VertexAttribCompressed = VertexAttribStride + gl::MAX_VERTEX_ATTRIBS,
-    RenderPassSamples      = VertexAttribCompressed + gl::MAX_VERTEX_ATTRIBS,
+    VertexAttribDivisor             = VertexAttribFormat + gl::MAX_VERTEX_ATTRIBS,
+    VertexAttribOffset              = VertexAttribDivisor + gl::MAX_VERTEX_ATTRIBS,
+    VertexAttribStride              = VertexAttribOffset + gl::MAX_VERTEX_ATTRIBS,
+    VertexAttribCompressed          = VertexAttribStride + gl::MAX_VERTEX_ATTRIBS,
+    VertexAttribShaderComponentType = VertexAttribCompressed + gl::MAX_VERTEX_ATTRIBS,
+    RenderPassSamples               = VertexAttribShaderComponentType + gl::MAX_VERTEX_ATTRIBS,
     RenderPassColorAttachmentRange,
     RenderPassViewCount,
     RenderPassSrgbWriteControl,
@@ -1685,6 +1686,7 @@ enum class PipelineState
     RasterizerDiscardEnable,
     ColorWriteMask,
     BlendEnableMask = ColorWriteMask + gl::IMPLEMENTATION_MAX_DRAW_BUFFERS,
+    MissingOutputsMask,
     SrcColorBlendFactor,
     DstColorBlendFactor   = SrcColorBlendFactor + gl::IMPLEMENTATION_MAX_DRAW_BUFFERS,
     ColorBlendOp          = DstColorBlendFactor + gl::IMPLEMENTATION_MAX_DRAW_BUFFERS,
@@ -1731,14 +1733,17 @@ using PipelineStateBitSet   = angle::BitSetArray<angle::EnumSize<PipelineState>(
     uint32_t *vaDivisors                      = &(*valuesOut)[PipelineState::VertexAttribDivisor];
     uint32_t *vaOffsets                       = &(*valuesOut)[PipelineState::VertexAttribOffset];
     uint32_t *vaStrides                       = &(*valuesOut)[PipelineState::VertexAttribStride];
-    uint32_t *vaCompressed = &(*valuesOut)[PipelineState::VertexAttribCompressed];
+    uint32_t *vaCompressed          = &(*valuesOut)[PipelineState::VertexAttribCompressed];
+    uint32_t *vaShaderComponentType = &(*valuesOut)[PipelineState::VertexAttribShaderComponentType];
     for (uint32_t attribIndex = 0; attribIndex < gl::MAX_VERTEX_ATTRIBS; ++attribIndex)
     {
-        vaFormats[attribIndex]    = vertex.attribs[attribIndex].format;
-        vaDivisors[attribIndex]   = vertex.attribs[attribIndex].divisor;
-        vaOffsets[attribIndex]    = vertex.attribs[attribIndex].offset;
-        vaStrides[attribIndex]    = vertex.strides[attribIndex];
-        vaCompressed[attribIndex] = vertex.attribs[attribIndex].compressed;
+        vaFormats[attribIndex]             = vertex.attribs[attribIndex].format;
+        vaDivisors[attribIndex]            = vertex.attribs[attribIndex].divisor;
+        vaOffsets[attribIndex]             = vertex.attribs[attribIndex].offset;
+        vaStrides[attribIndex]             = vertex.strides[attribIndex];
+        vaCompressed[attribIndex]          = vertex.attribs[attribIndex].compressed;
+        vaShaderComponentType[attribIndex] = static_cast<uint32_t>(gl::GetComponentTypeMask(
+            gl::ComponentTypeMask(vertex.shaderAttribComponentType), attribIndex));
     }
 
     const PackedInputAssemblyState &inputAssembly       = vertexInputState.inputAssembly;
@@ -1829,9 +1834,10 @@ using PipelineStateBitSet   = angle::BitSetArray<angle::EnumSize<PipelineState>(
     }
 
     const PackedBlendMaskAndLogicOpState &blendMaskAndLogic = fragmentOutputState.blendMaskAndLogic;
-    (*valuesOut)[PipelineState::BlendEnableMask] = blendMaskAndLogic.bits.blendEnableMask;
-    (*valuesOut)[PipelineState::LogicOpEnable]   = blendMaskAndLogic.bits.logicOpEnable;
-    (*valuesOut)[PipelineState::LogicOp]         = blendMaskAndLogic.bits.logicOp;
+    (*valuesOut)[PipelineState::BlendEnableMask]    = blendMaskAndLogic.bits.blendEnableMask;
+    (*valuesOut)[PipelineState::LogicOpEnable]      = blendMaskAndLogic.bits.logicOpEnable;
+    (*valuesOut)[PipelineState::LogicOp]            = blendMaskAndLogic.bits.logicOp;
+    (*valuesOut)[PipelineState::MissingOutputsMask] = blendMaskAndLogic.bits.missingOutputsMask;
 }
 
 [[maybe_unused]] PipelineStateBitSet GetCommonPipelineState(
@@ -1874,11 +1880,11 @@ PipelineState GetPipelineState(size_t stateIndex, bool *isRangedOut, size_t *sub
     constexpr PipelineState kRangedStates[] = {
         PipelineState::VertexAttribFormat,     PipelineState::VertexAttribDivisor,
         PipelineState::VertexAttribOffset,     PipelineState::VertexAttribStride,
-        PipelineState::VertexAttribCompressed, PipelineState::RenderPassColorFormat,
-        PipelineState::ColorWriteMask,         PipelineState::SrcColorBlendFactor,
-        PipelineState::DstColorBlendFactor,    PipelineState::ColorBlendOp,
-        PipelineState::SrcAlphaBlendFactor,    PipelineState::DstAlphaBlendFactor,
-        PipelineState::AlphaBlendOp,
+        PipelineState::VertexAttribCompressed, PipelineState::VertexAttribShaderComponentType,
+        PipelineState::RenderPassColorFormat,  PipelineState::ColorWriteMask,
+        PipelineState::SrcColorBlendFactor,    PipelineState::DstColorBlendFactor,
+        PipelineState::ColorBlendOp,           PipelineState::SrcAlphaBlendFactor,
+        PipelineState::DstAlphaBlendFactor,    PipelineState::AlphaBlendOp,
     };
 
     for (PipelineState ps : kRangedStates)
@@ -1891,6 +1897,7 @@ PipelineState GetPipelineState(size_t stateIndex, bool *isRangedOut, size_t *sub
             case PipelineState::VertexAttribOffset:
             case PipelineState::VertexAttribStride:
             case PipelineState::VertexAttribCompressed:
+            case PipelineState::VertexAttribShaderComponentType:
                 range = gl::MAX_VERTEX_ATTRIBS;
                 break;
             default:
@@ -1922,6 +1929,7 @@ PipelineState GetPipelineState(size_t stateIndex, bool *isRangedOut, size_t *sub
         {PipelineState::VertexAttribOffset, "va_offset"},
         {PipelineState::VertexAttribStride, "va_stride"},
         {PipelineState::VertexAttribCompressed, "va_compressed"},
+        {PipelineState::VertexAttribShaderComponentType, "va_shader_component_type"},
         {PipelineState::RenderPassSamples, "rp_samples"},
         {PipelineState::RenderPassColorAttachmentRange, "rp_color_range"},
         {PipelineState::RenderPassViewCount, "rp_views"},
@@ -1954,6 +1962,7 @@ PipelineState GetPipelineState(size_t stateIndex, bool *isRangedOut, size_t *sub
         {PipelineState::RasterizerDiscardEnable, "rasterization_discard"},
         {PipelineState::ColorWriteMask, "color_write"},
         {PipelineState::BlendEnableMask, "blend_mask"},
+        {PipelineState::MissingOutputsMask, "missing_outputs_mask"},
         {PipelineState::SrcColorBlendFactor, "src_color_blend"},
         {PipelineState::DstColorBlendFactor, "dst_color_blend"},
         {PipelineState::ColorBlendOp, "color_blend"},
@@ -2012,6 +2021,30 @@ PipelineState GetPipelineState(size_t stateIndex, bool *isRangedOut, size_t *sub
             break;
 
         // Special formatting for some state
+        case PipelineState::VertexAttribShaderComponentType:
+            out << "=";
+            switch (state)
+            {
+                case 0:
+                    static_assert(static_cast<uint32_t>(gl::ComponentType::Float) == 0);
+                    out << "float";
+                    break;
+                case 1:
+                    static_assert(static_cast<uint32_t>(gl::ComponentType::Int) == 1);
+                    out << "int";
+                    break;
+                case 2:
+                    static_assert(static_cast<uint32_t>(gl::ComponentType::UnsignedInt) == 2);
+                    out << "uint";
+                    break;
+                case 3:
+                    static_assert(static_cast<uint32_t>(gl::ComponentType::NoType) == 3);
+                    out << "none";
+                    break;
+                default:
+                    UNREACHABLE();
+            }
+            break;
         case PipelineState::Topology:
             out << "=";
             switch (state)
@@ -2289,6 +2322,7 @@ PipelineState GetPipelineState(size_t stateIndex, bool *isRangedOut, size_t *sub
         case PipelineState::SampleMask:
         case PipelineState::ColorWriteMask:
         case PipelineState::BlendEnableMask:
+        case PipelineState::MissingOutputsMask:
         case PipelineState::EmulatedDitherControl:
             out << "=0x" << std::hex << state << std::dec;
             break;
@@ -2315,6 +2349,7 @@ PipelineState GetPipelineState(size_t stateIndex, bool *isRangedOut, size_t *sub
         {PipelineState::VertexAttribOffset, 0},
         {PipelineState::VertexAttribStride, 0},
         {PipelineState::VertexAttribCompressed, 0},
+        {PipelineState::VertexAttribShaderComponentType, 0},
         {PipelineState::RenderPassSamples, 1},
         {PipelineState::RenderPassColorAttachmentRange, 0},
         {PipelineState::RenderPassViewCount, 0},
@@ -2348,6 +2383,7 @@ PipelineState GetPipelineState(size_t stateIndex, bool *isRangedOut, size_t *sub
         {PipelineState::RasterizerDiscardEnable, 0},
         {PipelineState::ColorWriteMask, 0},
         {PipelineState::BlendEnableMask, 0},
+        {PipelineState::MissingOutputsMask, 0},
         {PipelineState::SrcColorBlendFactor, VK_BLEND_FACTOR_ONE},
         {PipelineState::DstColorBlendFactor, VK_BLEND_FACTOR_ZERO},
         {PipelineState::ColorBlendOp, VK_BLEND_OP_ADD},
@@ -2789,6 +2825,7 @@ void GraphicsPipelineDesc::initDefaults(const ContextVk *contextVk, GraphicsPipe
             SetBitField(packedAttrib.compressed, 0);
             SetBitField(packedAttrib.offset, 0);
         }
+        mVertexInput.vertex.shaderAttribComponentType = 0;
         memset(mVertexInput.vertex.strides, 0, sizeof(mVertexInput.vertex.strides));
 
         SetBitField(mVertexInput.inputAssembly.bits.topology, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
@@ -2876,19 +2913,15 @@ void GraphicsPipelineDesc::initDefaults(const ContextVk *contextVk, GraphicsPipe
         contextVk->shouldUsePipelineRobustness();
 }
 
-angle::Result GraphicsPipelineDesc::initializePipeline(
-    Context *context,
-    PipelineCacheAccess *pipelineCache,
-    GraphicsPipelineSubset subset,
-    const RenderPass &compatibleRenderPass,
-    const PipelineLayout &pipelineLayout,
-    const gl::AttributesMask &activeAttribLocationsMask,
-    const gl::ComponentTypeMask &programAttribsTypeMask,
-    const gl::DrawBufferMask &missingOutputsMask,
-    const ShaderAndSerialMap &shaders,
-    const SpecializationConstants &specConsts,
-    Pipeline *pipelineOut,
-    CacheLookUpFeedback *feedbackOut) const
+angle::Result GraphicsPipelineDesc::initializePipeline(Context *context,
+                                                       PipelineCacheAccess *pipelineCache,
+                                                       GraphicsPipelineSubset subset,
+                                                       const RenderPass &compatibleRenderPass,
+                                                       const PipelineLayout &pipelineLayout,
+                                                       const ShaderAndSerialMap &shaders,
+                                                       const SpecializationConstants &specConsts,
+                                                       Pipeline *pipelineOut,
+                                                       CacheLookUpFeedback *feedbackOut) const
 {
     GraphicsPipelineVertexInputVulkanStructs vertexInputState;
     GraphicsPipelineShadersVulkanStructs shadersState;
@@ -2909,9 +2942,7 @@ angle::Result GraphicsPipelineDesc::initializePipeline(
 
     if (hasVertexInput)
     {
-        initializePipelineVertexInputState(context, activeAttribLocationsMask,
-                                           programAttribsTypeMask, &vertexInputState,
-                                           &dynamicStateList);
+        initializePipelineVertexInputState(context, &vertexInputState, &dynamicStateList);
 
         createInfo.pVertexInputState   = &vertexInputState.vertexInputState;
         createInfo.pInputAssemblyState = &vertexInputState.inputAssemblyState;
@@ -2941,8 +2972,7 @@ angle::Result GraphicsPipelineDesc::initializePipeline(
 
     if (hasFragmentOutput)
     {
-        initializePipelineFragmentOutputState(context, missingOutputsMask, &fragmentOutputState,
-                                              &dynamicStateList);
+        initializePipelineFragmentOutputState(context, &fragmentOutputState, &dynamicStateList);
 
         createInfo.pColorBlendState = &fragmentOutputState.blendState;
     }
@@ -3008,8 +3038,6 @@ angle::Result GraphicsPipelineDesc::initializePipeline(
 
 void GraphicsPipelineDesc::initializePipelineVertexInputState(
     Context *context,
-    const gl::AttributesMask &activeAttribLocationsMask,
-    const gl::ComponentTypeMask &programAttribsTypeMask,
     GraphicsPipelineVertexInputVulkanStructs *stateOut,
     GraphicsPipelineDynamicStateList *dynamicStateListOut) const
 {
@@ -3019,7 +3047,8 @@ void GraphicsPipelineDesc::initializePipelineVertexInputState(
     stateOut->divisorState.sType =
         VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO_EXT;
     stateOut->divisorState.pVertexBindingDivisors = stateOut->divisorDesc.data();
-    for (size_t attribIndexSizeT : activeAttribLocationsMask)
+    for (size_t attribIndexSizeT :
+         gl::AttributesMask(mVertexInput.inputAssembly.bits.programActiveAttributeLocations))
     {
         const uint32_t attribIndex = static_cast<uint32_t>(attribIndexSizeT);
 
@@ -3051,8 +3080,8 @@ void GraphicsPipelineDesc::initializePipelineVertexInputState(
 
         const gl::ComponentType attribType = GetVertexAttributeComponentType(
             intendedFormat.isPureInt(), intendedFormat.vertexAttribType);
-        const gl::ComponentType programAttribType =
-            gl::GetComponentTypeMask(programAttribsTypeMask, attribIndex);
+        const gl::ComponentType programAttribType = gl::GetComponentTypeMask(
+            gl::ComponentTypeMask(mVertexInput.vertex.shaderAttribComponentType), attribIndex);
 
         // If using dynamic state for stride, the value for stride is unconditionally 0 here.
         // |ContextVk::handleDirtyGraphicsVertexBuffers| implements the same fix when setting stride
@@ -3391,7 +3420,6 @@ void GraphicsPipelineDesc::initializePipelineSharedNonVertexInputState(
 
 void GraphicsPipelineDesc::initializePipelineFragmentOutputState(
     Context *context,
-    const gl::DrawBufferMask &missingOutputsMask,
     GraphicsPipelineFragmentOutputVulkanStructs *stateOut,
     GraphicsPipelineDynamicStateList *dynamicStateListOut) const
 {
@@ -3463,7 +3491,7 @@ void GraphicsPipelineDesc::initializePipelineFragmentOutputState(
         }
 
         ASSERT(context->getRenderer()->getNativeExtensions().robustFragmentShaderOutputANGLE);
-        if (missingOutputsMask[colorIndexGL])
+        if ((mFragmentOutput.blendMaskAndLogic.bits.missingOutputsMask >> colorIndexGL & 1) != 0)
         {
             state.colorWriteMask = 0;
         }
@@ -3520,6 +3548,29 @@ void GraphicsPipelineDesc::updateVertexInput(ContextVk *contextVk,
         transition->set(ANGLE_GET_INDEXED_TRANSITION_BIT(
             mVertexInput.vertex.strides, attribIndex,
             sizeof(mVertexInput.vertex.strides[0]) * kBitsPerByte));
+    }
+}
+
+void GraphicsPipelineDesc::updateVertexShaderComponentTypes(
+    GraphicsPipelineTransitionBits *transition,
+    gl::AttributesMask activeAttribLocations,
+    gl::ComponentTypeMask componentTypeMask)
+{
+    if (mVertexInput.inputAssembly.bits.programActiveAttributeLocations !=
+        activeAttribLocations.bits())
+    {
+        SetBitField(mVertexInput.inputAssembly.bits.programActiveAttributeLocations,
+                    activeAttribLocations.bits());
+        transition->set(ANGLE_GET_TRANSITION_BIT(mVertexInput.inputAssembly.bits));
+    }
+
+    const gl::ComponentTypeMask activeComponentTypeMask =
+        componentTypeMask & gl::GetActiveComponentTypeMask(activeAttribLocations);
+
+    if (mVertexInput.vertex.shaderAttribComponentType != activeComponentTypeMask.bits())
+    {
+        SetBitField(mVertexInput.vertex.shaderAttribComponentType, activeComponentTypeMask.bits());
+        transition->set(ANGLE_GET_TRANSITION_BIT(mVertexInput.vertex.shaderAttribComponentType));
     }
 }
 
@@ -3779,6 +3830,17 @@ void GraphicsPipelineDesc::updateColorWriteMasks(
     {
         transition->set(ANGLE_GET_INDEXED_TRANSITION_BIT(mFragmentOutput.blend.colorWriteMaskBits,
                                                          colorIndexGL, 4));
+    }
+}
+
+void GraphicsPipelineDesc::updateMissingOutputsMask(GraphicsPipelineTransitionBits *transition,
+                                                    gl::DrawBufferMask missingOutputsMask)
+{
+    if (mFragmentOutput.blendMaskAndLogic.bits.missingOutputsMask != missingOutputsMask.bits())
+    {
+        SetBitField(mFragmentOutput.blendMaskAndLogic.bits.missingOutputsMask,
+                    missingOutputsMask.bits());
+        transition->set(ANGLE_GET_TRANSITION_BIT(mFragmentOutput.blendMaskAndLogic.bits));
     }
 }
 
@@ -6120,9 +6182,6 @@ angle::Result GraphicsPipelineCache<Hash>::insertPipeline(
     PipelineCacheAccess *pipelineCache,
     const vk::RenderPass &compatibleRenderPass,
     const vk::PipelineLayout &pipelineLayout,
-    const gl::AttributesMask &activeAttribLocationsMask,
-    const gl::ComponentTypeMask &programAttribsTypeMask,
-    const gl::DrawBufferMask &missingOutputsMask,
     const vk::ShaderAndSerialMap &shaders,
     const vk::SpecializationConstants &specConsts,
     PipelineSource source,
@@ -6140,9 +6199,8 @@ angle::Result GraphicsPipelineCache<Hash>::insertPipeline(
             GraphicsPipelineCacheTypeHelper<Hash>::kSubset;
 
         ANGLE_TRY(desc.initializePipeline(contextVk, pipelineCache, kSubset, compatibleRenderPass,
-                                          pipelineLayout, activeAttribLocationsMask,
-                                          programAttribsTypeMask, missingOutputsMask, shaders,
-                                          specConsts, &newPipeline, &feedback));
+                                          pipelineLayout, shaders, specConsts, &newPipeline,
+                                          &feedback));
     }
 
     if (source == PipelineSource::WarmUp)
@@ -6185,9 +6243,6 @@ template angle::Result GraphicsPipelineCache<GraphicsPipelineDescCompleteHash>::
     PipelineCacheAccess *pipelineCache,
     const vk::RenderPass &compatibleRenderPass,
     const vk::PipelineLayout &pipelineLayout,
-    const gl::AttributesMask &activeAttribLocationsMask,
-    const gl::ComponentTypeMask &programAttribsTypeMask,
-    const gl::DrawBufferMask &missingOutputsMask,
     const vk::ShaderAndSerialMap &shaders,
     const vk::SpecializationConstants &specConsts,
     PipelineSource source,

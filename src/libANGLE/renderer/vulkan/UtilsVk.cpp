@@ -1693,8 +1693,7 @@ angle::Result UtilsVk::setupGraphicsProgram(ContextVk *contextVk,
     vk::PipelineHelper *helper;
     ANGLE_TRY(programAndPipelines->program.getGraphicsPipeline(
         contextVk, &programAndPipelines->pipelines, &pipelineCache, *compatibleRenderPass,
-        pipelineLayout.get(), PipelineSource::Utils, *pipelineDesc, gl::AttributesMask(),
-        gl::ComponentTypeMask(), gl::DrawBufferMask(), {}, &descPtr, &helper));
+        pipelineLayout.get(), PipelineSource::Utils, *pipelineDesc, {}, &descPtr, &helper));
     contextVk->getStartedRenderPassCommands().retainResource(helper);
     commandBuffer->bindGraphicsPipeline(helper->getPipeline());
 
@@ -2734,15 +2733,6 @@ angle::Result UtilsVk::stencilBlitResolveNoShaderExport(ContextVk *contextVk,
 
     uint32_t bufferRowLengthInUints = UnsignedCeilDivide(params.blitArea.width, sizeof(uint32_t));
     VkDeviceSize bufferSize = bufferRowLengthInUints * sizeof(uint32_t) * params.blitArea.height;
-
-    VkBufferCreateInfo blitBufferInfo = {};
-    blitBufferInfo.sType              = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    blitBufferInfo.flags              = 0;
-    blitBufferInfo.size               = bufferSize;
-    blitBufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    blitBufferInfo.sharingMode           = VK_SHARING_MODE_EXCLUSIVE;
-    blitBufferInfo.queueFamilyIndexCount = 0;
-    blitBufferInfo.pQueueFamilyIndices   = nullptr;
 
     ANGLE_TRY(blitBuffer.get().initSuballocation(
         contextVk, contextVk->getRenderer()->getDeviceLocalMemoryTypeIndex(),

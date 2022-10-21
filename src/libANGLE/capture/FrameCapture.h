@@ -11,11 +11,11 @@
 #define LIBANGLE_FRAME_CAPTURE_H_
 
 #include "common/PackedEnums.h"
+#include "common/frame_capture_utils.h"
 #include "common/system_utils.h"
 #include "libANGLE/Context.h"
 #include "libANGLE/Thread.h"
 #include "libANGLE/angletypes.h"
-#include "libANGLE/capture/frame_capture_utils_autogen.h"
 #include "libANGLE/entry_points_utils.h"
 
 namespace gl
@@ -26,150 +26,6 @@ enum class GLESEnum;
 
 namespace angle
 {
-
-using ParamData = std::vector<std::vector<uint8_t>>;
-struct ParamCapture : angle::NonCopyable
-{
-    ParamCapture();
-    ParamCapture(const char *nameIn, ParamType typeIn);
-    ~ParamCapture();
-
-    ParamCapture(ParamCapture &&other);
-    ParamCapture &operator=(ParamCapture &&other);
-
-    std::string name;
-    ParamType type;
-    ParamValue value;
-    gl::GLESEnum enumGroup;   // only used for param type GLenum, GLboolean and GLbitfield
-    gl::BigGLEnum bigGLEnum;  // only used for param type GLenum, GLboolean and GLbitfield
-    ParamData data;
-    int dataNElements           = 0;
-    int arrayClientPointerIndex = -1;
-    size_t readBufferSizeBytes  = 0;
-};
-
-class ParamBuffer final : angle::NonCopyable
-{
-  public:
-    ParamBuffer();
-    ~ParamBuffer();
-
-    ParamBuffer(ParamBuffer &&other);
-    ParamBuffer &operator=(ParamBuffer &&other);
-
-    template <typename T>
-    void addValueParam(const char *paramName, ParamType paramType, T paramValue);
-    template <typename T>
-    void setValueParamAtIndex(const char *paramName, ParamType paramType, T paramValue, int index);
-    template <typename T>
-    void addEnumParam(const char *paramName,
-                      gl::GLESEnum enumGroup,
-                      ParamType paramType,
-                      T paramValue);
-    template <typename T>
-    void addEnumParam(const char *paramName,
-                      gl::BigGLEnum enumGroup,
-                      ParamType paramType,
-                      T paramValue);
-
-    ParamCapture &getParam(const char *paramName, ParamType paramType, int index);
-    const ParamCapture &getParam(const char *paramName, ParamType paramType, int index) const;
-    ParamCapture &getParamFlexName(const char *paramName1,
-                                   const char *paramName2,
-                                   ParamType paramType,
-                                   int index);
-    const ParamCapture &getParamFlexName(const char *paramName1,
-                                         const char *paramName2,
-                                         ParamType paramType,
-                                         int index) const;
-    const ParamCapture &getReturnValue() const { return mReturnValueCapture; }
-
-    void addParam(ParamCapture &&param);
-    void addReturnValue(ParamCapture &&returnValue);
-    bool hasClientArrayData() const { return mClientArrayDataParam != -1; }
-    ParamCapture &getClientArrayPointerParameter();
-    size_t getReadBufferSize() const { return mReadBufferSize; }
-
-    const std::vector<ParamCapture> &getParamCaptures() const { return mParamCaptures; }
-
-  private:
-    std::vector<ParamCapture> mParamCaptures;
-    ParamCapture mReturnValueCapture;
-    int mClientArrayDataParam = -1;
-    size_t mReadBufferSize    = 0;
-};
-
-struct CallCapture
-{
-    CallCapture(EntryPoint entryPointIn, ParamBuffer &&paramsIn);
-    CallCapture(const std::string &customFunctionNameIn, ParamBuffer &&paramsIn);
-    ~CallCapture();
-
-    CallCapture(CallCapture &&other);
-    CallCapture &operator=(CallCapture &&other);
-
-    const char *name() const;
-
-    EntryPoint entryPoint;
-    std::string customFunctionName;
-    ParamBuffer params;
-    bool isActive = true;
-};
-
-class ReplayContext
-{
-  public:
-    ReplayContext(size_t readBufferSizebytes, const gl::AttribArray<size_t> &clientArraysSizebytes);
-    ~ReplayContext();
-
-    template <typename T>
-    T getReadBufferPointer(const ParamCapture &param)
-    {
-        ASSERT(param.readBufferSizeBytes > 0);
-        ASSERT(mReadBuffer.size() >= param.readBufferSizeBytes);
-        return reinterpret_cast<T>(mReadBuffer.data());
-    }
-    template <typename T>
-    T getAsConstPointer(const ParamCapture &param)
-    {
-        if (param.arrayClientPointerIndex != -1)
-        {
-            return reinterpret_cast<T>(mClientArraysBuffer[param.arrayClientPointerIndex].data());
-        }
-
-        if (!param.data.empty())
-        {
-            ASSERT(param.data.size() == 1);
-            return reinterpret_cast<T>(param.data[0].data());
-        }
-
-        return nullptr;
-    }
-
-    template <typename T>
-    T getAsPointerConstPointer(const ParamCapture &param)
-    {
-        static_assert(sizeof(typename std::remove_pointer<T>::type) == sizeof(uint8_t *),
-                      "pointer size not match!");
-
-        ASSERT(!param.data.empty());
-        mPointersBuffer.clear();
-        mPointersBuffer.reserve(param.data.size());
-        for (const std::vector<uint8_t> &data : param.data)
-        {
-            mPointersBuffer.emplace_back(data.data());
-        }
-        return reinterpret_cast<T>(mPointersBuffer.data());
-    }
-
-    gl::AttribArray<std::vector<uint8_t>> &getClientArraysBuffer() { return mClientArraysBuffer; }
-
-  private:
-    std::vector<uint8_t> mReadBuffer;
-    std::vector<const uint8_t *> mPointersBuffer;
-    gl::AttribArray<std::vector<uint8_t>> mClientArraysBuffer;
-};
-
 // Helper to use unique IDs for each local data variable.
 class DataCounters final : angle::NonCopyable
 {
@@ -654,7 +510,6 @@ class FrameCaptureShared final : angle::NonCopyable
     bool enabled() const { return mEnabled; }
 
     bool isCapturing() const;
-    void replay(gl::Context *context);
     uint32_t getFrameCount() const;
 
     // Returns a frame index starting from "1" as the first frame.
@@ -825,10 +680,6 @@ class FrameCaptureShared final : angle::NonCopyable
 
     void scanSetupCalls(const gl::Context *context, std::vector<CallCapture> &setupCalls);
 
-    static void ReplayCall(gl::Context *context,
-                           ReplayContext *replayContext,
-                           const CallCapture &call);
-
     std::vector<CallCapture> mFrameCalls;
     gl::ContextID mLastContextId;
 
@@ -918,51 +769,6 @@ void CaptureEGLCallToFrameCapture(CaptureFuncT captureFunc,
     frameCaptureShared->captureCall(context, std::move(call), true);
 }
 
-template <typename T>
-void ParamBuffer::addValueParam(const char *paramName, ParamType paramType, T paramValue)
-{
-    ParamCapture capture(paramName, paramType);
-    InitParamValue(paramType, paramValue, &capture.value);
-    mParamCaptures.emplace_back(std::move(capture));
-}
-
-template <typename T>
-void ParamBuffer::setValueParamAtIndex(const char *paramName,
-                                       ParamType paramType,
-                                       T paramValue,
-                                       int index)
-{
-    ASSERT(mParamCaptures.size() > static_cast<size_t>(index));
-
-    ParamCapture capture(paramName, paramType);
-    InitParamValue(paramType, paramValue, &capture.value);
-    mParamCaptures[index] = std::move(capture);
-}
-
-template <typename T>
-void ParamBuffer::addEnumParam(const char *paramName,
-                               gl::GLESEnum enumGroup,
-                               ParamType paramType,
-                               T paramValue)
-{
-    ParamCapture capture(paramName, paramType);
-    InitParamValue(paramType, paramValue, &capture.value);
-    capture.enumGroup = enumGroup;
-    mParamCaptures.emplace_back(std::move(capture));
-}
-
-template <typename T>
-void ParamBuffer::addEnumParam(const char *paramName,
-                               gl::BigGLEnum enumGroup,
-                               ParamType paramType,
-                               T paramValue)
-{
-    ParamCapture capture(paramName, paramType);
-    InitParamValue(paramType, paramValue, &capture.value);
-    capture.bigGLEnum = enumGroup;
-    mParamCaptures.emplace_back(std::move(capture));
-}
-
 // Pointer capture helpers.
 void CaptureMemory(const void *source, size_t size, ParamCapture *paramCapture);
 void CaptureString(const GLchar *str, ParamCapture *paramCapture);
@@ -1015,224 +821,6 @@ void CaptureShaderStrings(GLsizei count,
                           const GLint *length,
                           ParamCapture *paramCapture);
 
-template <ParamType ParamT, typename T>
-void WriteParamValueReplay(std::ostream &os, const CallCapture &call, T value);
-
-template <>
-void WriteParamValueReplay<ParamType::TGLboolean>(std::ostream &os,
-                                                  const CallCapture &call,
-                                                  GLboolean value);
-
-template <>
-void WriteParamValueReplay<ParamType::TGLbooleanPointer>(std::ostream &os,
-                                                         const CallCapture &call,
-                                                         GLboolean *value);
-
-template <>
-void WriteParamValueReplay<ParamType::TvoidConstPointer>(std::ostream &os,
-                                                         const CallCapture &call,
-                                                         const void *value);
-
-template <>
-void WriteParamValueReplay<ParamType::TvoidPointer>(std::ostream &os,
-                                                    const CallCapture &call,
-                                                    void *value);
-
-template <>
-void WriteParamValueReplay<ParamType::TGLfloatConstPointer>(std::ostream &os,
-                                                            const CallCapture &call,
-                                                            const GLfloat *value);
-
-template <>
-void WriteParamValueReplay<ParamType::TGLintConstPointer>(std::ostream &os,
-                                                          const CallCapture &call,
-                                                          const GLint *value);
-
-template <>
-void WriteParamValueReplay<ParamType::TGLsizeiPointer>(std::ostream &os,
-                                                       const CallCapture &call,
-                                                       GLsizei *value);
-
-template <>
-void WriteParamValueReplay<ParamType::TGLuintConstPointer>(std::ostream &os,
-                                                           const CallCapture &call,
-                                                           const GLuint *value);
-
-template <>
-void WriteParamValueReplay<ParamType::TGLDEBUGPROCKHR>(std::ostream &os,
-                                                       const CallCapture &call,
-                                                       GLDEBUGPROCKHR value);
-
-template <>
-void WriteParamValueReplay<ParamType::TGLDEBUGPROC>(std::ostream &os,
-                                                    const CallCapture &call,
-                                                    GLDEBUGPROC value);
-
-template <>
-void WriteParamValueReplay<ParamType::TBufferID>(std::ostream &os,
-                                                 const CallCapture &call,
-                                                 gl::BufferID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TFenceNVID>(std::ostream &os,
-                                                  const CallCapture &call,
-                                                  gl::FenceNVID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TFramebufferID>(std::ostream &os,
-                                                      const CallCapture &call,
-                                                      gl::FramebufferID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TMemoryObjectID>(std::ostream &os,
-                                                       const CallCapture &call,
-                                                       gl::MemoryObjectID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TProgramPipelineID>(std::ostream &os,
-                                                          const CallCapture &call,
-                                                          gl::ProgramPipelineID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TQueryID>(std::ostream &os,
-                                                const CallCapture &call,
-                                                gl::QueryID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TRenderbufferID>(std::ostream &os,
-                                                       const CallCapture &call,
-                                                       gl::RenderbufferID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TSamplerID>(std::ostream &os,
-                                                  const CallCapture &call,
-                                                  gl::SamplerID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TSemaphoreID>(std::ostream &os,
-                                                    const CallCapture &call,
-                                                    gl::SemaphoreID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TShaderProgramID>(std::ostream &os,
-                                                        const CallCapture &call,
-                                                        gl::ShaderProgramID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TTextureID>(std::ostream &os,
-                                                  const CallCapture &call,
-                                                  gl::TextureID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TTransformFeedbackID>(std::ostream &os,
-                                                            const CallCapture &call,
-                                                            gl::TransformFeedbackID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TVertexArrayID>(std::ostream &os,
-                                                      const CallCapture &call,
-                                                      gl::VertexArrayID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TUniformLocation>(std::ostream &os,
-                                                        const CallCapture &call,
-                                                        gl::UniformLocation value);
-
-template <>
-void WriteParamValueReplay<ParamType::TUniformBlockIndex>(std::ostream &os,
-                                                          const CallCapture &call,
-                                                          gl::UniformBlockIndex value);
-
-template <>
-void WriteParamValueReplay<ParamType::TGLsync>(std::ostream &os,
-                                               const CallCapture &call,
-                                               GLsync value);
-
-template <>
-void WriteParamValueReplay<ParamType::TGLeglImageOES>(std::ostream &os,
-                                                      const CallCapture &call,
-                                                      GLeglImageOES value);
-
-template <>
-void WriteParamValueReplay<ParamType::TGLubyte>(std::ostream &os,
-                                                const CallCapture &call,
-                                                GLubyte value);
-
-template <>
-void WriteParamValueReplay<ParamType::Tgl_ContextPointer>(std::ostream &os,
-                                                          const CallCapture &call,
-                                                          gl::Context *value);
-
-template <>
-void WriteParamValueReplay<ParamType::Tegl_DisplayPointer>(std::ostream &os,
-                                                           const CallCapture &call,
-                                                           egl::Display *value);
-
-template <>
-void WriteParamValueReplay<ParamType::Tegl_ImagePointer>(std::ostream &os,
-                                                         const CallCapture &call,
-                                                         egl::Image *value);
-
-template <>
-void WriteParamValueReplay<ParamType::Tegl_SurfacePointer>(std::ostream &os,
-                                                           const CallCapture &call,
-                                                           egl::Surface *value);
-
-template <>
-void WriteParamValueReplay<ParamType::TEGLDEBUGPROCKHR>(std::ostream &os,
-                                                        const CallCapture &call,
-                                                        EGLDEBUGPROCKHR value);
-
-template <>
-void WriteParamValueReplay<ParamType::TEGLGetBlobFuncANDROID>(std::ostream &os,
-                                                              const CallCapture &call,
-                                                              EGLGetBlobFuncANDROID value);
-
-template <>
-void WriteParamValueReplay<ParamType::TEGLSetBlobFuncANDROID>(std::ostream &os,
-                                                              const CallCapture &call,
-                                                              EGLSetBlobFuncANDROID value);
-template <>
-void WriteParamValueReplay<ParamType::TEGLClientBuffer>(std::ostream &os,
-                                                        const CallCapture &call,
-                                                        EGLClientBuffer value);
-
-template <>
-void WriteParamValueReplay<ParamType::Tegl_ConfigPointer>(std::ostream &os,
-                                                          const CallCapture &call,
-                                                          egl::Config *value);
-
-template <>
-void WriteParamValueReplay<ParamType::Tegl_SurfacePointer>(std::ostream &os,
-                                                           const CallCapture &call,
-                                                           egl::Surface *value);
-
-template <>
-void WriteParamValueReplay<ParamType::TEGLClientBuffer>(std::ostream &os,
-                                                        const CallCapture &call,
-                                                        EGLClientBuffer value);
-
-template <>
-void WriteParamValueReplay<ParamType::Tegl_SyncPointer>(std::ostream &os,
-                                                        const CallCapture &call,
-                                                        egl::Sync *value);
-
-template <>
-void WriteParamValueReplay<ParamType::TEGLTime>(std::ostream &os,
-                                                const CallCapture &call,
-                                                EGLTime value);
-
-template <>
-void WriteParamValueReplay<ParamType::TEGLTimeKHR>(std::ostream &os,
-                                                   const CallCapture &call,
-                                                   EGLTimeKHR value);
-
-// General fallback for any unspecific type.
-template <ParamType ParamT, typename T>
-void WriteParamValueReplay(std::ostream &os, const CallCapture &call, T value)
-{
-    os << value;
-}
 }  // namespace angle
 
 template <typename T>
