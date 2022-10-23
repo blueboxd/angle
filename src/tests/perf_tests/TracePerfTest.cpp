@@ -51,7 +51,11 @@ constexpr size_t kMaxPath = 1024;
 struct TracePerfParams final : public RenderTestParams
 {
     // Common default options
-    TracePerfParams(const TraceInfo &traceInfoIn) : traceInfo(traceInfoIn)
+    TracePerfParams(const TraceInfo &traceInfoIn,
+                    GLESDriverType driverType,
+                    EGLenum platformType,
+                    EGLenum deviceType)
+        : traceInfo(traceInfoIn)
     {
         majorVersion = traceInfo.contextClientMajorVersion;
         minorVersion = traceInfo.contextClientMinorVersion;
@@ -62,14 +66,9 @@ struct TracePerfParams final : public RenderTestParams
         // Display the frame after every drawBenchmark invocation
         iterationsPerStep = 1;
 
-        driver = GetDriverTypeFromString(gUseGL, GLESDriverType::AngleEGL);
-        if (driver == GLESDriverType::AngleEGL)
-        {
-            eglParameters.renderer =
-                GetPlatformANGLETypeFromArg(gUseANGLE, EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE);
-            eglParameters.deviceType =
-                GetANGLEDeviceTypeFromArg(gUseANGLE, EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE);
-        }
+        driver                   = driverType;
+        eglParameters.renderer   = platformType;
+        eglParameters.deviceType = deviceType;
 
         ASSERT(!gOffscreen || !gVsync);
 
@@ -108,12 +107,6 @@ struct TracePerfParams final : public RenderTestParams
 
     TraceInfo traceInfo = {};
 };
-
-std::ostream &operator<<(std::ostream &os, const TracePerfParams &params)
-{
-    os << params.backendAndStory().substr(1);
-    return os;
-}
 
 class TracePerfTest : public ANGLERenderTest
 {
@@ -2132,6 +2125,16 @@ using namespace params;
 
 void RegisterTraceTests()
 {
+    GLESDriverType driverType = GetDriverTypeFromString(gUseGL, GLESDriverType::AngleEGL);
+    GLenum platformType       = EGL_PLATFORM_ANGLE_TYPE_DEFAULT_ANGLE;
+    GLenum deviceType         = EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE;
+    if (driverType == GLESDriverType::AngleEGL)
+    {
+        platformType = GetPlatformANGLETypeFromArg(gUseANGLE, EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE);
+        deviceType =
+            GetANGLEDeviceTypeFromArg(gUseANGLE, EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE);
+    }
+
     char rootTracePath[kMaxPath] = {};
     if (!FindRootTraceTestDataPath(rootTracePath, kMaxPath))
     {
@@ -2170,7 +2173,7 @@ void RegisterTraceTests()
 
     for (const TraceInfo &traceInfo : traceInfos)
     {
-        const TracePerfParams params(traceInfo);
+        const TracePerfParams params(traceInfo, driverType, platformType, deviceType);
 
         if (!IsPlatformAvailable(params))
         {
@@ -2180,11 +2183,7 @@ void RegisterTraceTests()
         auto factory = [params]() {
             return new TracePerfTest(std::make_unique<TracePerfParams>(params));
         };
-        std::string paramName = testing::PrintToString(params);
-        std::stringstream testNameStr;
-        testNameStr << "Run/" << paramName;
-        std::string testName = testNameStr.str();
-        testing::RegisterTest("TracePerfTest", testName.c_str(), nullptr, paramName.c_str(),
-                              __FILE__, __LINE__, factory);
+        testing::RegisterTest("TraceTest", traceInfo.name, nullptr, nullptr, __FILE__, __LINE__,
+                              factory);
     }
 }

@@ -1776,40 +1776,47 @@ angle::Result ContextVk::handleDirtyGraphicsPipelineDesc(DirtyBits::Iterator *di
     PipelineCacheAccess pipelineCache;
     ANGLE_TRY(mRenderer->getPipelineCache(&pipelineCache));
 
-    if (!mCurrentGraphicsPipeline)
-    {
-        const vk::GraphicsPipelineDesc *descPtr;
+    // Recreate the pipeline if necessary.
+    bool shouldRecreatePipeline =
+        mCurrentGraphicsPipeline == nullptr || mGraphicsPipelineTransition.any();
 
-        // The desc's specialization constant depends on program's
-        // specConstUsageBits. We need to update it if program has changed.
-        SpecConstUsageBits usageBits = getCurrentProgramSpecConstUsageBits();
-        updateGraphicsPipelineDescWithSpecConstUsageBits(usageBits);
-
-        // Draw-time SPIR-V patching if necessary, and pipeline creation.
-        ANGLE_TRY(executableVk->getGraphicsPipeline(
-            this, mCurrentDrawMode, &pipelineCache, PipelineSource::Draw, *mGraphicsPipelineDesc,
-            glExecutable, &descPtr, &mCurrentGraphicsPipeline));
-        mGraphicsPipelineTransition.reset();
-    }
-    else if (mGraphicsPipelineTransition.any())
+    // If one can be found in the transition cache, recover it.
+    if (mCurrentGraphicsPipeline != nullptr && mGraphicsPipelineTransition.any())
     {
         ASSERT(mCurrentGraphicsPipeline->valid());
-        if (!mCurrentGraphicsPipeline->findTransition(
-                mGraphicsPipelineTransition, *mGraphicsPipelineDesc, &mCurrentGraphicsPipeline))
+        shouldRecreatePipeline = !mCurrentGraphicsPipeline->findTransition(
+            mGraphicsPipelineTransition, *mGraphicsPipelineDesc, &mCurrentGraphicsPipeline);
+    }
+
+    // Otherwise either retrieve the pipeline from the cache, or create a new one.
+    if (shouldRecreatePipeline)
+    {
+        vk::PipelineHelper *oldGraphicsPipeline = mCurrentGraphicsPipeline;
+
+        const vk::GraphicsPipelineDesc *descPtr = nullptr;
+        ANGLE_TRY(executableVk->getGraphicsPipeline(this, vk::GraphicsPipelineSubset::Complete,
+                                                    *mGraphicsPipelineDesc, glExecutable, &descPtr,
+                                                    &mCurrentGraphicsPipeline));
+
+        if (descPtr == nullptr)
         {
-            vk::PipelineHelper *oldPipeline = mCurrentGraphicsPipeline;
-            const vk::GraphicsPipelineDesc *descPtr;
-
-            ANGLE_TRY(executableVk->getGraphicsPipeline(
-                this, mCurrentDrawMode, &pipelineCache, PipelineSource::Draw,
+            // Not found in cache
+            ASSERT(mCurrentGraphicsPipeline == nullptr);
+            ANGLE_TRY(executableVk->createGraphicsPipeline(
+                this, vk::GraphicsPipelineSubset::Complete, &pipelineCache, PipelineSource::Draw,
                 *mGraphicsPipelineDesc, glExecutable, &descPtr, &mCurrentGraphicsPipeline));
-
-            oldPipeline->addTransition(mGraphicsPipelineTransition, descPtr,
-                                       mCurrentGraphicsPipeline);
         }
 
-        mGraphicsPipelineTransition.reset();
+        // Maintain the transition cache
+        if (oldGraphicsPipeline)
+        {
+            oldGraphicsPipeline->addTransition(mGraphicsPipelineTransition, descPtr,
+                                               mCurrentGraphicsPipeline);
+        }
     }
+
+    mGraphicsPipelineTransition.reset();
+
     // Update the queue serial for the pipeline object.
     ASSERT(mCurrentGraphicsPipeline && mCurrentGraphicsPipeline->valid());
 
@@ -2009,8 +2016,8 @@ angle::Result ContextVk::handleDirtyComputePipelineDesc()
         const gl::ProgramExecutable &glExecutable = *mState.getProgramExecutable();
         ProgramExecutableVk *executableVk         = getExecutable();
         ASSERT(executableVk);
-        ANGLE_TRY(executableVk->getComputePipeline(this, &pipelineCache, PipelineSource::Draw,
-                                                   glExecutable, &mCurrentComputePipeline));
+        ANGLE_TRY(executableVk->getOrCreateComputePipeline(
+            this, &pipelineCache, PipelineSource::Draw, glExecutable, &mCurrentComputePipeline));
     }
 
     ASSERT(mComputeDirtyBits.test(DIRTY_BIT_PIPELINE_BINDING));
@@ -5054,8 +5061,6 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 drawFramebufferVk->setReadOnlyDepthFeedbackLoopMode(false);
                 updateFlipViewportDrawFramebuffer(glState);
                 updateSurfaceRotationDrawFramebuffer(glState, context->getCurrentDrawSurface());
-                SpecConstUsageBits usageBits = getCurrentProgramSpecConstUsageBits();
-                updateGraphicsPipelineDescWithSpecConstUsageBits(usageBits);
                 updateViewport(drawFramebufferVk, glState.getViewport(), glState.getNearPlane(),
                                glState.getFarPlane());
                 updateColorMasks();
@@ -5322,12 +5327,6 @@ angle::Result ContextVk::onMakeCurrent(const gl::Context *context)
     updateSurfaceRotationReadFramebuffer(glState, readSurface);
 
     invalidateDriverUniforms();
-    if (!getFeatures().preferDriverUniformOverSpecConst.enabled)
-    {
-        // Force update mGraphicsPipelineDesc
-        mCurrentGraphicsPipeline = nullptr;
-        invalidateCurrentGraphicsPipeline();
-    }
 
     const gl::ProgramExecutable *executable = mState.getProgramExecutable();
     if (executable && executable->hasTransformFeedbackOutput() &&
@@ -5377,38 +5376,25 @@ void ContextVk::updateFlipViewportReadFramebuffer(const gl::State &glState)
     mFlipViewportForReadFramebuffer  = readFramebuffer->isDefault();
 }
 
-SpecConstUsageBits ContextVk::getCurrentProgramSpecConstUsageBits() const
-{
-    SpecConstUsageBits usageBits;
-    if (mState.getProgram())
-    {
-        usageBits = mState.getProgram()->getState().getSpecConstUsageBits();
-    }
-    else if (mState.getProgramPipeline())
-    {
-        usageBits = mState.getProgramPipeline()->getState().getSpecConstUsageBits();
-    }
-    return usageBits;
-}
-
-void ContextVk::updateGraphicsPipelineDescWithSpecConstUsageBits(SpecConstUsageBits usageBits)
-{
-    SurfaceRotation rotation = mCurrentRotationDrawFramebuffer;
-
-    if (IsRotatedAspectRatio(rotation) != mGraphicsPipelineDesc->getSurfaceRotation())
-    {
-        // surface rotation are specialization constants, which affects program compilation. When
-        // rotation changes, we need to update GraphicsPipelineDesc so that the correct pipeline
-        // program object will be retrieved.
-        mGraphicsPipelineDesc->updateSurfaceRotation(&mGraphicsPipelineTransition, rotation);
-    }
-}
-
 void ContextVk::updateSurfaceRotationDrawFramebuffer(const gl::State &glState,
                                                      const egl::Surface *currentDrawSurface)
 {
-    mCurrentRotationDrawFramebuffer =
+    const SurfaceRotation rotation =
         getSurfaceRotationImpl(glState.getDrawFramebuffer(), currentDrawSurface);
+    mCurrentRotationDrawFramebuffer = rotation;
+
+    if (!getFeatures().preferDriverUniformOverSpecConst.enabled)
+    {
+        // Update spec consts
+        if (IsRotatedAspectRatio(rotation) != mGraphicsPipelineDesc->getSurfaceRotation())
+        {
+            // surface rotation are specialization constants, which affects program compilation.
+            // When rotation changes, we need to update GraphicsPipelineDesc so that the correct
+            // pipeline program object will be retrieved.
+            mGraphicsPipelineDesc->updateSurfaceRotation(&mGraphicsPipelineTransition, rotation);
+            invalidateCurrentGraphicsPipeline();
+        }
+    }
 }
 
 void ContextVk::updateSurfaceRotationReadFramebuffer(const gl::State &glState,

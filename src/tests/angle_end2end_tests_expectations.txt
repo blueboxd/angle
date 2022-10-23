@@ -76,6 +76,8 @@
 7699 WIN INTEL VULKAN : FramebufferTest_ES31.RenderingLimitToDefaultFBOSizeWithNoAttachments/* = SKIP
 7770 WIN INTEL VULKAN : VertexAttributeTestES31.MismatchingSignsChangingAttributeType/* = SKIP
 7770 WIN INTEL VULKAN : VertexAttributeTestES31.MismatchingSignsChangingProgramType/* = SKIP
+7770 PIXEL6 VULKAN : VertexAttributeTestES31.MismatchingSignsChangingAttributeType/* = SKIP
+7770 PIXEL6 VULKAN : VertexAttributeTestES31.MismatchingSignsChangingProgramType/* = SKIP
 
 234602034 WIN INTEL D3D9 : ImageTest.SourceCubeAndSameTargetTextureWithEachCubeFace/* = SKIP
 234602034 WIN NVIDIA D3D9 : ImageTest.SourceCubeAndSameTargetTextureWithEachCubeFace/* = SKIP
@@ -673,6 +675,8 @@
 7768 IOS : ClipDistanceTest.ThreeClipDistances/ES3_OpenGL = SKIP
 7768 IOS : ClipDistanceTest.ThreeClipDistancesRedeclared/ES2_OpenGL = SKIP
 7768 IOS : ClipDistanceTest.ThreeClipDistancesRedeclared/ES3_OpenGL = SKIP
+
+7778 IOS : FramebufferTest_ES3.DrawWithDifferentPreRotations/ES3_OpenGL = SKIP
 
 // Test is disabled as it only pertains to desktop GLSL
 6197 : GLSLTest_ES31.InterpolateAtWithSwizzle/* = SKIP
