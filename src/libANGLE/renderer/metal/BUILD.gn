@@ -137,6 +137,7 @@ angle_source_set("angle_metal_backend") {
       "Cocoa.framework",
       "IOSurface.framework",
       "QuartzCore.framework",
+      "CoreServices.framework",
     ]
   }
 
