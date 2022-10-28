@@ -39,13 +39,13 @@ from tracing.value import merge_histograms
 
 DEFAULT_TEST_SUITE = 'angle_perftests'
 DEFAULT_LOG = 'info'
-DEFAULT_SAMPLES = 4
-DEFAULT_TRIALS = 3
+DEFAULT_SAMPLES = 10
+DEFAULT_TRIALS = 4
 DEFAULT_MAX_ERRORS = 3
 
 # These parameters condition the test warmup to stabilize the scores across runs.
-DEFAULT_WARMUP_TRIALS = 1
-DEFAULT_TRIAL_TIME = 4
+DEFAULT_WARMUP_TRIALS = 2
+DEFAULT_TRIAL_TIME = 3
 
 # Test expectations
 FAIL = 'FAIL'
@@ -79,13 +79,6 @@ def _get_results_from_output(output, result):
         return None
 
     return [float(value) for value in m]
-
-
-def _get_tests_from_output(output):
-    out_lines = output.split('\n')
-    start = out_lines.index('Tests list:')
-    end = out_lines.index('End tests list.')
-    return out_lines[start + 1:end]
 
 
 def _truncated_list(data, n):
@@ -554,7 +547,7 @@ def main():
     if exit_code != EXIT_SUCCESS:
         logging.fatal('Could not find test list from test output:\n%s' % output)
         sys.exit(EXIT_FAILURE)
-    tests = _get_tests_from_output(output)
+    tests = angle_test_util.GetTestsFromOutput(output)
 
     if args.filter:
         tests = _filter_tests(tests, args.filter)

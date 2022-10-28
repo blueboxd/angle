@@ -88,6 +88,9 @@ if (angle_build_all) {
     if (angle_enable_cl) {
       deps += [ "$angle_root/src/libOpenCL:angle_cl" ]
     }
+    if (angle_build_mesa) {
+      deps += [ "$angle_root/third_party/mesa" ]
+    }
   }
 }
 
@@ -990,13 +993,13 @@ angle_source_set("libANGLE_base") {
   public_deps = [
     ":angle_common",
     ":angle_gpu_info_util",
+    ":angle_image_util",
     ":angle_version_info",
     ":libANGLE_headers",
     ":translator",
   ]
   deps = [
     ":angle_compression",
-    ":angle_image_util",
     ":includes",
   ]
 

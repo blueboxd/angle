@@ -695,6 +695,7 @@
         },
         'args': [
           '--log=debug',
+          '--samples-per-test=6',
           '--show-test-stdout',
           '--split-shard-samples',
         ],
@@ -751,6 +752,18 @@
           'shards': 6,
         },
       }
+    },
+
+    'angle_trace_interpreter_isolated_scripts': {
+      'angle_trace_interpreter_tests': {
+        'args': [
+          '--log=debug',
+          'interpret',
+          'trex_200',
+          '-L=2',
+          '--show-test-stdout',
+        ],
+      },
     },
 
     'angle_trace_perf_native_isolated_scripts': {
@@ -1049,6 +1062,8 @@
       'angle_end2end_tests': {
         'args': [
           '--gtest_filter=*Vulkan_SwiftShader*',
+          # Flaky retries enabled on ASAN/TSAN. http://anglebug.com/7772
+          '--flaky-retries=2',
         ],
         'use_isolated_scripts_api': True,
         'swarming': {
@@ -1131,6 +1146,7 @@
     'common_isolated_scripts': [
       'angle_perf_smoke_isolated_scripts',
       'angle_restricted_trace_gold_isolated_scripts',
+      'angle_trace_interpreter_isolated_scripts',
       'angle_trace_perf_native_smoke_isolated_scripts',
       'angle_trace_perf_vulkan_smoke_isolated_scripts',
     ],
