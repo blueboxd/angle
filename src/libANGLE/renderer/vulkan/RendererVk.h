@@ -371,6 +371,10 @@ class RendererVk : angle::NonCopyable
     void onNewValidationMessage(const std::string &message);
     std::string getAndClearLastValidationMessage(uint32_t *countSinceLastClear);
 
+    const std::vector<const char *> &getSkippedValidationMessages() const
+    {
+        return mSkippedValidationMessages;
+    }
     const std::vector<vk::SkippedSyncvalMessage> &getSkippedSyncvalMessages() const
     {
         return mSkippedSyncvalMessages;
@@ -620,6 +624,7 @@ class RendererVk : angle::NonCopyable
   private:
     angle::Result initializeDevice(DisplayVk *displayVk, uint32_t queueFamilyIndex);
     void ensureCapsInitialized() const;
+    void initializeValidationMessageSuppressions();
 
     void queryDeviceExtensionFeatures(const vk::ExtensionNameList &deviceExtensionNames);
 
@@ -689,7 +694,9 @@ class RendererVk : angle::NonCopyable
     VkPhysicalDeviceExternalMemoryHostPropertiesEXT mExternalMemoryHostProperties;
     VkPhysicalDeviceShaderFloat16Int8FeaturesKHR mShaderFloat16Int8Features;
     VkPhysicalDeviceDepthStencilResolvePropertiesKHR mDepthStencilResolveProperties;
-    VkPhysicalDeviceMultisampledRenderToSingleSampledFeaturesGoogleX
+    VkPhysicalDeviceMultisampledRenderToSingleSampledFeaturesGOOGLEX
+        mMultisampledRenderToSingleSampledFeaturesGOOGLEX;
+    VkPhysicalDeviceMultisampledRenderToSingleSampledFeaturesEXT
         mMultisampledRenderToSingleSampledFeatures;
     VkPhysicalDeviceImage2DViewOf3DFeaturesEXT mImage2dViewOf3dFeatures;
     VkPhysicalDeviceMultiviewFeatures mMultiviewFeatures;
@@ -702,6 +709,7 @@ class RendererVk : angle::NonCopyable
     VkPhysicalDeviceHostQueryResetFeaturesEXT mHostQueryResetFeatures;
     VkPhysicalDeviceDepthClipControlFeaturesEXT mDepthClipControlFeatures;
     VkPhysicalDevicePrimitivesGeneratedQueryFeaturesEXT mPrimitivesGeneratedQueryFeatures;
+    VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT mPrimitiveTopologyListRestartFeatures;
     VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT mBlendOperationAdvancedFeatures;
     VkPhysicalDeviceSamplerYcbcrConversionFeatures mSamplerYcbcrConversionFeatures;
     VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT mPipelineCreationCacheControlFeatures;
@@ -710,6 +718,7 @@ class RendererVk : angle::NonCopyable
     VkPhysicalDeviceFragmentShadingRateFeaturesKHR mFragmentShadingRateFeatures;
     VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT mFragmentShaderInterlockFeatures;
     VkPhysicalDeviceImagelessFramebufferFeaturesKHR mImagelessFramebufferFeatures;
+    VkPhysicalDevicePipelineRobustnessFeaturesEXT mPipelineRobustnessFeatures;
     angle::PackedEnumBitSet<gl::ShadingRate, uint8_t> mSupportedFragmentShadingRates;
     std::vector<VkQueueFamilyProperties> mQueueFamilyProperties;
     uint32_t mMaxVertexAttribDivisor;
@@ -778,6 +787,9 @@ class RendererVk : angle::NonCopyable
     std::string mLastValidationMessage;
     uint32_t mValidationMessageCount;
 
+    // Skipped validation messages.  The exact contents of the list depends on the availability of
+    // certain extensions.
+    std::vector<const char *> mSkippedValidationMessages;
     // Syncval skipped messages.  The exact contents of the list depends on the availability of
     // certain extensions.
     std::vector<vk::SkippedSyncvalMessage> mSkippedSyncvalMessages;

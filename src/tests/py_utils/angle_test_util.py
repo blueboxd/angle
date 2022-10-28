@@ -2,12 +2,16 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import contextlib
 import datetime
+import json
 import importlib
 import io
 import logging
+import signal
 import subprocess
 import sys
+import threading
 import time
 
 import android_helper
@@ -15,7 +19,6 @@ import angle_path_util
 
 angle_path_util.AddDepsDirToPath('testing/scripts')
 import common
-import test_env
 import xvfb
 
 
@@ -75,6 +78,45 @@ def PopGtestShardsAndIndex(env):
     return int(env.pop('GTEST_TOTAL_SHARDS')), int(env.pop('GTEST_SHARD_INDEX'))
 
 
+# Adapted from testing/test_env.py: also notifies current process and restores original handlers.
+@contextlib.contextmanager
+def forward_signals(procs):
+    assert all(isinstance(p, subprocess.Popen) for p in procs)
+
+    interrupted_event = threading.Event()
+
+    def _sig_handler(sig, _):
+        interrupted_event.set()
+        for p in procs:
+            if p.poll() is not None:
+                continue
+            # SIGBREAK is defined only for win32.
+            # pylint: disable=no-member
+            if sys.platform == 'win32' and sig == signal.SIGBREAK:
+                p.send_signal(signal.CTRL_BREAK_EVENT)
+            else:
+                print("Forwarding signal(%d) to process %d" % (sig, p.pid))
+                p.send_signal(sig)
+            # pylint: enable=no-member
+
+    if sys.platform == 'win32':
+        signals = [signal.SIGBREAK]  # pylint: disable=no-member
+    else:
+        signals = [signal.SIGINT, signal.SIGTERM]
+
+    original_handlers = {}
+    for sig in signals:
+        original_handlers[sig] = signal.signal(sig, _sig_handler)
+
+    yield
+
+    for sig, handler in original_handlers.items():
+        signal.signal(sig, handler)
+
+    if interrupted_event.is_set():
+        raise KeyboardInterrupt()
+
+
 # From testing/test_env.py, see run_command_with_output below
 def _popen(*args, **kwargs):
     assert 'creationflags' not in kwargs
@@ -90,16 +132,16 @@ def run_command_with_output(argv, stdoutfile, env=None, cwd=None, log=True):
     with io.open(stdoutfile, 'wb') as writer, \
           io.open(stdoutfile, 'rb') as reader:
         process = _popen(argv, env=env, cwd=cwd, stdout=writer, stderr=subprocess.STDOUT)
-        test_env.forward_signals([process])
-        while process.poll() is None:
+        with forward_signals([process]):
+            while process.poll() is None:
+                if log:
+                    sys.stdout.write(reader.read().decode('utf-8'))
+                # This sleep is needed for signal propagation. See the
+                # wait_with_signals() docstring.
+                time.sleep(0.1)
             if log:
                 sys.stdout.write(reader.read().decode('utf-8'))
-            # This sleep is needed for signal propagation. See the
-            # wait_with_signals() docstring.
-            time.sleep(0.1)
-        if log:
-            sys.stdout.write(reader.read().decode('utf-8'))
-        return process.returncode
+            return process.returncode
 
 
 def RunTestSuite(test_suite,
@@ -109,18 +151,35 @@ def RunTestSuite(test_suite,
                  show_test_stdout=True,
                  use_xvfb=False):
     if android_helper.IsAndroid():
-        result, output = android_helper.RunTests(test_suite, cmd_args, log_output=show_test_stdout)
-        return result, output.decode()
+        result, output, json_results = android_helper.RunTests(
+            test_suite, cmd_args, log_output=show_test_stdout)
+        return result, output.decode(), json_results
 
     runner_cmd = [ExecutablePathInCurrentDir(test_suite)] + cmd_args + (runner_args or [])
 
     logging.debug(' '.join(runner_cmd))
-    with common.temporary_file() as tempfile_path:
+    with contextlib.ExitStack() as stack:
+        stdout_path = stack.enter_context(common.temporary_file())
+
+        flag_matches = [a for a in cmd_args if a.startswith('--isolated-script-test-output=')]
+        if flag_matches:
+            results_path = flag_matches[0].split('=')[1]
+        else:
+            results_path = stack.enter_context(common.temporary_file())
+            runner_cmd += ['--isolated-script-test-output=%s' % results_path]
+
         if use_xvfb:
-            exit_code = xvfb.run_executable(runner_cmd, env, stdoutfile=tempfile_path)
+            xvfb_whd = '3120x3120x24'  # Max screen dimensions from traces, as per:
+            # % egrep 'Width|Height' src/tests/restricted_traces/*/*.json | awk '{print $3 $2}' | sort -n
+            exit_code = xvfb.run_executable(
+                runner_cmd, env, stdoutfile=stdout_path, xvfb_whd=xvfb_whd)
         else:
             exit_code = run_command_with_output(
-                runner_cmd, env=env, stdoutfile=tempfile_path, log=show_test_stdout)
-        with open(tempfile_path) as f:
+                runner_cmd, env=env, stdoutfile=stdout_path, log=show_test_stdout)
+        with open(stdout_path) as f:
             output = f.read()
-    return exit_code, output
+        with open(results_path) as f:
+            data = f.read()
+            json_results = json.loads(data) if data else None  # --list-tests => empty file
+
+    return exit_code, output, json_results

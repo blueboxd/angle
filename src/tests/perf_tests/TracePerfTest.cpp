@@ -1283,6 +1283,16 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
     }
 
+    if (traceNameIs("antutu_refinery"))
+    {
+        addExtensionPrerequisite("GL_ANDROID_extension_pack_es31a");
+    }
+
+    if (traceNameIs("botworld_adventure"))
+    {
+        addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
+    }
+
     // glDebugMessageControlKHR and glDebugMessageCallbackKHR crash on ARM GLES1.
     if (IsARM() && mParams->traceInfo.contextClientMajorVersion == 1)
     {
@@ -1324,7 +1334,7 @@ void TracePerfTest::initializeBenchmark()
 
     mStartFrame = traceInfo.frameStart;
     mEndFrame   = traceInfo.frameEnd;
-    mTraceLibrary->setBinaryDataDecompressCallback(DecompressBinaryData);
+    mTraceLibrary->setBinaryDataDecompressCallback(DecompressBinaryData, DeleteBinaryData);
 
     mTraceLibrary->setValidateSerializedStateCallback(ValidateSerializedState);
 

@@ -9,6 +9,9 @@
 
 #include "ANGLEPerfTest.h"
 
+#if defined(ANGLE_PLATFORM_ANDROID)
+#    include <android/log.h>
+#endif
 #include "ANGLEPerfTestArgs.h"
 #include "common/debug.h"
 #include "common/mathutil.h"
@@ -272,6 +275,13 @@ ANGLEPerfTest::~ANGLEPerfTest() {}
 
 void ANGLEPerfTest::run()
 {
+    printf("running test name: \"%s\", backend: \"%s\", story: \"%s\"", mName.c_str(),
+           mBackend.c_str(), mStory.c_str());
+#if defined(ANGLE_PLATFORM_ANDROID)
+    __android_log_print(ANDROID_LOG_INFO, "ANGLE",
+                        "running test name: \"%s\", backend: \"%s\", story: \"%s\"", mName.c_str(),
+                        mBackend.c_str(), mStory.c_str());
+#endif
     if (mSkipTest)
     {
         GTEST_SKIP() << mSkipTestReason;
@@ -1226,7 +1236,7 @@ void ANGLERenderTest::skipTestIfFailsIntegerPrerequisite()
             std::stringstream ss;
             ss << "Test skipped due to value (" << std::to_string(static_cast<int>(driverValue))
                << ") being less than the prerequisite minimum (" << std::to_string(minRequired)
-               << ") for GL constant " << gl::GLenumToString(gl::GLenumGroup::DefaultGroup, target);
+               << ") for GL constant " << gl::GLenumToString(gl::GLESEnum::AllEnums, target);
             skipTest(ss.str());
         }
     }
@@ -1257,7 +1267,7 @@ void ANGLERenderTest::onErrorMessage(const char *errorMessage)
 
 uint32_t ANGLERenderTest::getCurrentThreadSerial()
 {
-    std::thread::id id = std::this_thread::get_id();
+    uint64_t id = angle::GetCurrentThreadUniqueId();
 
     for (uint32_t serial = 0; serial < static_cast<uint32_t>(mThreadIDs.size()); ++serial)
     {

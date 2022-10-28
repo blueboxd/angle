@@ -1212,9 +1212,9 @@ void RenderPassAttachment::finalizeLoadStore(Context *context,
         {
             // If we are loading or clearing the attachment, but the attachment has not been used,
             // and the data has also not been stored back into attachment, then just skip the
-            // load/clear op.  If loadOp/storeOp=None is supported, prefer that to reduce the amount
+            // load/clear op. If loadOp/storeOp=None is supported, prefer that to reduce the amount
             // of synchronization; DontCare is a write operation, while None is not.
-            if (supportsLoadStoreOpNone)
+            if (supportsLoadStoreOpNone && !isInvalidated(currentCmdCount))
             {
                 *loadOp  = RenderPassLoadOp::None;
                 *storeOp = RenderPassStoreOp::None;
@@ -2990,8 +2990,6 @@ angle::Result BufferPool::allocateBuffer(Context *context,
     VmaVirtualAllocation allocation;
     VkDeviceSize offset;
     VkDeviceSize alignedSize = roundUp(sizeInBytes, alignment);
-    bool extraBufferLoggingAndChecking =
-        context->getRenderer()->getFeatures().extraBufferLoggingAndChecking.enabled;
 
     if (alignedSize >= kMaxBufferSizeForSuballocation)
     {
@@ -3023,13 +3021,6 @@ angle::Result BufferPool::allocateBuffer(Context *context,
         VkDeviceSize sizeOut;
         ANGLE_TRY(AllocateBufferMemory(context, memoryPropertyFlags, &memoryPropertyFlagsOut,
                                        nullptr, &buffer.get(), &deviceMemory.get(), &sizeOut));
-        // Explicitly check the ASSERT on Android-Swiftshader
-        if (extraBufferLoggingAndChecking && !(sizeOut >= alignedSize))
-        {
-            ERR() << "BufferPool::allocateBuffer(): ASSERT FAILED: \"sizeOut >= alignedSize\""
-                     " with sizeOut = "
-                  << sizeOut << ", and alignSize = " << alignedSize;
-        }
         ASSERT(sizeOut >= alignedSize);
 
         suballocation->initWithEntireBuffer(context, buffer.get(), deviceMemory.get(),
@@ -3055,25 +3046,10 @@ angle::Result BufferPool::allocateBuffer(Context *context,
             continue;
         }
 
-        if (extraBufferLoggingAndChecking)
-        {
-            WARN() << "BufferPool::allocateBuffer(): about to call block->allocate(alignedSize = "
-                   << alignedSize << ", alignment = " << alignment << ", ...)";
-        }
         if (block->allocate(alignedSize, alignment, &allocation, &offset) == VK_SUCCESS)
         {
-            if (extraBufferLoggingAndChecking)
-            {
-                WARN() << "BufferPool::allocateBuffer(): block->allocate() returned VK_SUCCESS "
-                          "with offset = "
-                       << offset;
-            }
             suballocation->init(context->getDevice(), block.get(), allocation, offset, alignedSize);
             return angle::Result::Continue;
-        }
-        if (extraBufferLoggingAndChecking)
-        {
-            WARN() << "BufferPool::allocateBuffer(): block->allocate() DID NOT return VK_SUCCESS";
         }
         ++iter;
     }
@@ -7981,7 +7957,7 @@ angle::Result ImageHelper::flushStagedUpdates(ContextVk *contextVk,
             }
             else if (update.updateSource == UpdateSource::Buffer)
             {
-                if (update.data.buffer.formatID != mActualFormatID)
+                if (!isDataFormatMatchForCopy(update.data.buffer.formatID))
                 {
                     // TODD: http://anglebug.com/6368, we should handle this in higher level code.
                     // If we have incompatible updates, skip but keep it.
@@ -7992,7 +7968,7 @@ angle::Result ImageHelper::flushStagedUpdates(ContextVk *contextVk,
             }
             else if (update.updateSource == UpdateSource::Image)
             {
-                if (update.data.image.formatID != mActualFormatID)
+                if (!isDataFormatMatchForCopy(update.data.image.formatID))
                 {
                     // If we have incompatible updates, skip but keep it.
                     updatesToKeep.emplace_back(std::move(update));
@@ -8397,8 +8373,14 @@ void ImageHelper::pruneSupersededUpdatesForLevel(ContextVk *contextVk,
         }
         else
         {
-            // Reset boundingBox to current update's value
-            boundingBox[aspectIndex] = currentUpdateBox;
+            // Extend boundingBox to best accommodate current update's box.
+            boundingBox[aspectIndex].extend(currentUpdateBox);
+            // If the volume of the current update box is larger than the extended boundingBox
+            // use that as the new boundingBox instead.
+            if (currentUpdateBox.volume() > boundingBox[aspectIndex].volume())
+            {
+                boundingBox[aspectIndex] = currentUpdateBox;
+            }
             return false;
         }
     };
