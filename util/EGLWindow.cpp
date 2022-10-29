@@ -152,6 +152,19 @@ bool EGLWindow::initializeDisplay(OSWindow *osWindow,
                                   angle::GLESDriverType driverType,
                                   const EGLPlatformParameters &params)
 {
+    if (driverType == angle::GLESDriverType::ZinkEGL)
+    {
+        std::stringstream driDirStream;
+        char s = angle::GetPathSeparator();
+        driDirStream << angle::GetModuleDirectory() << "mesa" << s << "src" << s << "gallium" << s
+                     << "targets" << s << "dri";
+
+        std::string driDir = driDirStream.str();
+
+        angle::SetEnvironmentVar("MESA_LOADER_DRIVER_OVERRIDE", "zink");
+        angle::SetEnvironmentVar("LIBGL_DRIVERS_PATH", driDir.c_str());
+    }
+
 #if defined(ANGLE_USE_UTIL_LOADER)
     PFNEGLGETPROCADDRESSPROC getProcAddress;
     glWindowingLibrary->getAs("eglGetProcAddress", &getProcAddress);
@@ -165,8 +178,14 @@ bool EGLWindow::initializeDisplay(OSWindow *osWindow,
     LoadUtilEGL(getProcAddress);
 #endif  // defined(ANGLE_USE_UTIL_LOADER)
 
+    // EGL_NO_DISPLAY + EGL_EXTENSIONS returns NULL before Android 10
     const char *extensionString =
         static_cast<const char *>(eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS));
+    if (!extensionString)
+    {
+        // fallback to an empty string for strstr
+        extensionString = "";
+    }
 
     std::vector<EGLAttrib> displayAttributes;
     displayAttributes.push_back(EGL_PLATFORM_ANGLE_TYPE_ANGLE);
@@ -866,10 +885,11 @@ void EGLWindow::Delete(EGLWindow **window)
 
 void EGLWindow::queryFeatures()
 {
+    // EGL_NO_DISPLAY + EGL_EXTENSIONS returns NULL before Android 10
     const char *extensionString =
         static_cast<const char *>(eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS));
     const bool hasFeatureControlANGLE =
-        strstr(extensionString, "EGL_ANGLE_feature_control") != nullptr;
+        extensionString && strstr(extensionString, "EGL_ANGLE_feature_control") != nullptr;
 
     if (!hasFeatureControlANGLE)
     {
