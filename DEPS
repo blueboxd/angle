@@ -9,6 +9,7 @@ gclient_gn_args_file = 'build/config/gclient_args.gni'
 
 gclient_gn_args = [
   'checkout_angle_internal',
+  'checkout_angle_mesa',
   'checkout_angle_restricted_traces',
   'generate_location_tags',
 ]
@@ -39,7 +40,7 @@ vars = {
   'checkout_android_native_support': 'checkout_android or checkout_chromeos',
 
   # Check out Mesa and libdrm in ANGLE's third_party folder.
-  'angle_mesa': False,
+  'checkout_angle_mesa': False,
 
   # Version of Chromium our Chromium-based DEPS are mirrored from.
   'chromium_revision': 'c8d10c0b09aba42a2849e283bfea79db014d2ac5',
@@ -48,7 +49,7 @@ vars = {
   'dummy_checkout_chromium': False,
 
   # Current revision of VK-GL-CTS (a.k.a dEQP).
-  'vk_gl_cts_revision': 'bfc5b6f54270968eba4a1fdbf12d49b9d0aac02c',
+  'vk_gl_cts_revision': 'acb25bf242c31cef2d82d4ebdb8d8d2f67af0ef6',
 
   # Current revision of googletest.
   # Note: this dep cannot be auto-rolled b/c of nesting.
@@ -599,7 +600,7 @@ deps = {
   },
 
   'third_party/SwiftShader': {
-    'url': '{swiftshader_git}/SwiftShader@e8d4f9f4d7030e619f0aa1baa38eddc5344bdea8',
+    'url': '{swiftshader_git}/SwiftShader@cd9da0fefcefa6fc6d5ba7a2d29d173fef87801e',
     'condition': 'not build_with_chromium',
   },
 

@@ -169,6 +169,12 @@ constexpr const char *kSkippedMessages[] = {
     "UNASSIGNED-BestPractices-DrawState-ClearCmdBeforeDraw",
     "UNASSIGNED-BestPractices-vkCmdClearAttachments-clear-after-load",
     "UNASSIGNED-BestPractices-TransitionUndefinedToReadOnly",
+    // http://anglebug.com/5336
+    "UNASSIGNED-BestPractices-vkCreateDevice-specialuse-extension",
+    // http://anglebug.com/7470
+    "UNASSIGNED-BestPractices-vkCmdBeginRenderPass-ClearValueWithoutLoadOpClear",
+    // http://anglebug.com/7795
+    "UNASSIGNED-BestPractices-ImageBarrierAccessLayout",
     // http://anglebug.com/4928
     "VUID-vkMapMemory-memory-00683",
     // http://anglebug.com/5027
@@ -178,8 +184,6 @@ constexpr const char *kSkippedMessages[] = {
     "VUID-vkCmdDrawIndexed-magFilter-04553",
     // http://anglebug.com/5309
     "VUID-VkImageViewCreateInfo-usage-02652",
-    // http://anglebug.com/5336
-    "UNASSIGNED-BestPractices-vkCreateDevice-specialuse-extension",
     // http://anglebug.com/5331
     "VUID-VkSubpassDescriptionDepthStencilResolve-depthResolveMode-parameter",
     "VUID-VkSubpassDescriptionDepthStencilResolve-stencilResolveMode-parameter",
@@ -213,8 +217,6 @@ constexpr const char *kSkippedMessages[] = {
     // http://anglebug.com/7338
     "VUID-VkGraphicsPipelineCreateInfo-renderPass-06040",
     "VUID-VkGraphicsPipelineCreateInfo-renderPass-06039",
-    // http://anglebug.com/7470
-    "UNASSIGNED-BestPractices-vkCmdBeginRenderPass-ClearValueWithoutLoadOpClear",
     // http://anglebug.com/7513
     "VUID-VkGraphicsPipelineCreateInfo-pStages-06896",
     // http://anglebug.com/7685
@@ -3884,10 +3886,23 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // natively anyway.
     ANGLE_FEATURE_CONDITION(&mFeatures, overrideSurfaceFormatRGB8ToRGBA8, true);
 
+    // We set
+    //
+    // - VK_PIPELINE_COLOR_BLEND_STATE_CREATE_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_BIT_EXT
+    // - VK_SUBPASS_DESCRIPTION_RASTERIZATION_ORDER_ATTACHMENT_COLOR_ACCESS_BIT_EXT
+    //
+    // when this feature is supported and there is framebuffer fetch.  But the
+    // check for framebuffer fetch is not accurate enough and those bits can
+    // have great impact on Qualcomm (it only affects the open source driver
+    // because the proprietary driver does not expose the extension).  Let's
+    // disable it on Qualcomm.
+    //
+    // https://issuetracker.google.com/issues/255837430
     ANGLE_FEATURE_CONDITION(
         &mFeatures, supportsRasterizationOrderAttachmentAccess,
-        mRasterizationOrderAttachmentAccessFeatures.rasterizationOrderColorAttachmentAccess ==
-            VK_TRUE);
+        !isQualcomm &&
+            mRasterizationOrderAttachmentAccessFeatures.rasterizationOrderColorAttachmentAccess ==
+                VK_TRUE);
 
     // http://anglebug.com/6872
     // On ARM hardware, framebuffer-fetch-like behavior on Vulkan is already coherent, so we can
@@ -3967,8 +3982,11 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsExtendedDynamicState2,
                             mExtendedDynamicState2Features.extendedDynamicState2 == VK_TRUE);
 
-    ANGLE_FEATURE_CONDITION(&mFeatures, supportsLogicOpDynamicState,
-                            mExtendedDynamicState2Features.extendedDynamicState2LogicOp == VK_TRUE);
+    // Disabled on Intel/Mesa due to driver bug (crbug.com/1379201)
+    ANGLE_FEATURE_CONDITION(
+        &mFeatures, supportsLogicOpDynamicState,
+        mExtendedDynamicState2Features.extendedDynamicState2LogicOp == VK_TRUE &&
+            !(IsLinux() && isIntel));
 
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsGraphicsPipelineLibrary,
                             mGraphicsPipelineLibraryFeatures.graphicsPipelineLibrary == VK_TRUE);

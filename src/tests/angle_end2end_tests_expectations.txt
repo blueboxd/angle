@@ -669,8 +669,15 @@
 5491 IOS : IOSurfaceClientBufferTest.MakeCurrent/ES2_OpenGL = SKIP
 5491 IOS : IOSurfaceClientBufferTest.MakeCurrent/ES3_OpenGL = SKIP
 
+4452 MAC AMD OPENGL : ClipDistanceTest.EachClipDistance/ES2_OpenGL = SKIP
+4452 MAC AMD OPENGL : ClipDistanceTest.EachClipDistance/ES3_OpenGL = SKIP
+
 7768 IOS : ClipDistanceTest.OneClipDistance/ES2_OpenGL = SKIP
 7768 IOS : ClipDistanceTest.OneClipDistance/ES3_OpenGL = SKIP
+7768 IOS : ClipDistanceTest.EachClipDistance/ES2_OpenGL = SKIP
+7768 IOS : ClipDistanceTest.EachClipDistance/ES3_OpenGL = SKIP
+7768 IOS : ClipDistanceTest.Octagon/ES2_OpenGL = SKIP
+7768 IOS : ClipDistanceTest.Octagon/ES3_OpenGL = SKIP
 7768 IOS : ClipDistanceTest.ThreeClipDistances/ES2_OpenGL = SKIP
 7768 IOS : ClipDistanceTest.ThreeClipDistances/ES3_OpenGL = SKIP
 7768 IOS : ClipDistanceTest.ThreeClipDistancesRedeclared/ES2_OpenGL = SKIP
