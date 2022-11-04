@@ -162,6 +162,10 @@ class RendererVk : angle::NonCopyable
     {
         return mPhysicalDeviceProperties;
     }
+    const VkPhysicalDeviceDrmPropertiesEXT &getPhysicalDeviceDrmProperties() const
+    {
+        return mDrmProperties;
+    }
     const VkPhysicalDevicePrimitivesGeneratedQueryFeaturesEXT &
     getPhysicalDevicePrimitivesGeneratedQueryFeatures() const
     {
@@ -204,9 +208,6 @@ class RendererVk : angle::NonCopyable
 
     angle::Result getPipelineCacheSize(DisplayVk *displayVk, size_t *pipelineCacheSizeOut);
     angle::Result syncPipelineCacheVk(DisplayVk *displayVk, const gl::Context *context);
-
-    // Issues a new serial for linked shader modules. Used in the pipeline cache.
-    Serial issueShaderSerial();
 
     const angle::FeaturesVk &getFeatures() const { return mFeatures; }
     uint32_t getMaxVertexAttribDivisor() const { return mMaxVertexAttribDivisor; }
@@ -725,6 +726,7 @@ class RendererVk : angle::NonCopyable
     VkPhysicalDevicePipelineRobustnessFeaturesEXT mPipelineRobustnessFeatures;
     VkPhysicalDeviceRasterizationOrderAttachmentAccessFeaturesEXT
         mRasterizationOrderAttachmentAccessFeatures;
+    VkPhysicalDeviceDrmPropertiesEXT mDrmProperties;
     angle::PackedEnumBitSet<gl::ShadingRate, uint8_t> mSupportedFragmentShadingRates;
     std::vector<VkQueueFamilyProperties> mQueueFamilyProperties;
     uint32_t mMaxVertexAttribDivisor;
