@@ -144,10 +144,6 @@ angle::Result DisplayMtl::initializeImpl(egl::Display *display)
         mCmdQueue.set([[mMetalDevice newCommandQueue] ANGLE_MTL_AUTORELEASE]);
 
         mCapsInitialized = false;
-#if ANGLE_ENABLE_METAL_SPIRV
-        ANGLE_TRACE_EVENT0("gpu.angle,startup", "GlslangWarmup");
-        sh::InitializeGlslang();
-#endif
 
         if (!mState.featuresAllDisabled)
         {
@@ -173,9 +169,6 @@ void DisplayMtl::terminate()
     mCapsInitialized = false;
 
     mMetalDeviceVendorId = 0;
-#if ANGLE_ENABLE_METAL_SPIRV
-    sh::FinalizeGlslang();
-#endif
 }
 
 bool DisplayMtl::testDeviceLost()
@@ -1205,9 +1198,6 @@ void DisplayMtl::initializeFeatures()
     ASSERT(!mFeatures.alwaysUseManagedStorageModeForBuffers.enabled ||
            !mFeatures.alwaysUseSharedStorageModeForBuffers.enabled);
 
-    bool defaultDirectToMetal = true;
-    ANGLE_FEATURE_CONDITION((&mFeatures), directMetalGeneration, defaultDirectToMetal);
-
     ANGLE_FEATURE_CONDITION((&mFeatures), uploadDataToIosurfacesWithStagingBuffers, isAMD());
 
     ApplyFeatureOverrides(&mFeatures, getState());
@@ -1361,10 +1351,5 @@ mtl::AutoObjCObj<MTLSharedEventListener> DisplayMtl::getOrCreateSharedEventListe
     return mSharedEventListener;
 }
 #endif
-
-bool DisplayMtl::useDirectToMetalCompiler() const
-{
-    return mFeatures.directMetalGeneration.enabled;
-}
 
 }  // namespace rx

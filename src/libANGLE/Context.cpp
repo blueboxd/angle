@@ -3708,6 +3708,9 @@ Extensions Context::generateSupportedExtensions() const
         // GL_EXT_YUV_target requires ESSL3
         supportedExtensions.YUVTargetEXT = false;
 
+        // GL_EXT_clip_cull_distance requires ESSL3
+        supportedExtensions.clipCullDistanceEXT = false;
+
         // ANGLE_shader_pixel_local_storage requires ES3
         supportedExtensions.shaderPixelLocalStorageANGLE         = false;
         supportedExtensions.shaderPixelLocalStorageCoherentANGLE = false;
@@ -4221,6 +4224,9 @@ void Context::initCaps()
         constexpr GLint maxSamples = 4;
         INFO() << "Limiting GL_MAX_SAMPLES to " << maxSamples;
         ANGLE_LIMIT_CAP(mState.mCaps.maxSamples, maxSamples);
+
+        // Test if we require shadow memory for coherent buffer tracking
+        getShareGroup()->getFrameCaptureShared()->determineMemoryProtectionSupport(this);
     }
 
     // Disable support for OES_get_program_binary
@@ -5702,7 +5708,16 @@ void *Context::mapBufferRange(BufferBinding target,
         return nullptr;
     }
 
-    return buffer->getMapPointer();
+    // TODO: (anglebug.com/7821): Modify return value in entry point layer
+    angle::FrameCaptureShared *frameCaptureShared = getShareGroup()->getFrameCaptureShared();
+    if (frameCaptureShared->enabled())
+    {
+        return frameCaptureShared->maybeGetShadowMemoryPointer(buffer, length, access);
+    }
+    else
+    {
+        return buffer->getMapPointer();
+    }
 }
 
 void Context::flushMappedBufferRange(BufferBinding /*target*/,

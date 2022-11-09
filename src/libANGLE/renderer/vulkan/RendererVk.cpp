@@ -47,12 +47,6 @@ constexpr bool kExposeNonConformantExtensionsAndVersions = true;
 #else
 constexpr bool kExposeNonConformantExtensionsAndVersions = false;
 #endif
-
-#if defined(ANGLE_USE_SPIRV_GENERATION_THROUGH_GLSLANG)
-constexpr bool kUseSpirvGenThroughGlslang = true;
-#else
-constexpr bool kUseSpirvGenThroughGlslang                = false;
-#endif
 }  // anonymous namespace
 
 namespace rx
@@ -155,26 +149,6 @@ constexpr const char *kSkippedMessages[] = {
     "UNASSIGNED-CoreValidation-Shader-InputNotProduced",
     // http://anglebug.com/2796
     "UNASSIGNED-CoreValidation-Shader-PointSizeMissing",
-    // Best Practices Skips https://issuetracker.google.com/issues/166641492
-    // https://issuetracker.google.com/issues/166793850
-    "UNASSIGNED-BestPractices-vkCreateCommandPool-command-buffer-reset",
-    "UNASSIGNED-BestPractices-pipeline-stage-flags",
-    "UNASSIGNED-BestPractices-Error-Result",
-    "UNASSIGNED-BestPractices-vkAllocateMemory-small-allocation",
-    "UNASSIGNED-BestPractices-vkBindMemory-small-dedicated-allocation",
-    "UNASSIGNED-BestPractices-vkAllocateMemory-too-many-objects",
-    "UNASSIGNED-BestPractices-vkCreateDevice-deprecated-extension",
-    "UNASSIGNED-BestPractices-vkCreateRenderPass-image-requires-memory",
-    "UNASSIGNED-BestPractices-vkCreateGraphicsPipelines-too-many-instanced-vertex-buffers",
-    "UNASSIGNED-BestPractices-DrawState-ClearCmdBeforeDraw",
-    "UNASSIGNED-BestPractices-vkCmdClearAttachments-clear-after-load",
-    "UNASSIGNED-BestPractices-TransitionUndefinedToReadOnly",
-    // http://anglebug.com/5336
-    "UNASSIGNED-BestPractices-vkCreateDevice-specialuse-extension",
-    // http://anglebug.com/7470
-    "UNASSIGNED-BestPractices-vkCmdBeginRenderPass-ClearValueWithoutLoadOpClear",
-    // http://anglebug.com/7795
-    "UNASSIGNED-BestPractices-ImageBarrierAccessLayout",
     // http://anglebug.com/4928
     "VUID-vkMapMemory-memory-00683",
     // http://anglebug.com/5027
@@ -1371,8 +1345,6 @@ void RendererVk::onDestroy(vk::Context *context)
 
     mAllocator.destroy();
 
-    sh::FinalizeGlslang();
-
     if (mDevice)
     {
         vkDestroyDevice(mDevice, nullptr);
@@ -1671,25 +1643,16 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
     instanceInfo.enabledLayerCount   = static_cast<uint32_t>(enabledInstanceLayerNames.size());
     instanceInfo.ppEnabledLayerNames = enabledInstanceLayerNames.data();
 
-    VkValidationFeatureEnableEXT enabledFeatures[] = {
-        VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT};
-    VkValidationFeaturesEXT validationFeatures       = {};
-    validationFeatures.sType                         = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
-    validationFeatures.enabledValidationFeatureCount = 1;
-    validationFeatures.pEnabledValidationFeatures    = enabledFeatures;
-
     // http://anglebug.com/7050 - Shader validation caching is broken on Android
+    VkValidationFeaturesEXT validationFeatures       = {};
     VkValidationFeatureDisableEXT disabledFeatures[] = {
         VK_VALIDATION_FEATURE_DISABLE_SHADER_VALIDATION_CACHE_EXT};
-    if (IsAndroid())
+    if (mEnableValidationLayers && IsAndroid())
     {
+        validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
         validationFeatures.disabledValidationFeatureCount = 1;
         validationFeatures.pDisabledValidationFeatures    = disabledFeatures;
-    }
 
-    if (mEnableValidationLayers)
-    {
-        // Enable best practices output which includes perfdoc layer
         vk::AddToPNextChain(&instanceInfo, &validationFeatures);
     }
 
@@ -1817,11 +1780,6 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
     }
 
     ANGLE_TRY(initializeMemoryAllocator(displayVk));
-
-    {
-        ANGLE_TRACE_EVENT0("gpu.angle,startup", "GlslangWarmup");
-        sh::InitializeGlslang();
-    }
 
     // Initialize the format table.
     mFormatTable.initialize(this, &mNativeTextureCaps);
@@ -2970,45 +2928,45 @@ angle::Result RendererVk::initializeDevice(DisplayVk *displayVk, uint32_t queueF
 #else
     if (getFeatures().supportsHostQueryReset.enabled)
     {
-                       InitHostQueryResetFunctions(mInstance);
+        InitHostQueryResetFunctions(mInstance);
     }
     if (hasGetMemoryRequirements2KHR)
     {
-                       InitGetMemoryRequirements2KHRFunctions(mDevice);
+        InitGetMemoryRequirements2KHRFunctions(mDevice);
     }
     if (hasBindMemory2KHR)
     {
-                       InitBindMemory2KHRFunctions(mDevice);
+        InitBindMemory2KHRFunctions(mDevice);
     }
     if (getFeatures().supportsTransformFeedbackExtension.enabled)
     {
-                       InitTransformFeedbackEXTFunctions(mDevice);
+        InitTransformFeedbackEXTFunctions(mDevice);
     }
     if (getFeatures().supportsYUVSamplerConversion.enabled)
     {
-                       InitSamplerYcbcrKHRFunctions(mDevice);
+        InitSamplerYcbcrKHRFunctions(mDevice);
     }
     if (getFeatures().supportsRenderpass2.enabled)
     {
-                       InitRenderPass2KHRFunctions(mDevice);
+        InitRenderPass2KHRFunctions(mDevice);
     }
     if (getFeatures().supportsExtendedDynamicState.enabled)
     {
-                       InitExtendedDynamicStateEXTFunctions(mDevice);
+        InitExtendedDynamicStateEXTFunctions(mDevice);
     }
     if (getFeatures().supportsExtendedDynamicState2.enabled)
     {
-                       InitExtendedDynamicState2EXTFunctions(mDevice);
+        InitExtendedDynamicState2EXTFunctions(mDevice);
     }
     if (getFeatures().supportsFragmentShadingRate.enabled)
     {
-                       InitFragmentShadingRateKHRDeviceFunction(mDevice);
-                       ASSERT(vkCmdSetFragmentShadingRateKHR);
+        InitFragmentShadingRateKHRDeviceFunction(mDevice);
+        ASSERT(vkCmdSetFragmentShadingRateKHR);
     }
     if (getFeatures().supportsTimestampSurfaceAttribute.enabled)
     {
-                       InitGetPastPresentationTimingGoogleFunction(mDevice);
-                       ASSERT(vkGetPastPresentationTimingGOOGLE);
+        InitGetPastPresentationTimingGoogleFunction(mDevice);
+        ASSERT(vkGetPastPresentationTimingGOOGLE);
     }
 #endif  // !defined(ANGLE_SHARED_LIBVULKAN)
 
@@ -3983,8 +3941,6 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
 
     // Retain debug info in SPIR-V blob.
     ANGLE_FEATURE_CONDITION(&mFeatures, retainSPIRVDebugInfo, getEnableValidationLayers());
-
-    ANGLE_FEATURE_CONDITION(&mFeatures, generateSPIRVThroughGlslang, kUseSpirvGenThroughGlslang);
 
     // For discrete GPUs, most of device local memory is host invisible. We should not force the
     // host visible flag for them and result in allocation failure.
