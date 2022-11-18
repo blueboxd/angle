@@ -2223,7 +2223,7 @@ angle::Result State::detachBuffer(Context *context, const Buffer *buffer)
         context->getStateCache().onActiveTransformFeedbackChange(context);
     }
 
-    if (getVertexArray()->detachBuffer(context, bufferID))
+    if (mVertexArray && mVertexArray->detachBuffer(context, bufferID))
     {
         mDirtyObjects.set(DIRTY_OBJECT_VERTEX_ARRAY);
         context->getStateCache().onVertexArrayStateChange(context);
@@ -3112,7 +3112,7 @@ angle::Result State::getIntegerv(const Context *context, GLenum pname, GLint *pa
             break;
 
         // GL_ANGLE_provoking_vertex
-        case GL_PROVOKING_VERTEX:
+        case GL_PROVOKING_VERTEX_ANGLE:
             *params = ToGLenum(mProvokingVertex);
             break;
 

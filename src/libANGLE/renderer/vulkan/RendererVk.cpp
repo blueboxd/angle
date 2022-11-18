@@ -1117,8 +1117,6 @@ class WaitableCompressEventImpl : public WaitableCompressEvent
         : WaitableCompressEvent(waitableEvent), mCompressTask(compressTask)
     {}
 
-    bool getResult() override { return true; }
-
   private:
     std::shared_ptr<CompressAndStorePipelineCacheTask> mCompressTask;
 };
@@ -3409,6 +3407,8 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
                              mPhysicalDeviceProperties.deviceName);
     const bool isQualcommProprietary = isQualcomm && !isQualcommOpenSource;
 
+    const bool isMesaVenus = mDriverProperties.driverID == VK_DRIVER_ID_MESA_VENUS;
+
     // Parse the ARM driver version to be readable/comparable
     const ARMDriverVersion armDriverVersion =
         ParseARMDriverVersion(mPhysicalDeviceProperties.driverVersion);
@@ -3416,8 +3416,13 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     angle::VersionInfo nvidiaVersion;
     if (isNvidia)
     {
-        nvidiaVersion =
-            angle::ParseNvidiaDriverVersion(this->mPhysicalDeviceProperties.driverVersion);
+        nvidiaVersion = angle::ParseNvidiaDriverVersion(mPhysicalDeviceProperties.driverVersion);
+    }
+
+    angle::VersionInfo mesaVersion;
+    if (isIntel && IsLinux())
+    {
+        mesaVersion = angle::ParseMesaDriverVersion(mPhysicalDeviceProperties.driverVersion);
     }
 
     // Classify devices based on general architecture:
@@ -3954,11 +3959,14 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsExtendedDynamicState2,
                             mExtendedDynamicState2Features.extendedDynamicState2 == VK_TRUE);
 
-    // Disabled on Intel/Mesa due to driver bug (crbug.com/1379201)
+    // Disabled on Intel/Mesa due to driver bug (crbug.com/1379201).  This bug is fixed since Mesa
+    // 22.2.0.
+    const bool isAtLeastMesa22_2 =
+        mesaVersion.major >= 22 || (mesaVersion.major == 22 && mesaVersion.minor >= 2);
     ANGLE_FEATURE_CONDITION(
         &mFeatures, supportsLogicOpDynamicState,
         mExtendedDynamicState2Features.extendedDynamicState2LogicOp == VK_TRUE &&
-            !(IsLinux() && isIntel));
+            (!(IsLinux() && isIntel) || isAtLeastMesa22_2));
 
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsGraphicsPipelineLibrary,
                             mGraphicsPipelineLibraryFeatures.graphicsPipelineLibrary == VK_TRUE);
@@ -4006,6 +4014,8 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, warmUpPipelineCacheAtLink,
                             !isARM && !isPowerVR && !isQualcommProprietary &&
                                 !(IsLinux() && isIntel) && !(IsChromeOS() && isSwiftShader));
+
+    ANGLE_FEATURE_CONDITION(&mFeatures, enableAsyncPipelineCacheCompression, isMesaVenus);
 
     // On ARM, dynamic state for stencil write mask doesn't work correctly in the presence of
     // discard or alpha to coverage, if the static state provided when creating the pipeline has a
@@ -4203,7 +4213,6 @@ void RendererVk::initializeFrontendFeatures(angle::FrontendFeatures *features) c
 {
     const bool isSwiftShader =
         IsSwiftshader(mPhysicalDeviceProperties.vendorID, mPhysicalDeviceProperties.deviceID);
-    const bool isMesaVenus = mDriverProperties.driverID == VK_DRIVER_ID_MESA_VENUS;
 
     // Hopefully-temporary work-around for a crash on SwiftShader.  An Android process is turning
     // off GL error checking, and then asking ANGLE to write past the end of a buffer.
@@ -4211,8 +4220,6 @@ void RendererVk::initializeFrontendFeatures(angle::FrontendFeatures *features) c
     ANGLE_FEATURE_CONDITION(features, forceGlErrorChecking, (IsAndroid() && isSwiftShader));
 
     ANGLE_FEATURE_CONDITION(features, cacheCompiledShader, true);
-
-    ANGLE_FEATURE_CONDITION(features, enableCompressingPipelineCacheInThreadPool, isMesaVenus);
 }
 
 angle::Result RendererVk::getPipelineCacheSize(DisplayVk *displayVk, size_t *pipelineCacheSizeOut)
@@ -4308,7 +4315,7 @@ angle::Result RendererVk::syncPipelineCacheVk(DisplayVk *displayVk, const gl::Co
                pipelineCacheData.size() - pipelineCacheSize);
     }
 
-    if (context->getFrontendFeatures().enableCompressingPipelineCacheInThreadPool.enabled)
+    if (mFeatures.enableAsyncPipelineCacheCompression.enabled)
     {
         // zlib compression ratio normally ranges from 2:1 to 5:1. Set kMaxTotalSize to 64M to
         // ensure the size can fit into the 32MB blob cache limit on supported platforms.
@@ -4324,8 +4331,8 @@ angle::Result RendererVk::syncPipelineCacheVk(DisplayVk *displayVk, const gl::Co
     }
     else
     {
-        // If enableCompressingPipelineCacheInThreadPool is diabled, to avoid the risk, set
-        // kMaxTotalSize to 64k.
+        // If enableAsyncPipelineCacheCompression is disabled, to avoid the risk, set kMaxTotalSize
+        // to 64k.
         constexpr size_t kMaxTotalSize = 64 * 1024;
         CompressAndStorePipelineCacheVk(mPhysicalDeviceProperties, displayVk, contextVk,
                                         pipelineCacheData, kMaxTotalSize);
@@ -4698,7 +4705,7 @@ angle::Result RendererVk::getCommandBufferOneOff(vk::Context *context,
     }
 
     if (!mPendingOneOffCommands.empty() &&
-        mPendingOneOffCommands.front().serial < getLastCompletedQueueSerial())
+        mPendingOneOffCommands.front().serial <= getLastCompletedQueueSerial())
     {
         *commandBufferOut = std::move(mPendingOneOffCommands.front().commandBuffer);
         mPendingOneOffCommands.pop_front();
@@ -4724,15 +4731,16 @@ angle::Result RendererVk::getCommandBufferOneOff(vk::Context *context,
     return angle::Result::Continue;
 }
 
-angle::Result RendererVk::submitFrame(vk::Context *context,
-                                      bool hasProtectedContent,
-                                      egl::ContextPriority contextPriority,
-                                      std::vector<VkSemaphore> &&waitSemaphores,
-                                      std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks,
-                                      const vk::Semaphore *signalSemaphore,
-                                      vk::GarbageList &&currentGarbage,
-                                      vk::SecondaryCommandPools *commandPools,
-                                      Serial *submitSerialOut)
+angle::Result RendererVk::submitCommands(
+    vk::Context *context,
+    bool hasProtectedContent,
+    egl::ContextPriority contextPriority,
+    std::vector<VkSemaphore> &&waitSemaphores,
+    std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks,
+    const vk::Semaphore *signalSemaphore,
+    vk::GarbageList &&currentGarbage,
+    vk::SecondaryCommandPools *commandPools,
+    Serial *submitSerialOut)
 {
     std::unique_lock<std::mutex> lock(mCommandQueueMutex);
 
@@ -4745,7 +4753,7 @@ angle::Result RendererVk::submitFrame(vk::Context *context,
     {
         *submitSerialOut = mCommandProcessor.reserveSubmitSerial();
 
-        ANGLE_TRY(mCommandProcessor.submitFrame(
+        ANGLE_TRY(mCommandProcessor.submitCommands(
             context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
             signalSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
             commandPools, *submitSerialOut));
@@ -4754,7 +4762,7 @@ angle::Result RendererVk::submitFrame(vk::Context *context,
     {
         *submitSerialOut = mCommandQueue.reserveSubmitSerial();
 
-        ANGLE_TRY(mCommandQueue.submitFrame(
+        ANGLE_TRY(mCommandQueue.submitCommands(
             context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
             signalSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
             commandPools, *submitSerialOut));

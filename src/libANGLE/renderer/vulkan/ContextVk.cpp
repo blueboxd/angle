@@ -1751,8 +1751,10 @@ angle::Result ContextVk::handleDirtyGraphicsDefaultAttribs(DirtyBits::Iterator *
 {
     ASSERT(mDirtyDefaultAttribsMask.any());
 
+    gl::AttributesMask attribsMask =
+        mDirtyDefaultAttribsMask & mState.getProgramExecutable()->getAttributesMask();
     VertexArrayVk *vertexArrayVk = getVertexArray();
-    for (size_t attribIndex : mDirtyDefaultAttribsMask)
+    for (size_t attribIndex : attribsMask)
     {
         ANGLE_TRY(vertexArrayVk->updateDefaultAttrib(this, attribIndex));
     }
@@ -3098,10 +3100,10 @@ angle::Result ContextVk::submitCommands(const vk::Semaphore *signalSemaphore,
         garbage = std::move(mCurrentGarbage);
     }
 
-    ANGLE_TRY(mRenderer->submitFrame(this, hasProtectedContent(), mContextPriority,
-                                     std::move(mWaitSemaphores),
-                                     std::move(mWaitSemaphoreStageMasks), signalSemaphore,
-                                     std::move(garbage), &mCommandPools, submitSerialOut));
+    ANGLE_TRY(mRenderer->submitCommands(this, hasProtectedContent(), mContextPriority,
+                                        std::move(mWaitSemaphores),
+                                        std::move(mWaitSemaphoreStageMasks), signalSemaphore,
+                                        std::move(garbage), &mCommandPools, submitSerialOut));
 
     getShareGroup()->releaseResourceUseLists(*submitSerialOut);
     // Now that we have processed resourceUseList, some of pending garbage may no longer pending
@@ -6673,11 +6675,6 @@ void ContextVk::addWaitSemaphore(VkSemaphore semaphore, VkPipelineStageFlags sta
     mWaitSemaphoreStageMasks.push_back(stageMask);
 }
 
-bool ContextVk::isSerialInUse(Serial serial) const
-{
-    return serial > getLastCompletedQueueSerial();
-}
-
 angle::Result ContextVk::checkCompletedCommands()
 {
     return mRenderer->checkCompletedCommands(this);
@@ -6689,7 +6686,7 @@ angle::Result ContextVk::finishToSerial(Serial serial)
 }
 
 angle::Result ContextVk::getCompatibleRenderPass(const vk::RenderPassDesc &desc,
-                                                 vk::RenderPass **renderPassOut)
+                                                 const vk::RenderPass **renderPassOut)
 {
     // Note: Each context has it's own RenderPassCache so no locking needed.
     return mRenderPassCache.getCompatibleRenderPass(this, desc, renderPassOut);
@@ -6697,7 +6694,7 @@ angle::Result ContextVk::getCompatibleRenderPass(const vk::RenderPassDesc &desc,
 
 angle::Result ContextVk::getRenderPassWithOps(const vk::RenderPassDesc &desc,
                                               const vk::AttachmentOpsArray &ops,
-                                              vk::RenderPass **renderPassOut)
+                                              const vk::RenderPass **renderPassOut)
 {
     // Note: Each context has it's own RenderPassCache so no locking needed.
     return mRenderPassCache.getRenderPassWithOps(this, desc, ops, renderPassOut);
@@ -6960,7 +6957,7 @@ angle::Result ContextVk::flushCommandsAndEndRenderPassImpl(QueueSubmitType queue
         mRenderPassCommands->addCommandDiagnostics(this);
     }
 
-    vk::RenderPass *renderPass = nullptr;
+    const vk::RenderPass *renderPass = nullptr;
     ANGLE_TRY(getRenderPassWithOps(mRenderPassCommands->getRenderPassDesc(),
                                    mRenderPassCommands->getAttachmentOps(), &renderPass));
 

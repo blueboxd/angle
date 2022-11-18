@@ -123,8 +123,6 @@ class WaitableCompressEvent
 
     bool isReady() { return mWaitableEvent->isReady(); }
 
-    virtual bool getResult() = 0;
-
   private:
     std::shared_ptr<angle::WaitableEvent> mWaitableEvent;
 };
@@ -479,15 +477,15 @@ class RendererVk : angle::NonCopyable
     void cleanupCompletedCommandsGarbage();
     void cleanupPendingSubmissionGarbage();
 
-    angle::Result submitFrame(vk::Context *context,
-                              bool hasProtectedContent,
-                              egl::ContextPriority contextPriority,
-                              std::vector<VkSemaphore> &&waitSemaphores,
-                              std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks,
-                              const vk::Semaphore *signalSemaphore,
-                              vk::GarbageList &&currentGarbage,
-                              vk::SecondaryCommandPools *commandPools,
-                              Serial *submitSerialOut);
+    angle::Result submitCommands(vk::Context *context,
+                                 bool hasProtectedContent,
+                                 egl::ContextPriority contextPriority,
+                                 std::vector<VkSemaphore> &&waitSemaphores,
+                                 std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks,
+                                 const vk::Semaphore *signalSemaphore,
+                                 vk::GarbageList &&currentGarbage,
+                                 vk::SecondaryCommandPools *commandPools,
+                                 Serial *submitSerialOut);
 
     void handleDeviceLost();
     angle::Result finishToSerial(vk::Context *context, Serial serial);
