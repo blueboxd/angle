@@ -43,13 +43,13 @@ vars = {
   'checkout_angle_mesa': False,
 
   # Version of Chromium our Chromium-based DEPS are mirrored from.
-  'chromium_revision': '1f4a045ca0a4b8f8ffd92251c8e948ab6173903b',
+  'chromium_revision': '9f3d33d253ac28d611b7c19bb7d1a83efd2197e2',
   # We never want to checkout chromium,
   # but need a dummy DEPS entry for the autoroller
   'dummy_checkout_chromium': False,
 
   # Current revision of VK-GL-CTS (a.k.a dEQP).
-  'vk_gl_cts_revision': 'c4fe10a0c86dc96647e9a94336150c3d7a8c656f',
+  'vk_gl_cts_revision': '9d22258ed442f96af44dc8aa8fcf92a60ab34747',
 
   # Current revision of googletest.
   # Note: this dep cannot be auto-rolled b/c of nesting.
@@ -88,11 +88,11 @@ vars = {
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling catapult
   # and whatever else without interference from each other.
-  'catapult_revision': '79ba9244e55867a3e7a1ea193bf6f33fae7678b2',
+  'catapult_revision': 'cce68bc50e1127115eca0db671c1657f2750b6f5',
 
   # the commit queue can handle CLs rolling Fuchsia sdk
   # and whatever else without interference from each other.
-  'fuchsia_version': 'version:10.20221117.0.1',
+  'fuchsia_version': 'version:10.20221122.0.1',
 
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling luci-go
@@ -136,12 +136,12 @@ vars = {
 deps = {
 
   'build': {
-    'url': '{chromium_git}/chromium/src/build.git@dc2384c048e41252b1298fd88efe1aa2c16e7cc0',
+    'url': '{chromium_git}/chromium/src/build.git@88913de9421d697f6baff0e815d4c8ba82e39a81',
     'condition': 'not build_with_chromium',
   },
 
   'buildtools': {
-    'url': '{chromium_git}/chromium/src/buildtools.git@09154d65c32661a2586ca376d2c06185851b8541',
+    'url': '{chromium_git}/chromium/src/buildtools.git@3c8fef071edb88facb7508060e978c5fb8608dd5',
     'condition': 'not build_with_chromium',
   },
 
@@ -199,7 +199,7 @@ deps = {
   },
 
   'testing': {
-    'url': '{chromium_git}/chromium/src/testing@a9bbf9d24ea83628f229dbeaa1dbf5ce835fd053',
+    'url': '{chromium_git}/chromium/src/testing@7b5c1435de9db9c49b2ff713ee2f328187bbd79d',
     'condition': 'not build_with_chromium',
   },
 
@@ -372,7 +372,7 @@ deps = {
   },
 
   'third_party/depot_tools': {
-    'url': '{chromium_git}/chromium/tools/depot_tools.git@1f67d5573f9cc19bc7fd52b0295687164cc979d6',
+    'url': '{chromium_git}/chromium/tools/depot_tools.git@6fde0fbe9226ae3fc9f5c709adb93249924e5c49',
     'condition': 'not build_with_chromium',
   },
 
@@ -569,7 +569,7 @@ deps = {
       'packages': [
           {
               'package': 'chromium/third_party/r8',
-              'version': 'SRv8kr_t534yPmvzQnKEBqgw_lidewzTdKnAKoWYkz0C',
+              'version': '6IAjJKfUwjFSLKQ31fxSTeXHZXcsGeoUlMKBcirZTbUC',
           },
       ],
       'condition': 'checkout_android and not build_with_chromium',
@@ -625,7 +625,7 @@ deps = {
   },
 
   'third_party/vulkan-deps': {
-    'url': '{chromium_git}/vulkan-deps@eb108f5f3b1531385d4fc4fd90930c3e364f2133',
+    'url': '{chromium_git}/vulkan-deps@ca8ca2aba961abe6cc3dfd6879dfc2687c765df8',
     'condition': 'not build_with_chromium',
   },
 
@@ -650,7 +650,7 @@ deps = {
   },
 
   'tools/clang': {
-    'url': '{chromium_git}/chromium/src/tools/clang.git@d21aa5eb7e92726fd695bea94aa213ccb52b30d1',
+    'url': '{chromium_git}/chromium/src/tools/clang.git@4f8bb52f0a7bf357f812225244a0882b2d0e3ba6',
     'condition': 'not build_with_chromium',
   },
 
@@ -681,7 +681,7 @@ deps = {
   },
 
   'tools/mb': {
-    'url': '{chromium_git}/chromium/src/tools/mb@ff50c9b60c22fd23a9d8dd7223771a4559e05688',
+    'url': '{chromium_git}/chromium/src/tools/mb@842cb67d55a23e17a1c34b2dcd2c78e329c30264',
     'condition': 'not build_with_chromium',
   },
 
@@ -696,7 +696,7 @@ deps = {
   },
 
   'tools/perf': {
-    'url': '{chromium_git}/chromium/src/tools/perf@d25dda6c4f5ade3a9b2b2f5809b893d3da9ce8e8',
+    'url': '{chromium_git}/chromium/src/tools/perf@7f2b5fe8ebb1b200498acccb2ebf2d5400a3987b',
     'condition': 'not build_with_chromium',
   },
 
@@ -1195,6 +1195,16 @@ deps = {
         {
             'package': 'angle/traces/dead_trigger_2',
             'version': 'version:1',
+        },
+      ],
+      'dep_type': 'cipd',
+      'condition': 'checkout_angle_restricted_traces',
+  },
+  'src/tests/restricted_traces/diablo_immortal': {
+      'packages': [
+        {
+            'package': 'angle/traces/diablo_immortal',
+            'version': 'version:2',
         },
       ],
       'dep_type': 'cipd',

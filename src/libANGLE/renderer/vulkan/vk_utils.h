@@ -115,6 +115,10 @@ constexpr uint32_t kInvalidMemoryTypeIndex = UINT32_MAX;
 
 namespace vk
 {
+
+// Used for memory allocation tracking.
+enum class MemoryAllocationType;
+
 // A packed attachment index interface with vulkan API
 class PackedAttachmentIndex final
 {
@@ -339,29 +343,29 @@ class GarbageAndQueueSerial final : angle::NonCopyable
   public:
     GarbageAndQueueSerial() {}
 
-    GarbageAndQueueSerial(GarbageList &&object, Serial serial)
-        : mObject(std::move(object)), mSerial(serial)
+    GarbageAndQueueSerial(GarbageList &&object, QueueSerial serial)
+        : mObject(std::move(object)), mQueueSerial(serial)
     {}
 
     GarbageAndQueueSerial(GarbageAndQueueSerial &&other)
-        : mObject(std::move(other.mObject)), mSerial(std::move(other.mSerial))
+        : mObject(std::move(other.mObject)), mQueueSerial(std::move(other.mQueueSerial))
     {}
     GarbageAndQueueSerial &operator=(GarbageAndQueueSerial &&other)
     {
-        mObject = std::move(other.mObject);
-        mSerial = std::move(other.mSerial);
+        mObject      = std::move(other.mObject);
+        mQueueSerial = std::move(other.mQueueSerial);
         return *this;
     }
 
-    Serial getSerial() const { return mSerial; }
-    void updateSerial(Serial newSerial) { mSerial = newSerial; }
+    QueueSerial getQueueSerial() const { return mQueueSerial; }
+    void updateQueueSerial(const QueueSerial &newQueueSerial) { mQueueSerial = newQueueSerial; }
 
     const GarbageList &get() const { return mObject; }
     GarbageList &get() { return mObject; }
 
   private:
     GarbageList mObject;
-    Serial mSerial;
+    QueueSerial mQueueSerial;
 };
 
 // Houses multiple lists of garbage objects. Each sub-list has a different lifetime. They should be
@@ -403,7 +407,7 @@ class StagingBuffer final : angle::NonCopyable
   public:
     StagingBuffer();
     void release(ContextVk *contextVk);
-    void collectGarbage(RendererVk *renderer, Serial serial);
+    void collectGarbage(RendererVk *renderer, const QueueSerial &queueSerial);
     void destroy(RendererVk *renderer);
 
     angle::Result init(Context *context, VkDeviceSize size, StagingUsage usage);
@@ -432,6 +436,7 @@ angle::Result InitMappableDeviceMemory(Context *context,
                                        VkMemoryPropertyFlags memoryPropertyFlags);
 
 angle::Result AllocateBufferMemory(Context *context,
+                                   MemoryAllocationType memoryAllocationType,
                                    VkMemoryPropertyFlags requestedMemoryPropertyFlags,
                                    VkMemoryPropertyFlags *memoryPropertyFlagsOut,
                                    const void *extraAllocationInfo,
@@ -440,6 +445,7 @@ angle::Result AllocateBufferMemory(Context *context,
                                    VkDeviceSize *sizeOut);
 
 angle::Result AllocateImageMemory(Context *context,
+                                  MemoryAllocationType memoryAllocationType,
                                   VkMemoryPropertyFlags memoryPropertyFlags,
                                   VkMemoryPropertyFlags *memoryPropertyFlagsOut,
                                   const void *extraAllocationInfo,
@@ -449,6 +455,7 @@ angle::Result AllocateImageMemory(Context *context,
 
 angle::Result AllocateImageMemoryWithRequirements(
     Context *context,
+    MemoryAllocationType memoryAllocationType,
     VkMemoryPropertyFlags memoryPropertyFlags,
     const VkMemoryRequirements &memoryRequirements,
     const void *extraAllocationInfo,
@@ -457,6 +464,7 @@ angle::Result AllocateImageMemoryWithRequirements(
     DeviceMemory *deviceMemoryOut);
 
 angle::Result AllocateBufferMemoryWithRequirements(Context *context,
+                                                   MemoryAllocationType memoryAllocationType,
                                                    VkMemoryPropertyFlags memoryPropertyFlags,
                                                    const VkMemoryRequirements &memoryRequirements,
                                                    const void *extraAllocationInfo,

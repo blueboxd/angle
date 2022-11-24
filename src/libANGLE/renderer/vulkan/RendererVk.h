@@ -92,6 +92,25 @@ struct SkippedSyncvalMessage
     const char *messageContents2                      = "";
     bool isDueToNonConformantCoherentFramebufferFetch = false;
 };
+
+// Used to designate memory allocation type for tracking purposes.
+enum class MemoryAllocationType
+{
+    Unspecified    = 0,
+    Image          = 1,
+    ImageExternal  = 2,
+    Buffer         = 3,
+    BufferExternal = 4,
+
+    InvalidEnum = 5,
+    EnumCount   = InvalidEnum,
+};
+
+constexpr const char *kMemoryAllocationTypeMessage[] = {
+    "Unspecified", "Image", "ImageExternal", "Buffer", "BufferExternal", "Invalid",
+};
+constexpr const uint32_t kMemoryAllocationTypeCount =
+    static_cast<uint32_t>(MemoryAllocationType::EnumCount);
 }  // namespace vk
 
 // Supports one semaphore from current surface, and one semaphore passed to
@@ -297,7 +316,7 @@ class RendererVk : angle::NonCopyable
                                     VkPipelineStageFlags waitSemaphoreStageMasks,
                                     const vk::Fence *fence,
                                     vk::SubmitPolicy submitPolicy,
-                                    Serial *serialOut);
+                                    QueueSerial *queueSerialOut);
 
     template <typename... ArgsT>
     void collectGarbageAndReinit(vk::SharedResourceUse *use, ArgsT... garbageIn)
@@ -322,12 +341,12 @@ class RendererVk : angle::NonCopyable
         if (!sharedGarbage.empty())
         {
             vk::SharedGarbage garbage(std::move(use), std::move(sharedGarbage));
-            if (garbage.usedInRecordedCommands())
+            if (garbage.hasUnsubmittedUse(this))
             {
                 std::unique_lock<std::mutex> lock(mGarbageMutex);
                 mPendingSubmissionGarbage.push(std::move(garbage));
             }
-            else if (!garbage.destroyIfComplete(this, getLastCompletedQueueSerial()))
+            else if (!garbage.destroyIfComplete(this))
             {
                 std::unique_lock<std::mutex> lock(mGarbageMutex);
                 mSharedGarbage.push(std::move(garbage));
@@ -339,10 +358,10 @@ class RendererVk : angle::NonCopyable
                                      vk::BufferSuballocation &&suballocation,
                                      vk::Buffer &&buffer)
     {
-        if (use.isCurrentlyInUse(getLastCompletedQueueSerial()))
+        if (hasUnfinishedUse(use))
         {
             std::unique_lock<std::mutex> lock(mGarbageMutex);
-            if (use.usedInRecordedCommands())
+            if (hasUnsubmittedUse(use))
             {
                 mPendingSubmissionSuballocationGarbage.emplace(
                     std::move(use), std::move(suballocation), std::move(buffer));
@@ -365,7 +384,7 @@ class RendererVk : angle::NonCopyable
         }
     }
 
-    angle::Result getPipelineCache(PipelineCacheAccess *pipelineCacheOut);
+    angle::Result getPipelineCache(vk::PipelineCacheAccess *pipelineCacheOut);
     angle::Result mergeIntoPipelineCache(const vk::PipelineCache &pipelineCache);
 
     void onNewValidationMessage(const std::string &message);
@@ -384,18 +403,6 @@ class RendererVk : angle::NonCopyable
     bool isFramebufferFetchUsed() const { return mIsFramebufferFetchUsed; }
 
     uint64_t getMaxFenceWaitTimeNs() const;
-
-    ANGLE_INLINE Serial getLastCompletedQueueSerial() const
-    {
-        if (isAsyncCommandQueueEnabled())
-        {
-            return mCommandProcessor.getLastCompletedQueueSerial();
-        }
-        else
-        {
-            return mCommandQueue.getLastCompletedQueueSerial();
-        }
-    }
 
     ANGLE_INLINE bool isCommandQueueBusy()
     {
@@ -473,7 +480,7 @@ class RendererVk : angle::NonCopyable
 
     bool haveSameFormatFeatureBits(angle::FormatID formatID1, angle::FormatID formatID2) const;
 
-    void cleanupGarbage(Serial lastCompletedQueueSerial);
+    void cleanupGarbage();
     void cleanupCompletedCommandsGarbage();
     void cleanupPendingSubmissionGarbage();
 
@@ -485,14 +492,15 @@ class RendererVk : angle::NonCopyable
                                  const vk::Semaphore *signalSemaphore,
                                  vk::GarbageList &&currentGarbage,
                                  vk::SecondaryCommandPools *commandPools,
-                                 Serial *submitSerialOut);
+                                 QueueSerial *submitSerialOut);
 
     void handleDeviceLost();
-    angle::Result finishToSerial(vk::Context *context, Serial serial);
-    angle::Result waitForSerialWithUserTimeout(vk::Context *context,
-                                               Serial serial,
-                                               uint64_t timeout,
-                                               VkResult *result);
+    angle::Result finishResourceUse(vk::Context *context, const vk::ResourceUse &use);
+    angle::Result finishQueueSerial(vk::Context *context, const QueueSerial &queueSerial);
+    angle::Result waitForResourceUseToFinishWithUserTimeout(vk::Context *context,
+                                                            const vk::ResourceUse &use,
+                                                            uint64_t timeout,
+                                                            VkResult *result);
     angle::Result finish(vk::Context *context, bool hasProtectedContent);
     angle::Result checkCompletedCommands(vk::Context *context);
 
@@ -621,6 +629,49 @@ class RendererVk : angle::NonCopyable
         return getFeatures().preferLinearFilterForYUV.enabled ? VK_FILTER_LINEAR : defaultFilter;
     }
 
+    // The ResourceUse still have unfinished queue serial by vulkan.
+    bool hasUnfinishedUse(const vk::ResourceUse &use) const;
+    bool hasUnfinishedUse(const vk::SharedResourceUse &sharedUse) const
+    {
+        ASSERT(sharedUse.valid());
+        return hasUnfinishedUse(sharedUse.getResourceUse());
+    }
+
+    // The ResourceUse still have unfinished queue serial by vulkan.
+    bool useInRunningCommands(const vk::ResourceUse &use) const;
+    bool useInRunningCommands(const vk::SharedResourceUse &sharedUse) const
+    {
+        ASSERT(sharedUse.valid());
+        return useInRunningCommands(sharedUse.getResourceUse());
+    }
+
+    // The ResourceUse still have queue serial not yet submitted to vulkan.
+    bool hasUnsubmittedUse(const vk::ResourceUse &use) const;
+    bool hasUnsubmittedUse(const vk::SharedResourceUse &sharedUse) const
+    {
+        ASSERT(sharedUse.valid());
+        return hasUnsubmittedUse(sharedUse.getResourceUse());
+    }
+
+    void onMemoryAlloc(vk::MemoryAllocationType allocType, VkDeviceSize size)
+    {
+        ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
+
+        // Add the new allocation to the allocation tracker.
+        uint32_t allocTypeIndex = ToUnderlying(allocType);
+        mActiveMemoryAllocationsSize[allocTypeIndex] += size;
+    }
+
+    void onMemoryDealloc(vk::MemoryAllocationType allocType, VkDeviceSize size)
+    {
+        ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
+
+        // Remove the allocation from the allocation tracker.
+        uint32_t allocTypeIndex = ToUnderlying(allocType);
+        ASSERT(mActiveMemoryAllocationsSize[allocTypeIndex] >= size);
+        mActiveMemoryAllocationsSize[allocTypeIndex] -= size;
+    }
+
   private:
     angle::Result initializeDevice(DisplayVk *displayVk, uint32_t queueFamilyIndex);
     void ensureCapsInitialized() const;
@@ -718,6 +769,7 @@ class RendererVk : angle::NonCopyable
     VkPhysicalDeviceExtendedDynamicStateFeaturesEXT mExtendedDynamicStateFeatures;
     VkPhysicalDeviceExtendedDynamicState2FeaturesEXT mExtendedDynamicState2Features;
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT mGraphicsPipelineLibraryFeatures;
+    VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT mGraphicsPipelineLibraryProperties;
     VkPhysicalDeviceFragmentShadingRateFeaturesKHR mFragmentShadingRateFeatures;
     VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT mFragmentShaderInterlockFeatures;
     VkPhysicalDeviceImagelessFramebufferFeaturesKHR mImagelessFramebufferFeatures;
@@ -814,7 +866,26 @@ class RendererVk : angle::NonCopyable
 
     struct PendingOneOffCommands
     {
-        Serial serial;
+        PendingOneOffCommands(const QueueSerial &queueSerial, vk::PrimaryCommandBuffer &&command)
+        {
+            use.init();
+            use.updateSerialOneOff(queueSerial);
+            commandBuffer = std::move(command);
+        }
+        PendingOneOffCommands(PendingOneOffCommands &&other)
+        {
+            use           = std::move(other.use);
+            commandBuffer = std::move(other.commandBuffer);
+        }
+        ~PendingOneOffCommands()
+        {
+            if (use.valid())
+            {
+                use.release();
+            }
+            ASSERT(!commandBuffer.valid());
+        }
+        vk::SharedResourceUse use;
         vk::PrimaryCommandBuffer commandBuffer;
     };
     std::deque<PendingOneOffCommands> mPendingOneOffCommands;
@@ -872,8 +943,47 @@ class RendererVk : angle::NonCopyable
 
     vk::ExtensionNameList mEnabledInstanceExtensions;
     vk::ExtensionNameList mEnabledDeviceExtensions;
+
+    // For memory allocation tracking.
+    std::array<std::atomic<VkDeviceSize>, vk::kMemoryAllocationTypeCount>
+        mActiveMemoryAllocationsSize;
 };
 
+ANGLE_INLINE bool RendererVk::hasUnfinishedUse(const vk::ResourceUse &use) const
+{
+    if (isAsyncCommandQueueEnabled())
+    {
+        return mCommandProcessor.hasUnfinishedUse(use);
+    }
+    else
+    {
+        return mCommandQueue.hasUnfinishedUse(use);
+    }
+}
+
+ANGLE_INLINE bool RendererVk::useInRunningCommands(const vk::ResourceUse &use) const
+{
+    if (isAsyncCommandQueueEnabled())
+    {
+        return mCommandProcessor.useInRunningCommands(use);
+    }
+    else
+    {
+        return mCommandQueue.useInRunningCommands(use);
+    }
+}
+
+ANGLE_INLINE bool RendererVk::hasUnsubmittedUse(const vk::ResourceUse &use) const
+{
+    if (isAsyncCommandQueueEnabled())
+    {
+        return mCommandProcessor.hasUnsubmittedUse(use);
+    }
+    else
+    {
+        return mCommandQueue.hasUnsubmittedUse(use);
+    }
+}
 }  // namespace rx
 
 #endif  // LIBANGLE_RENDERER_VULKAN_RENDERERVK_H_

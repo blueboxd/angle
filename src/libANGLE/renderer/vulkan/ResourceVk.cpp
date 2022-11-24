@@ -19,9 +19,9 @@ namespace
 {
 constexpr size_t kDefaultResourceUseCount = 4096;
 
-angle::Result FinishRunningCommands(ContextVk *contextVk, Serial serial)
+angle::Result FinishRunningCommands(Context *context, const ResourceUse &use)
 {
-    return contextVk->finishToSerial(serial);
+    return context->getRenderer()->finishResourceUse(context, use);
 }
 
 template <typename T>
@@ -31,13 +31,13 @@ angle::Result WaitForIdle(ContextVk *contextVk,
                           RenderPassClosureReason reason)
 {
     // If there are pending commands for the resource, flush them.
-    if (resource->usedInRecordedCommands())
+    if (resource->usedInRecordedCommands(contextVk))
     {
         ANGLE_TRY(contextVk->flushImpl(nullptr, reason));
     }
 
     // Make sure the driver is done with the resource.
-    if (resource->usedInRunningCommands(contextVk->getLastCompletedQueueSerial()))
+    if (resource->usedInRunningCommands(contextVk->getRenderer()))
     {
         if (debugMessage)
         {
@@ -46,7 +46,7 @@ angle::Result WaitForIdle(ContextVk *contextVk,
         ANGLE_TRY(resource->finishRunningCommands(contextVk));
     }
 
-    ASSERT(!resource->isCurrentlyInUse(contextVk->getLastCompletedQueueSerial()));
+    ASSERT(!resource->isCurrentlyInUse(contextVk->getRenderer()));
 
     return angle::Result::Continue;
 }
@@ -74,9 +74,24 @@ Resource::~Resource()
     mUse.release();
 }
 
+bool Resource::usedInRecordedCommands(Context *context) const
+{
+    return mUse.usedInRecordedCommands();
+}
+
+bool Resource::usedInRunningCommands(RendererVk *renderer) const
+{
+    return renderer->useInRunningCommands(mUse);
+}
+
+bool Resource::isCurrentlyInUse(RendererVk *renderer) const
+{
+    return renderer->hasUnfinishedUse(mUse);
+}
+
 angle::Result Resource::finishRunningCommands(ContextVk *contextVk)
 {
-    return FinishRunningCommands(contextVk, mUse.getSerial());
+    return FinishRunningCommands(contextVk, mUse.getResourceUse());
 }
 
 angle::Result Resource::waitForIdle(ContextVk *contextVk,
@@ -111,16 +126,37 @@ ReadWriteResource &ReadWriteResource::operator=(ReadWriteResource &&other)
     return *this;
 }
 
+bool ReadWriteResource::usedInRecordedCommands(Context *context) const
+{
+    return mReadOnlyUse.usedInRecordedCommands();
+}
+
+// Determine if the driver has finished execution with this resource.
+bool ReadWriteResource::usedInRunningCommands(RendererVk *renderer) const
+{
+    return renderer->useInRunningCommands(mReadOnlyUse);
+}
+
+bool ReadWriteResource::isCurrentlyInUse(RendererVk *renderer) const
+{
+    return renderer->hasUnfinishedUse(mReadOnlyUse);
+}
+
+bool ReadWriteResource::isCurrentlyInUseForWrite(RendererVk *renderer) const
+{
+    return renderer->hasUnfinishedUse(mReadWriteUse);
+}
+
 angle::Result ReadWriteResource::finishRunningCommands(ContextVk *contextVk)
 {
     ASSERT(!mReadOnlyUse.usedInRecordedCommands());
-    return FinishRunningCommands(contextVk, mReadOnlyUse.getSerial());
+    return FinishRunningCommands(contextVk, mReadOnlyUse.getResourceUse());
 }
 
 angle::Result ReadWriteResource::finishGPUWriteCommands(ContextVk *contextVk)
 {
     ASSERT(!mReadWriteUse.usedInRecordedCommands());
-    return FinishRunningCommands(contextVk, mReadWriteUse.getSerial());
+    return FinishRunningCommands(contextVk, mReadWriteUse.getResourceUse());
 }
 
 angle::Result ReadWriteResource::waitForIdle(ContextVk *contextVk,
@@ -138,7 +174,7 @@ SharedGarbage::SharedGarbage(SharedGarbage &&other)
     *this = std::move(other);
 }
 
-SharedGarbage::SharedGarbage(SharedResourceUse &&use, std::vector<GarbageObject> &&garbage)
+SharedGarbage::SharedGarbage(SharedResourceUse &&use, GarbageList &&garbage)
     : mLifetime(std::move(use)), mGarbage(std::move(garbage))
 {}
 
@@ -151,9 +187,9 @@ SharedGarbage &SharedGarbage::operator=(SharedGarbage &&rhs)
     return *this;
 }
 
-bool SharedGarbage::destroyIfComplete(RendererVk *renderer, Serial completedSerial)
+bool SharedGarbage::destroyIfComplete(RendererVk *renderer)
 {
-    if (mLifetime.isCurrentlyInUse(completedSerial))
+    if (renderer->hasUnfinishedUse(mLifetime))
     {
         return false;
     }
@@ -166,6 +202,11 @@ bool SharedGarbage::destroyIfComplete(RendererVk *renderer, Serial completedSeri
     mLifetime.release();
 
     return true;
+}
+
+bool SharedGarbage::hasUnsubmittedUse(RendererVk *renderer) const
+{
+    return renderer->hasUnsubmittedUse(mLifetime);
 }
 
 // ResourceUseList implementation.
@@ -201,11 +242,11 @@ void ResourceUseList::releaseResourceUses()
     mResourceUses.clear();
 }
 
-void ResourceUseList::releaseResourceUsesAndUpdateSerials(Serial serial)
+void ResourceUseList::releaseResourceUsesAndUpdateSerials(const QueueSerial &queueSerial)
 {
     for (SharedResourceUse &use : mResourceUses)
     {
-        use.releaseAndUpdateSerial(serial);
+        use.releaseAndUpdateSerial(queueSerial);
     }
 
     mResourceUses.clear();

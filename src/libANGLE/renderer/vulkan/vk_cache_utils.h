@@ -56,8 +56,6 @@ enum class DescriptorSetIndex : uint32_t
     EnumCount   = InvalidEnum,
 };
 
-class PipelineCacheAccess;
-
 namespace vk
 {
 class BufferHelper;
@@ -65,6 +63,7 @@ class DynamicDescriptorPool;
 class ImageHelper;
 class SamplerHelper;
 enum class ImageLayout;
+class PipelineCacheAccess;
 
 using RefCountedDescriptorSetLayout    = RefCounted<DescriptorSetLayout>;
 using RefCountedPipelineLayout         = RefCounted<PipelineLayout>;
@@ -610,6 +609,8 @@ static_assert(kNumGraphicsPipelineDirtyBits <= 64, "Too many pipeline dirty bits
 
 // Set of dirty bits. Each bit represents kGraphicsPipelineDirtyBitBytes in the desc.
 using GraphicsPipelineTransitionBits = angle::BitSet<kNumGraphicsPipelineDirtyBits>;
+
+GraphicsPipelineTransitionBits GetGraphicsPipelineTransitionBitsMask(GraphicsPipelineSubset subset);
 
 // Disable padding warnings for a few helper structs that aggregate Vulkan state objects.  These are
 // not used as hash keys, they just simplify passing them around to functions.
@@ -1200,6 +1201,36 @@ ANGLE_INLINE bool GraphicsPipelineTransitionMatch(GraphicsPipelineTransitionBits
     return true;
 }
 
+// A class that encapsulates the vk::PipelineCache and associated mutex.  The mutex may be nullptr
+// if synchronization is not necessary.
+class PipelineCacheAccess
+{
+  public:
+    PipelineCacheAccess()  = default;
+    ~PipelineCacheAccess() = default;
+
+    void init(const vk::PipelineCache *pipelineCache, std::mutex *mutex)
+    {
+        mPipelineCache = pipelineCache;
+        mMutex         = mutex;
+    }
+
+    angle::Result createGraphicsPipeline(vk::Context *context,
+                                         const VkGraphicsPipelineCreateInfo &createInfo,
+                                         vk::Pipeline *pipelineOut);
+    angle::Result createComputePipeline(vk::Context *context,
+                                        const VkComputePipelineCreateInfo &createInfo,
+                                        vk::Pipeline *pipelineOut);
+
+    void merge(RendererVk *renderer, const vk::PipelineCache &pipelineCache);
+
+  private:
+    std::unique_lock<std::mutex> getLock();
+
+    const vk::PipelineCache *mPipelineCache = nullptr;
+    std::mutex *mMutex;
+};
+
 class PipelineHelper final : public Resource
 {
   public:
@@ -1212,6 +1243,7 @@ class PipelineHelper final : public Resource
 
     bool valid() const { return mPipeline.valid(); }
     Pipeline &getPipeline() { return mPipeline; }
+    const Pipeline &getPipeline() const { return mPipeline; }
 
     ANGLE_INLINE bool findTransition(GraphicsPipelineTransitionBits bits,
                                      const GraphicsPipelineDesc &desc,
@@ -2064,36 +2096,6 @@ class RenderPassCache final : angle::NonCopyable
     CacheStats mRenderPassWithOpsCacheStats;
 };
 
-// A class that encapsulates the vk::PipelineCache and associated mutex.  The mutex may be nullptr
-// if synchronization is not necessary.
-class PipelineCacheAccess
-{
-  public:
-    PipelineCacheAccess()  = default;
-    ~PipelineCacheAccess() = default;
-
-    void init(const vk::PipelineCache *pipelineCache, std::mutex *mutex)
-    {
-        mPipelineCache = pipelineCache;
-        mMutex         = mutex;
-    }
-
-    angle::Result createGraphicsPipeline(vk::Context *context,
-                                         const VkGraphicsPipelineCreateInfo &createInfo,
-                                         vk::Pipeline *pipelineOut);
-    angle::Result createComputePipeline(vk::Context *context,
-                                        const VkComputePipelineCreateInfo &createInfo,
-                                        vk::Pipeline *pipelineOut);
-
-    void merge(RendererVk *renderer, const vk::PipelineCache &pipelineCache);
-
-  private:
-    std::unique_lock<std::mutex> getLock();
-
-    const vk::PipelineCache *mPipelineCache = nullptr;
-    std::mutex *mMutex;
-};
-
 enum class PipelineSource
 {
     WarmUp,
@@ -2224,7 +2226,7 @@ class GraphicsPipelineCache final : public HasCacheStats<VulkanCacheType::Graphi
     }
 
     angle::Result createPipeline(ContextVk *contextVk,
-                                 PipelineCacheAccess *pipelineCache,
+                                 vk::PipelineCacheAccess *pipelineCache,
                                  const vk::RenderPass &compatibleRenderPass,
                                  const vk::PipelineLayout &pipelineLayout,
                                  const vk::ShaderModuleMap &shaders,
@@ -2234,15 +2236,36 @@ class GraphicsPipelineCache final : public HasCacheStats<VulkanCacheType::Graphi
                                  const vk::GraphicsPipelineDesc **descPtrOut,
                                  vk::PipelineHelper **pipelineOut);
 
+    angle::Result linkLibraries(ContextVk *contextVk,
+                                vk::PipelineCacheAccess *pipelineCache,
+                                const vk::GraphicsPipelineDesc &desc,
+                                const vk::PipelineLayout &pipelineLayout,
+                                const vk::PipelineHelper &vertexInputPipeline,
+                                const vk::PipelineHelper &shadersPipeline,
+                                const vk::PipelineHelper &fragmentOutputPipeline,
+                                const vk::GraphicsPipelineDesc **descPtrOut,
+                                vk::PipelineHelper **pipelineOut);
+
     // Helper for VulkanPipelineCachePerf that resets the object without destroying any object.
     void reset() { mPayload.clear(); }
 
   private:
+    void addToCache(PipelineSource source,
+                    const vk::GraphicsPipelineDesc &desc,
+                    vk::Pipeline &&pipeline,
+                    vk::CacheLookUpFeedback feedback,
+                    const vk::GraphicsPipelineDesc **descPtrOut,
+                    vk::PipelineHelper **pipelineOut);
+
     using KeyEqual = typename GraphicsPipelineCacheTypeHelper<Hash>::KeyEqual;
     std::unordered_map<vk::GraphicsPipelineDesc, vk::PipelineHelper, Hash, KeyEqual> mPayload;
 };
 
-using CompleteGraphicsPipelineCache = GraphicsPipelineCache<GraphicsPipelineDescCompleteHash>;
+using CompleteGraphicsPipelineCache    = GraphicsPipelineCache<GraphicsPipelineDescCompleteHash>;
+using VertexInputGraphicsPipelineCache = GraphicsPipelineCache<GraphicsPipelineDescVertexInputHash>;
+using ShadersGraphicsPipelineCache     = GraphicsPipelineCache<GraphicsPipelineDescShadersHash>;
+using FragmentOutputGraphicsPipelineCache =
+    GraphicsPipelineCache<GraphicsPipelineDescFragmentOutputHash>;
 
 class DescriptorSetLayoutCache final : angle::NonCopyable
 {
