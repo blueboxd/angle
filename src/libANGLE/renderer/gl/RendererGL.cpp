@@ -331,6 +331,32 @@ const gl::Limitations &RendererGL::getNativeLimitations() const
     return mNativeLimitations;
 }
 
+ShPixelLocalStorageType RendererGL::getNativePixelLocalStorageType() const
+{
+    if (!getNativeExtensions().shaderPixelLocalStorageANGLE)
+    {
+        return ShPixelLocalStorageType::NotSupported;
+    }
+    if (mFeatures.supportsShaderFramebufferFetchEXT.enabled)
+    {
+        // We have coherent EXT_shader_framebuffer_fetch.
+        ASSERT(getNativeExtensions().shaderPixelLocalStorageCoherentANGLE);
+        return ShPixelLocalStorageType::FramebufferFetch;
+    }
+    if (getNativeExtensions().shaderPixelLocalStorageCoherentANGLE ||
+        !mFeatures.supportsShaderFramebufferFetchNonCoherentEXT.enabled)
+    {
+        // Use shader images with fragment synchronization extensions, instead of
+        // EXT_shader_framebuffer_fetch_non_coherent, if they're our only option to be coherent.
+        return getFunctions()->standard == StandardGL::STANDARD_GL_ES
+                   // OpenGL ES only allows read/write access to "r32*" images.
+                   ? ShPixelLocalStorageType::ImageStoreR32PackedFormats
+                   : ShPixelLocalStorageType::ImageStoreNativeFormats;
+    }
+    ASSERT(mFeatures.supportsShaderFramebufferFetchNonCoherentEXT.enabled);
+    return ShPixelLocalStorageType::FramebufferFetch;
+}
+
 MultiviewImplementationTypeGL RendererGL::getMultiviewImplementationType() const
 {
     ensureCapsInitialized();
@@ -371,6 +397,12 @@ angle::Result RendererGL::memoryBarrierByRegion(GLbitfield barriers)
     mFunctions->memoryBarrierByRegion(barriers);
     mWorkDoneSinceLastFlush = true;
     return angle::Result::Continue;
+}
+
+void RendererGL::framebufferFetchBarrier()
+{
+    mFunctions->framebufferFetchBarrierEXT();
+    mWorkDoneSinceLastFlush = true;
 }
 
 bool RendererGL::bindWorkerContext(std::string *infoLog)

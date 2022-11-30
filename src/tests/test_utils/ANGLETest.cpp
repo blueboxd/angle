@@ -353,8 +353,8 @@ void LoadEntryPointsWithUtilLoader(angle::GLESDriverType driverType)
     ANGLETestEnvironment::GetDriverLibrary(driverType)->getAs("eglGetProcAddress", &getProcAddress);
     ASSERT_NE(nullptr, getProcAddress);
 
-    LoadEGL(getProcAddress);
-    LoadGLES(getProcAddress);
+    LoadUtilEGL(getProcAddress);
+    LoadUtilGLES(getProcAddress);
 #endif  // defined(ANGLE_USE_UTIL_LOADER)
 }
 
@@ -673,8 +673,8 @@ void ANGLETestBase::ANGLETestSetUp()
     int osWindowWidth  = mFixture->osWindow->getWidth();
     int osWindowHeight = mFixture->osWindow->getHeight();
 
-    const bool isRotated = mCurrentParams->isEnabled(Feature::EmulatedPrerotation90) ||
-                           mCurrentParams->isEnabled(Feature::EmulatedPrerotation270);
+    const bool isRotated = mCurrentParams->isEnableRequested(Feature::EmulatedPrerotation90) ||
+                           mCurrentParams->isEnableRequested(Feature::EmulatedPrerotation270);
     if (isRotated)
     {
         std::swap(osWindowWidth, osWindowHeight);

@@ -20,9 +20,7 @@ from enum import Enum
 khronos_xml_inputs = [
     '../third_party/EGL-Registry/src/api/egl.xml',
     '../third_party/OpenCL-Docs/src/xml/cl.xml',
-    # TODO(jmadill): Use canonical XML. http://anglebug.com/6461
-    # '../third_party/OpenGL-Registry/src/xml/gl.xml',
-    'gl.xml',
+    '../third_party/OpenGL-Registry/src/xml/gl.xml',
     '../third_party/OpenGL-Registry/src/xml/glx.xml',
     '../third_party/OpenGL-Registry/src/xml/wgl.xml',
 ]
@@ -54,6 +52,7 @@ angle_requestable_extensions = [
     "GL_ANGLE_framebuffer_multisample",
     "GL_ANGLE_get_image",
     "GL_ANGLE_get_tex_level_parameter",
+    "GL_ANGLE_logic_op",
     "GL_ANGLE_lossy_etc_decode",
     "GL_ANGLE_memory_object_flags",
     "GL_ANGLE_memory_object_fuchsia",
@@ -173,6 +172,7 @@ gles_requestable_extensions = [
     "GL_OES_compressed_ETC2_RGBA8_texture",
     "GL_OES_compressed_ETC2_sRGB8_alpha8_texture",
     "GL_OES_compressed_ETC2_sRGB8_texture",
+    "GL_OES_compressed_paletted_texture",
     "GL_OES_copy_image",
     "GL_OES_depth_texture_cube_map",
     "GL_OES_draw_buffers_indexed",
@@ -309,6 +309,7 @@ supported_egl_extensions = [
     "EGL_ANGLE_feature_control",
     "EGL_ANGLE_ggp_stream_descriptor",
     "EGL_ANGLE_metal_create_context_ownership_identity",
+    "EGL_ANGLE_metal_shared_event_sync",
     "EGL_ANGLE_power_preference",
     "EGL_ANGLE_prepare_swap_buffers",
     "EGL_ANGLE_program_cache_control",

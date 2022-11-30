@@ -27,7 +27,7 @@
 #include "libANGLE/renderer/metal/mtl_common.h"
 #include "libANGLE/renderer/metal/shaders/mtl_default_shaders_src_autogen.inc"
 #include "libANGLE/trace.h"
-#include "platform/Platform.h"
+#include "platform/PlatformMethods.h"
 
 #ifdef ANGLE_METAL_XCODE_BUILDS_SHADERS
 #    include "libANGLE/renderer/metal/mtl_default_shaders_compiled.inc"
@@ -477,6 +477,9 @@ void DisplayMtl::generateExtensions(egl::DisplayExtensions *outExtensions) const
 
     // EGL_ANGLE_metal_create_context_ownership_identity
     outExtensions->metalCreateContextOwnershipIdentityANGLE = true;
+
+    // EGL_ANGLE_metal_sync_shared_event
+    outExtensions->mtlSyncSharedEventANGLE = true;
 }
 
 void DisplayMtl::generateCaps(egl::Caps *outCaps) const {}
@@ -666,11 +669,20 @@ const gl::Extensions &DisplayMtl::getNativeExtensions() const
     ensureCapsInitialized();
     return mNativeExtensions;
 }
-
 const gl::Limitations &DisplayMtl::getNativeLimitations() const
 {
     ensureCapsInitialized();
     return mNativeLimitations;
+}
+ShPixelLocalStorageType DisplayMtl::getNativePixelLocalStorageType() const
+{
+    ensureCapsInitialized();
+    return mPixelLocalStorageType;
+}
+ShFragmentSynchronizationType DisplayMtl::getPLSSynchronizationType() const
+{
+    ensureCapsInitialized();
+    return mPLSSynchronizationType;
 }
 
 void DisplayMtl::ensureCapsInitialized() const
@@ -1014,6 +1026,44 @@ void DisplayMtl::initializeExtensions() const
     // Metal uses the opposite provoking vertex as GLES so emulation is required to use the GLES
     // behaviour. Allow users to change the provoking vertex for improved performance.
     mNativeExtensions.provokingVertexANGLE = true;
+
+    // GL_ANGLE_shader_pixel_local_storage.
+    if (supportsAppleGPUFamily(1))
+    {
+        // Programmable blending is supported on all Apple GPU families, and is always coherent.
+        mPixelLocalStorageType = ShPixelLocalStorageType::FramebufferFetch;
+
+        // Raster order groups are NOT required to make framebuffer fetch coherent, however, they
+        // may improve performance by allowing finer grained synchronization (e.g., by assigning
+        // attachments to different raster order groups when they don't depend on each other).
+        bool rasterOrderGroupsSupported = supportsAppleGPUFamily(4);
+        mPLSSynchronizationType         = rasterOrderGroupsSupported
+                                              ? ShFragmentSynchronizationType::RasterOrderGroups_Metal
+                                              : ShFragmentSynchronizationType::Automatic;
+
+        mNativeExtensions.shaderPixelLocalStorageANGLE         = true;
+        mNativeExtensions.shaderPixelLocalStorageCoherentANGLE = true;
+    }
+    else
+    {
+        // TODO(anglebug.com/7279): Implement PLS shader images.
+        // MTLReadWriteTextureTier readWriteTextureTier = [mMetalDevice readWriteTextureSupport];
+        // if (readWriteTextureTier != MTLReadWriteTextureTierNone)
+        // {
+        //     mPixelLocalStorageType = (readWriteTextureTier == MTLReadWriteTextureTier1)
+        //                                  ? ShPixelLocalStorageType::ImageStoreR32PackedFormats
+        //                                  : ShPixelLocalStorageType::ImageStoreNativeFormats;
+        //
+        //     // Raster order groups are required to make PLS coherent via readWrite textures.
+        //     bool rasterOrderGroupsSupported = [mMetalDevice areRasterOrderGroupsSupported];
+        //     mPLSSynchronizationType = rasterOrderGroupsSupported
+        //                                  ? ShFragmentSynchronizationType::RasterOrderGroups_Metal
+        //                                  : ShFragmentSynchronizationType::NotSupported;
+        //
+        //     mNativeExtensions.shaderPixelLocalStorageANGLE         = true;
+        //     mNativeExtensions.shaderPixelLocalStorageCoherentANGLE = rasterOrderGroupsSupported;
+        // }
+    }
 }
 
 void DisplayMtl::initializeTextureCaps() const
@@ -1136,7 +1186,7 @@ void DisplayMtl::initializeFeatures()
 
     ANGLE_FEATURE_CONDITION((&mFeatures), multisampleColorFormatShaderReadWorkaround, isAMD());
     ANGLE_FEATURE_CONDITION((&mFeatures), copyIOSurfaceToNonIOSurfaceForReadOptimization,
-                            isIntel());
+                            isIntel() || isAMD());
     ANGLE_FEATURE_CONDITION((&mFeatures), copyTextureToBufferForReadOptimization, isAMD());
 
     ANGLE_FEATURE_CONDITION((&mFeatures), forceNonCSBaseMipmapGeneration, isIntel());
@@ -1146,18 +1196,9 @@ void DisplayMtl::initializeFeatures()
     bool defaultDirectToMetal = true;
     ANGLE_FEATURE_CONDITION((&mFeatures), directMetalGeneration, defaultDirectToMetal);
 
-    ANGLE_FEATURE_CONDITION((&mFeatures), unpackLastRowSeparatelyForPaddingInclusion, isAMD());
+    ANGLE_FEATURE_CONDITION((&mFeatures), uploadDataToIosurfacesWithStagingBuffers, isAMD());
 
     ApplyFeatureOverrides(&mFeatures, getState());
-#ifdef ANGLE_ENABLE_ASSERTS
-    static bool once = true;
-    if (once)
-    {
-        fprintf(stderr, "Shader compiler output: %s\n",
-                mFeatures.directMetalGeneration.enabled ? "Metal" : "SPIR-V");
-        once = false;
-    }
-#endif
 }
 
 angle::Result DisplayMtl::initializeShaderLibrary()

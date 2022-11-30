@@ -676,6 +676,9 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     bool isDestroyed() const { return mIsDestroyed; }
     void setIsDestroyed() { mIsDestroyed = true; }
 
+    void setLogicOpEnabled(bool enabled) { mState.setLogicOpEnabled(enabled); }
+    void setLogicOp(LogicalOperation opcode) { mState.setLogicOp(opcode); }
+
     // Needed by capture serialization logic that works with a "const" Context pointer.
     void finishImmutable() const;
 
@@ -695,7 +698,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     angle::Result syncDirtyObjects(const State::DirtyObjects &objectMask, Command command);
     angle::Result syncStateForReadPixels();
     angle::Result syncStateForTexImage();
-    angle::Result syncStateForBlit();
+    angle::Result syncStateForBlit(GLbitfield mask);
     angle::Result syncStateForClear();
     angle::Result syncTextureForCopy(Texture *texture);
 
@@ -794,7 +797,6 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     GraphicsResetStatus mResetStatus;
     bool mContextLostForced;
     GLenum mResetStrategy;
-    const bool mRobustAccess;
     const bool mSurfacelessSupported;
     egl::Surface *mCurrentDrawSurface;
     egl::Surface *mCurrentReadSurface;

@@ -111,6 +111,7 @@ class RendererGL : angle::NonCopyable
     const gl::TextureCapsMap &getNativeTextureCaps() const;
     const gl::Extensions &getNativeExtensions() const;
     const gl::Limitations &getNativeLimitations() const;
+    ShPixelLocalStorageType getNativePixelLocalStorageType() const;
     void initializeFrontendFeatures(angle::FrontendFeatures *features) const;
 
     angle::Result dispatchCompute(const gl::Context *context,
@@ -121,6 +122,8 @@ class RendererGL : angle::NonCopyable
 
     angle::Result memoryBarrier(GLbitfield barriers);
     angle::Result memoryBarrierByRegion(GLbitfield barriers);
+
+    void framebufferFetchBarrier();
 
     bool bindWorkerContext(std::string *infoLog);
     void unbindWorkerContext();

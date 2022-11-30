@@ -122,7 +122,8 @@ class FramebufferVk : public FramebufferImpl
         vk::ImageOrBufferViewSubresourceSerial resolveImageViewSerial);
 
     angle::Result getFramebuffer(ContextVk *contextVk,
-                                 vk::Framebuffer **framebufferOut,
+                                 vk::MaybeImagelessFramebuffer *framebufferOut,
+                                 RenderTargetVk *resolveRenderTargetIn,
                                  const vk::ImageView *resolveImageViewIn,
                                  const SwapchainResolveMode swapchainResolveMode);
 
@@ -142,6 +143,35 @@ class FramebufferVk : public FramebufferImpl
 
     void setBackbuffer(WindowSurfaceVk *backbuffer) { mBackbuffer = backbuffer; }
     WindowSurfaceVk *getBackbuffer() const { return mBackbuffer; }
+
+    void releaseCurrentFramebuffer(ContextVk *contextVk);
+
+    vk::RenderPassSerial getLastRenderPassSerial() const { return mLastRenderPassSerial; }
+
+    enum class RenderTargetImage
+    {
+        AttachmentImage,
+        ResolveImage
+    };
+
+    struct RenderTargetInfo
+    {
+        RenderTargetInfo()
+            : renderTarget(nullptr), renderTargetImage(RenderTargetImage::AttachmentImage)
+        {}
+        RenderTargetInfo(RenderTargetVk *renderTarget, RenderTargetImage renderTargetImage)
+            : renderTarget(renderTarget), renderTargetImage(renderTargetImage)
+        {}
+        RenderTargetVk *renderTarget;
+        RenderTargetImage renderTargetImage;
+    };
+
+    angle::Result getAttachmentsAndRenderTargets(
+        ContextVk *contextVk,
+        const vk::ImageView *resolveImageViewIn,
+        RenderTargetVk *resolveRenderTargetIn,
+        vk::FramebufferAttachmentsVector<VkImageView> *attachments,
+        vk::FramebufferAttachmentsVector<RenderTargetInfo> *renderTargetsInfoOut);
 
   private:
     // The 'in' rectangles must be clipped to the scissor and FBO. The clipping is done in 'blit'.
@@ -188,6 +218,8 @@ class FramebufferVk : public FramebufferImpl
                                 const VkClearColorValue &clearColorValue,
                                 const VkClearDepthStencilValue &clearDepthStencilValue);
     void redeferClears(ContextVk *contextVk);
+    void redeferClearsForReadFramebuffer(ContextVk *contextVk);
+    void redeferClearsImpl(ContextVk *contextVk);
     void clearWithCommand(ContextVk *contextVk, const gl::Rectangle &scissoredRenderArea);
     void clearWithLoadOp(ContextVk *contextVk);
     void updateActiveColorMasks(size_t colorIndex, bool r, bool g, bool b, bool a);
@@ -232,7 +264,10 @@ class FramebufferVk : public FramebufferImpl
     // contain the mask to apply to the alpha channel when drawing.
     gl::DrawBufferMask mEmulatedAlphaAttachmentMask;
 
+    // mCurrentFramebufferDesc is used to detect framebuffer changes using its serials. Therefore,
+    // it must be maintained even when using the imageless framebuffer extension.
     vk::FramebufferDesc mCurrentFramebufferDesc;
+
     // The framebuffer cache actually owns the Framebuffer object and manages its lifetime. We just
     // store the current VkFramebuffer handle here that associated with mCurrentFramebufferDesc.
     vk::Framebuffer mCurrentFramebuffer;
@@ -245,6 +280,11 @@ class FramebufferVk : public FramebufferImpl
     bool mReadOnlyDepthFeedbackLoopMode;
 
     gl::DrawBufferMask mIsAHBColorAttachments;
+
+    bool mIsCurrentFramebufferCached;
+
+    // Serial of the render pass this framebuffer has opened, if any.
+    vk::RenderPassSerial mLastRenderPassSerial;
 };
 }  // namespace rx
 

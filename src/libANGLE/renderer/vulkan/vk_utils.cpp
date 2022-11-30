@@ -1191,9 +1191,13 @@ void InitExtendedDynamicState2EXTFunctions(VkDevice device)
 }
 
 // VK_KHR_fragment_shading_rate
-void InitFragmentShadingRateKHRFunctions(VkDevice device)
+void InitFragmentShadingRateKHRInstanceFunction(VkInstance instance)
 {
-    GET_DEVICE_FUNC(vkGetPhysicalDeviceFragmentShadingRatesKHR);
+    GET_INSTANCE_FUNC(vkGetPhysicalDeviceExternalSemaphorePropertiesKHR);
+}
+
+void InitFragmentShadingRateKHRDeviceFunction(VkDevice device)
+{
     GET_DEVICE_FUNC(vkCmdSetFragmentShadingRateKHR);
 }
 
@@ -1462,6 +1466,12 @@ VkStencilOp GetStencilOp(GLenum compareOp)
             UNREACHABLE();
             return VK_STENCIL_OP_KEEP;
     }
+}
+
+VkLogicOp GetLogicOp(const GLenum logicOp)
+{
+    // GL's logic op values are 0x1500 + op, where op is the same value as Vulkan's VkLogicOp.
+    return static_cast<VkLogicOp>(logicOp - GL_CLEAR);
 }
 
 void GetOffset(const gl::Offset &glOffset, VkOffset3D *vkOffset)

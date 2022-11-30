@@ -538,6 +538,7 @@ angle_static_library("angle_gpu_info_util") {
       "src/common/vulkan:angle_libvulkan_loader",
       "src/common/vulkan:angle_vulkan_icd",
     ]
+    configs += [ "$angle_root:angle_no_cfi_icall" ]
     if (angle_enable_vulkan_system_info) {
       defines += [ "ANGLE_USE_VULKAN_SYSTEM_INFO" ]
     }

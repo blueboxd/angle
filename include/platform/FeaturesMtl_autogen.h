@@ -205,7 +205,7 @@ struct FeaturesMtl : FeatureSetBase
         "copyIOSurfaceToNonIOSurfaceForReadOptimization", FeatureCategory::MetalWorkarounds,
         "some GPUs are faster to read an IOSurface texture by first copying the texture to a "
         "non-IOSurface texture",
-        &members, "http://anglebug.com/7117"};
+        &members, "http://anglebug.com/7117 http://anglebug.com/7573"};
 
     FeatureInfo copyTextureToBufferForReadOptimization = {
         "copyTextureToBufferForReadOptimization", FeatureCategory::MetalWorkarounds,
@@ -228,9 +228,9 @@ struct FeaturesMtl : FeatureSetBase
         "AMD Metal Drivers appear to have a bug this works around", &members,
         "http://anglebug.com/7635"};
 
-    FeatureInfo unpackLastRowSeparatelyForPaddingInclusion = {
-        "unpackLastRowSeparatelyForPaddingInclusion", FeatureCategory::MetalWorkarounds,
-        "When uploading textures, some drivers count an extra row padding", &members,
+    FeatureInfo uploadDataToIosurfacesWithStagingBuffers = {
+        "uploadDataToIosurfacesWithStagingBuffers", FeatureCategory::MetalWorkarounds,
+        "When uploading data to IOSurface-backed textures, use a staging buffer.", &members,
         "http://anglebug.com/7573"};
 };
 

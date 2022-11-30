@@ -935,6 +935,11 @@ const gl::Limitations &ContextGL::getNativeLimitations() const
     return mRenderer->getNativeLimitations();
 }
 
+ShPixelLocalStorageType ContextGL::getNativePixelLocalStorageType() const
+{
+    return mRenderer->getNativePixelLocalStorageType();
+}
+
 StateManagerGL *ContextGL::getStateManager()
 {
     return mRenderer->getStateManager();
@@ -975,6 +980,11 @@ angle::Result ContextGL::memoryBarrier(const gl::Context *context, GLbitfield ba
 angle::Result ContextGL::memoryBarrierByRegion(const gl::Context *context, GLbitfield barriers)
 {
     return mRenderer->memoryBarrierByRegion(barriers);
+}
+
+void ContextGL::framebufferFetchBarrier()
+{
+    mRenderer->framebufferFetchBarrier();
 }
 
 void ContextGL::setMaxShaderCompilerThreads(GLuint count)

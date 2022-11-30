@@ -302,6 +302,9 @@ using DefaultUniformCallsPerLocationMap = std::map<gl::UniformLocation, std::vec
 using DefaultUniformCallsPerProgramMap =
     std::map<gl::ShaderProgramID, DefaultUniformCallsPerLocationMap>;
 
+using DefaultUniformBaseLocationMap =
+    std::map<std::pair<gl::ShaderProgramID, gl::UniformLocation>, gl::UniformLocation>;
+
 using ResourceSet   = std::set<GLuint>;
 using ResourceCalls = std::map<GLuint, std::vector<CallCapture>>;
 
@@ -392,10 +395,24 @@ class ResourceTracker final : angle::NonCopyable
         return mDefaultUniformResetCalls[id];
     }
     void setModifiedDefaultUniform(gl::ShaderProgramID programID, gl::UniformLocation location);
+    void setDefaultUniformBaseLocation(gl::ShaderProgramID programID,
+                                       gl::UniformLocation location,
+                                       gl::UniformLocation baseLocation);
+    gl::UniformLocation getDefaultUniformBaseLocation(gl::ShaderProgramID programID,
+                                                      gl::UniformLocation location)
+    {
+        ASSERT(mDefaultUniformBaseLocations.find({programID, location}) !=
+               mDefaultUniformBaseLocations.end());
+        return mDefaultUniformBaseLocations[{programID, location}];
+    }
 
     TrackedResource &getTrackedResource(gl::ContextID contextID, ResourceIDType type);
 
     void getContextIDs(std::set<gl::ContextID> &idsOut);
+
+    std::map<void *, egl::AttributeMap> &getImageToAttribTable() { return mMatchImageToAttribs; }
+
+    std::map<GLuint, void *> &getTextureIDToImageTable() { return mMatchTextureIDToImage; }
 
   private:
     // Buffer map calls will map a buffer with correct offset, length, and access flags
@@ -427,9 +444,15 @@ class ResourceTracker final : angle::NonCopyable
     // Calls per default uniform to return to original state
     DefaultUniformCallsPerProgramMap mDefaultUniformResetCalls;
 
+    // Base location of arrayed uniforms
+    DefaultUniformBaseLocationMap mDefaultUniformBaseLocations;
+
     // Tracked resources per context
     TrackedResourceArray mTrackedResourcesShared;
     std::map<gl::ContextID, TrackedResourceArray> mTrackedResourcesPerContext;
+
+    std::map<void *, egl::AttributeMap> mMatchImageToAttribs;
+    std::map<GLuint, void *> mMatchTextureIDToImage;
 };
 
 // Used by the CPP replay to filter out unnecessary code.
@@ -482,6 +505,8 @@ class StateResetHelper final : angle::NonCopyable
     CallResetMap &getResetCalls() { return mResetCalls; }
     const CallResetMap &getResetCalls() const { return mResetCalls; }
 
+    void setDefaultResetCalls(const gl::Context *context, angle::EntryPoint);
+
   private:
     // Dirty state per entry point
     std::set<angle::EntryPoint> mDirtyEntryPoints;
@@ -500,7 +525,6 @@ class FrameCapture final : angle::NonCopyable
     void clearSetupCalls() { mSetupCalls.clear(); }
 
     StateResetHelper &getStateResetHelper() { return mStateResetHelper; }
-    const StateResetHelper &getStateResetHelper() const { return mStateResetHelper; }
 
     void reset();
 
@@ -764,7 +788,7 @@ class FrameCaptureShared final : angle::NonCopyable
     void writeCppReplayIndexFiles(const gl::Context *context, bool writeResetContextCall);
     void writeMainContextCppReplay(const gl::Context *context,
                                    const std::vector<CallCapture> &setupCalls,
-                                   const StateResetHelper &StateResetHelper);
+                                   StateResetHelper &StateResetHelper);
 
     void captureClientArraySnapshot(const gl::Context *context,
                                     size_t vertexCount,
