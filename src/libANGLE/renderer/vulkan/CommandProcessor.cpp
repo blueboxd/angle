@@ -26,7 +26,7 @@ void InitializeSubmitInfo(VkSubmitInfo *submitInfo,
                           const PrimaryCommandBuffer &commandBuffer,
                           const std::vector<VkSemaphore> &waitSemaphores,
                           const std::vector<VkPipelineStageFlags> &waitSemaphoreStageMasks,
-                          const Semaphore *signalSemaphore)
+                          const VkSemaphore &signalSemaphore)
 {
     // Verify that the submitInfo has been zero'd out.
     ASSERT(submitInfo->signalSemaphoreCount == 0);
@@ -38,10 +38,10 @@ void InitializeSubmitInfo(VkSubmitInfo *submitInfo,
     submitInfo->pWaitSemaphores    = waitSemaphores.empty() ? nullptr : waitSemaphores.data();
     submitInfo->pWaitDstStageMask  = waitSemaphoreStageMasks.data();
 
-    if (signalSemaphore)
+    if (signalSemaphore != VK_NULL_HANDLE)
     {
         submitInfo->signalSemaphoreCount = 1;
-        submitInfo->pSignalSemaphores    = signalSemaphore->ptr();
+        submitInfo->pSignalSemaphores    = &signalSemaphore;
     }
 }
 
@@ -153,7 +153,7 @@ void CommandProcessorTask::initTask()
     mOutsideRenderPassCommandBuffer = nullptr;
     mRenderPassCommandBuffer        = nullptr;
     mRenderPass                     = nullptr;
-    mSemaphore                      = nullptr;
+    mSemaphore                      = VK_NULL_HANDLE;
     mCommandPools                   = nullptr;
     mOneOffWaitSemaphore            = nullptr;
     mOneOffWaitSemaphoreStageMask   = 0;
@@ -277,7 +277,7 @@ void CommandProcessorTask::initWaitIdle()
 void CommandProcessorTask::initFlushAndQueueSubmit(
     const std::vector<VkSemaphore> &waitSemaphores,
     const std::vector<VkPipelineStageFlags> &waitSemaphoreStageMasks,
-    const Semaphore *semaphore,
+    const VkSemaphore semaphore,
     bool hasProtectedContent,
     egl::ContextPriority priority,
     SecondaryCommandPools *commandPools,
@@ -744,7 +744,7 @@ angle::Result CommandProcessor::submitCommands(
     egl::ContextPriority priority,
     const std::vector<VkSemaphore> &waitSemaphores,
     const std::vector<VkPipelineStageFlags> &waitSemaphoreStageMasks,
-    const Semaphore *signalSemaphore,
+    const VkSemaphore signalSemaphore,
     GarbageList &&currentGarbage,
     SecondaryCommandBufferList &&commandBuffersToReset,
     SecondaryCommandPools *commandPools,
@@ -912,6 +912,11 @@ void CommandQueue::destroy(Context *context)
 
 angle::Result CommandQueue::init(Context *context, const DeviceQueueMap &queueMap)
 {
+    // In case of RendererVk gets re-initialized, we can't rely on constructor to do initialization
+    // for us.
+    mLastSubmittedSerials.fill(kZeroSerial);
+    mLastCompletedSerials.fill(kZeroSerial);
+
     // Initialize the command pool now that we know the queue family index.
     ANGLE_TRY(mPrimaryCommandPool.init(context, false, queueMap.getIndex()));
     mQueueMap = queueMap;
@@ -1161,7 +1166,7 @@ angle::Result CommandQueue::submitCommands(
     egl::ContextPriority priority,
     const std::vector<VkSemaphore> &waitSemaphores,
     const std::vector<VkPipelineStageFlags> &waitSemaphoreStageMasks,
-    const Semaphore *signalSemaphore,
+    const VkSemaphore signalSemaphore,
     GarbageList &&currentGarbage,
     SecondaryCommandBufferList &&commandBuffersToReset,
     SecondaryCommandPools *commandPools,
@@ -1183,7 +1188,7 @@ angle::Result CommandQueue::submitCommands(
     // Don't make a submission if there is nothing to submit.
     PrimaryCommandBuffer &commandBuffer = getCommandBuffer(hasProtectedContent);
     const bool hasAnyPendingCommands    = commandBuffer.valid();
-    if (hasAnyPendingCommands || signalSemaphore != nullptr || !waitSemaphores.empty())
+    if (hasAnyPendingCommands || signalSemaphore != VK_NULL_HANDLE || !waitSemaphores.empty())
     {
         if (commandBuffer.valid())
         {

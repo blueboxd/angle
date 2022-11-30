@@ -1398,6 +1398,9 @@ void RendererVk::onDestroy(vk::Context *context)
 
     mMemoryProperties.destroy();
     mPhysicalDevice = VK_NULL_HANDLE;
+
+    mEnabledInstanceExtensions.clear();
+    mEnabledDeviceExtensions.clear();
 }
 
 void RendererVk::notifyDeviceLost()
@@ -1588,11 +1591,6 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
         ANGLE_FEATURE_CONDITION(&mFeatures, supportsSurfacelessQueryExtension, !isMockICDEnabled());
     }
 
-    // Verify the required extensions are in the extension names set. Fail if not.
-    std::sort(mEnabledInstanceExtensions.begin(), mEnabledInstanceExtensions.end(), StrLess);
-    ANGLE_VK_TRY(displayVk,
-                 VerifyExtensionsPresent(instanceExtensionNames, mEnabledInstanceExtensions));
-
     // Enable VK_KHR_get_physical_device_properties_2 if available.
     if (ExtensionFound(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
                        instanceExtensionNames))
@@ -1613,6 +1611,11 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
         mEnabledInstanceExtensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME);
         ANGLE_FEATURE_CONDITION(&mFeatures, supportsExternalSemaphoreCapabilities, true);
     }
+
+    // Verify the required extensions are in the extension names set. Fail if not.
+    std::sort(mEnabledInstanceExtensions.begin(), mEnabledInstanceExtensions.end(), StrLess);
+    ANGLE_VK_TRY(displayVk,
+                 VerifyExtensionsPresent(instanceExtensionNames, mEnabledInstanceExtensions));
 
     mApplicationInfo                    = {};
     mApplicationInfo.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -1658,7 +1661,6 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
     instanceInfo.enabledExtensionCount = static_cast<uint32_t>(mEnabledInstanceExtensions.size());
     instanceInfo.ppEnabledExtensionNames =
         mEnabledInstanceExtensions.empty() ? nullptr : mEnabledInstanceExtensions.data();
-    mEnabledInstanceExtensions.push_back(nullptr);
 
     instanceInfo.enabledLayerCount   = static_cast<uint32_t>(enabledInstanceLayerNames.size());
     instanceInfo.ppEnabledLayerNames = enabledInstanceLayerNames.data();
@@ -1805,6 +1807,9 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
     mFormatTable.initialize(this, &mNativeTextureCaps);
 
     setGlobalDebugAnnotator();
+
+    // Null terminate the extension list returned for EGL_VULKAN_INSTANCE_EXTENSIONS_ANGLE.
+    mEnabledInstanceExtensions.push_back(nullptr);
 
     return angle::Result::Continue;
 }
@@ -3749,6 +3754,9 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
           (mPhysicalDeviceProperties.driverVersion < kPixel2DriverWithRelaxedPrecision)) &&
             !IsPixel4(mPhysicalDeviceProperties.vendorID, mPhysicalDeviceProperties.deviceID));
 
+    // http://anglebug.com/7488
+    ANGLE_FEATURE_CONDITION(&mFeatures, varyingsRequireMatchingPrecisionInSpirv, isPowerVR);
+
     // IMR devices are less sensitive to the src/dst stage masks in barriers, and behave more
     // efficiently when all barriers are aggregated, rather than individually and precisely
     // specified.
@@ -3878,7 +3886,7 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // Testing shows that on ARM GPU, doing implicit flush at framebuffer boundary improves
     // performance. Most app traces shows frame time reduced and manhattan 3.1 offscreen score
     // improves 7%.
-    ANGLE_FEATURE_CONDITION(&mFeatures, preferSubmitAtFBOBoundary, isARM);
+    ANGLE_FEATURE_CONDITION(&mFeatures, preferSubmitAtFBOBoundary, isARM || isSwiftShader);
 
     // In order to support immutable samplers tied to external formats, we need to overallocate
     // descriptor counts for such immutable samplers
@@ -4799,13 +4807,16 @@ angle::Result RendererVk::submitCommands(
         std::move(mRenderPassCommandBufferRecycler.releaseCommandBuffersToReset()),
     };
 
+    const VkSemaphore signalVkSemaphore =
+        signalSemaphore ? signalSemaphore->getHandle() : VK_NULL_HANDLE;
+
     if (isAsyncCommandQueueEnabled())
     {
         *submitSerialOut = mCommandProcessor.reserveSubmitSerial();
 
         ANGLE_TRY(mCommandProcessor.submitCommands(
             context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
-            signalSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
+            signalVkSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
             commandPools, *submitSerialOut));
     }
     else
@@ -4814,7 +4825,7 @@ angle::Result RendererVk::submitCommands(
 
         ANGLE_TRY(mCommandQueue.submitCommands(
             context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
-            signalSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
+            signalVkSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
             commandPools, *submitSerialOut));
     }
 
