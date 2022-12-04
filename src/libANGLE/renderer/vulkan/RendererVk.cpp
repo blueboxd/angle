@@ -47,6 +47,18 @@ constexpr bool kExposeNonConformantExtensionsAndVersions = true;
 #else
 constexpr bool kExposeNonConformantExtensionsAndVersions = false;
 #endif
+
+// This flag is used for memory allocation tracking using allocation size counters.
+constexpr bool kTrackMemoryAllocation = true;
+#if defined(ANGLE_ENABLE_MEMORY_ALLOC_LOGGING)
+// Flag used for logging memory allocations and deallocations.
+constexpr bool kDebugMemoryAllocationLogs = true;
+static_assert(kTrackMemoryAllocation,
+              "kTrackMemoryAllocation must be enabled to use kDebugMemoryAllocationLogs.");
+#else
+// Only the allocation size counters are used (if enabled).
+constexpr bool kDebugMemoryAllocationLogs = false;
+#endif
 }  // anonymous namespace
 
 namespace rx
@@ -188,9 +200,6 @@ constexpr const char *kSkippedMessages[] = {
     "VUID-vkCmdDrawIndexed-None-06538",
     // http://anglebug.com/7325
     "VUID-vkCmdBindVertexBuffers2-pStrides-06209",
-    // http://anglebug.com/7338
-    "VUID-VkGraphicsPipelineCreateInfo-renderPass-06040",
-    "VUID-VkGraphicsPipelineCreateInfo-renderPass-06039",
     // http://anglebug.com/7513
     "VUID-VkGraphicsPipelineCreateInfo-pStages-06896",
     // http://anglebug.com/7685
@@ -1236,6 +1245,24 @@ ANGLE_INLINE gl::ShadingRate GetShadingRateFromVkExtent(const VkExtent2D &extent
 
     return gl::ShadingRate::_1x1;
 }
+
+// Check for remaining memory allocations at the end of the renderer object.
+void checkForRemainingMemoryAllocations(RendererVk *renderer)
+{
+    if (kDebugMemoryAllocationLogs)
+    {
+        for (uint32_t i = 0; i < vk::kMemoryAllocationTypeCount; i++)
+        {
+            if (renderer->getActiveMemoryAllocationsSize(i) != 0)
+            {
+                INFO() << "Remaining allocated size for memory allocation type ("
+                       << vk::kMemoryAllocationTypeMessage[i]
+                       << "): " << renderer->getActiveMemoryAllocationsSize(i)
+                       << " | Count: " << renderer->getActiveMemoryAllocationsCount(i);
+            }
+        }
+    }
+}
 }  // namespace
 
 // RendererVk implementation.
@@ -1274,7 +1301,8 @@ RendererVk::RendererVk()
       mValidationMessageCount(0),
       mCommandProcessor(this),
       mSupportedVulkanPipelineStageMask(0),
-      mSupportedVulkanShaderStageMask(0)
+      mSupportedVulkanShaderStageMask(0),
+      mMemoryAllocationID(0)
 {
     VkFormatProperties invalid = {0, 0, kInvalidFormatFeatureFlags};
     mFormatProperties.fill(invalid);
@@ -1287,7 +1315,8 @@ RendererVk::RendererVk()
     // Allocation counters are initialized here to keep track of the size of the memory allocations.
     for (uint32_t i = 0; i < mActiveMemoryAllocationsSize.size(); i++)
     {
-        mActiveMemoryAllocationsSize[i] = 0;
+        mActiveMemoryAllocationsSize[i]  = 0;
+        mActiveMemoryAllocationsCount[i] = 0;
     }
 }
 
@@ -1310,19 +1339,19 @@ bool RendererVk::hasSharedGarbage()
            !mSuballocationGarbage.empty() || !mPendingSubmissionSuballocationGarbage.empty();
 }
 
-void RendererVk::releaseSharedResources(vk::ResourceUseList *resourceList)
-{
-    // resource list may access same resources referenced by garbage collection so need to protect
-    // that access with a lock.
-    std::unique_lock<std::mutex> lock(mGarbageMutex);
-    resourceList->releaseResourceUses();
-}
-
 void RendererVk::onDestroy(vk::Context *context)
 {
     if (isDeviceLost())
     {
         handleDeviceLost();
+    }
+    else
+    {
+        // ToDo: OneoffSubmission is doing wait on fence directly which by pass the
+        // retireFinishedCommands logic and may leave mInFlightCommands non-empty. For now call
+        // finish here to ensure everything is finished. We should chnage OneOffSUbmission code go
+        // through the code path just like others.
+        (void)finish(context, false);
     }
 
     for (std::unique_ptr<vk::BufferBlock> &block : mOrphanedBufferBlocks)
@@ -1364,6 +1393,10 @@ void RendererVk::onDestroy(vk::Context *context)
     mRenderPassCommandBufferRecycler.onDestroy();
 
     mAllocator.destroy();
+
+    // When the renderer is being destroyed, it is possible to check if all the allocated memory
+    // throughout the execution has been freed.
+    checkForRemainingMemoryAllocations(this);
 
     if (mDevice)
     {
@@ -4067,7 +4100,7 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, mergeProgramPipelineCachesToGlobalCache,
                             !mFeatures.supportsGraphicsPipelineLibrary.enabled);
 
-    ANGLE_FEATURE_CONDITION(&mFeatures, enableAsyncPipelineCacheCompression, true);
+    ANGLE_FEATURE_CONDITION(&mFeatures, enableAsyncPipelineCacheCompression, false);
 
     // Sync monolithic pipelines to the blob cache occasionally on platforms that would benefit from
     // it:
@@ -4447,27 +4480,33 @@ angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
 
     std::unique_lock<std::mutex> lock(mCommandQueueMutex);
 
-    QueueSerial submitQueueSerial;
+    // Allocate a oneoff submitQueueSerial and generate a serial and then use it and release the
+    // index.
+    SerialIndex queueIndex;
+    Serial lastSubmittedSerial;
+    ANGLE_TRY(allocateQueueSerialIndex(&queueIndex, &lastSubmittedSerial));
+    QueueSerial submitQueueSerial(queueIndex, generateQueueSerial(queueIndex));
+
     if (isAsyncCommandQueueEnabled())
     {
-        submitQueueSerial = mCommandProcessor.reserveSubmitSerial();
         ANGLE_TRY(mCommandProcessor.queueSubmitOneOff(
             context, hasProtectedContent, priority, primary.getHandle(), waitSemaphore,
             waitSemaphoreStageMasks, fence, submitPolicy, submitQueueSerial));
     }
     else
     {
-        submitQueueSerial = mCommandQueue.reserveSubmitSerial();
         ANGLE_TRY(mCommandQueue.queueSubmitOneOff(
             context, hasProtectedContent, priority, primary.getHandle(), waitSemaphore,
             waitSemaphoreStageMasks, fence, submitPolicy, submitQueueSerial));
     }
 
-    *queueSerialOut = submitQueueSerial;
+    // Immediately release the queue index since itis an one off use.
+    releaseQueueSerialIndex(queueIndex);
 
+    *queueSerialOut = submitQueueSerial;
     if (primary.valid())
     {
-        mPendingOneOffCommands.push_back({submitQueueSerial, std::move(primary)});
+        mPendingOneOffCommands.push_back({vk::ResourceUse(submitQueueSerial), std::move(primary)});
     }
 
     return angle::Result::Continue;
@@ -4786,7 +4825,7 @@ angle::Result RendererVk::submitCommands(
     const vk::Semaphore *signalSemaphore,
     vk::GarbageList &&currentGarbage,
     vk::SecondaryCommandPools *commandPools,
-    QueueSerial *submitSerialOut)
+    const QueueSerial &submitQueueSerial)
 {
     std::unique_lock<std::mutex> lock(mCommandQueueMutex);
 
@@ -4800,21 +4839,17 @@ angle::Result RendererVk::submitCommands(
 
     if (isAsyncCommandQueueEnabled())
     {
-        *submitSerialOut = mCommandProcessor.reserveSubmitSerial();
-
         ANGLE_TRY(mCommandProcessor.submitCommands(
             context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
             signalVkSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
-            commandPools, *submitSerialOut));
+            commandPools, submitQueueSerial));
     }
     else
     {
-        *submitSerialOut = mCommandQueue.reserveSubmitSerial();
-
         ANGLE_TRY(mCommandQueue.submitCommands(
             context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
             signalVkSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
-            commandPools, *submitSerialOut));
+            commandPools, submitQueueSerial));
     }
 
     waitSemaphores.clear();
@@ -5002,8 +5037,7 @@ angle::Result RendererVk::getCommandBufferImpl(vk::Context *context,
                                                CommandBufferHelperT **commandBufferHelperOut)
 {
     std::unique_lock<std::mutex> lock(mCommandBufferRecyclerMutex);
-    return recycler->getCommandBufferHelper(context, commandPool, &mCommandBufferHandleAllocator,
-                                            commandBufferHelperOut);
+    return recycler->getCommandBufferHelper(context, commandPool, commandBufferHelperOut);
 }
 
 angle::Result RendererVk::getOutsideRenderPassCommandBufferHelper(
@@ -5032,8 +5066,7 @@ void RendererVk::recycleOutsideRenderPassCommandBufferHelper(
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::recycleOutsideRenderPassCommandBufferHelper");
     std::unique_lock<std::mutex> lock(mCommandBufferRecyclerMutex);
-    mOutsideRenderPassCommandBufferRecycler.recycleCommandBufferHelper(
-        device, &mCommandBufferHandleAllocator, commandBuffer);
+    mOutsideRenderPassCommandBufferRecycler.recycleCommandBufferHelper(device, commandBuffer);
 }
 
 void RendererVk::recycleRenderPassCommandBufferHelper(
@@ -5042,8 +5075,7 @@ void RendererVk::recycleRenderPassCommandBufferHelper(
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::recycleRenderPassCommandBufferHelper");
     std::unique_lock<std::mutex> lock(mCommandBufferRecyclerMutex);
-    mRenderPassCommandBufferRecycler.recycleCommandBufferHelper(
-        device, &mCommandBufferHandleAllocator, commandBuffer);
+    mRenderPassCommandBufferRecycler.recycleCommandBufferHelper(device, commandBuffer);
 }
 
 void RendererVk::logCacheStats() const
@@ -5060,6 +5092,115 @@ void RendererVk::logCacheStats() const
     for (const CacheStats &stats : mVulkanCacheStats)
     {
         INFO() << "    CacheType " << cacheType++ << ": " << stats.getHitRatio();
+    }
+}
+
+void RendererVk::onMemoryAllocImpl(vk::MemoryAllocationType allocType,
+                                   VkDeviceSize size,
+                                   void *handle)
+{
+    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
+
+    if (kDebugMemoryAllocationLogs)
+    {
+        // If enabled (debug layers), we keep more details in the memory tracker, such as handle,
+        // and log the action to the output.
+        std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
+
+        uint32_t allocTypeIndex = ToUnderlying(allocType);
+        mActiveMemoryAllocationsCount[allocTypeIndex]++;
+        mActiveMemoryAllocationsSize[allocTypeIndex] += size;
+
+        // Add the new allocation to the memory tracker.
+        vk::MemoryAllocationInfo memAllocLogInfo;
+        memAllocLogInfo.id        = ++mMemoryAllocationID;
+        memAllocLogInfo.allocType = allocType;
+        memAllocLogInfo.size      = size;
+        memAllocLogInfo.handle    = handle;
+
+        vk::MemoryAllocInfoMapKey memoryAllocInfoMapKey(memAllocLogInfo.handle);
+        mMemoryAllocationTracker[angle::getBacktraceInfo()].insert(
+            std::make_pair(memoryAllocInfoMapKey, memAllocLogInfo));
+
+        INFO() << "Memory allocation: (id " << memAllocLogInfo.id << ") for object "
+               << memAllocLogInfo.handle << " | Size: " << memAllocLogInfo.size
+               << " | Type: " << vk::kMemoryAllocationTypeMessage[allocTypeIndex];
+    }
+    else if (kTrackMemoryAllocation)
+    {
+        // Add the new allocation size to the allocation counter.
+        uint32_t allocTypeIndex = ToUnderlying(allocType);
+        mActiveMemoryAllocationsSize[allocTypeIndex] += size;
+    }
+}
+
+void RendererVk::onMemoryDeallocImpl(vk::MemoryAllocationType allocType,
+                                     VkDeviceSize size,
+                                     void *handle)
+{
+    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
+
+    if (kDebugMemoryAllocationLogs)
+    {
+        // If enabled (debug layers), we keep more details in the memory tracker, such as handle,
+        // and log the action to the output. The memory allocation tracker uses the backtrace info
+        // as key, if available.
+        for (auto &memInfoPerBacktrace : mMemoryAllocationTracker)
+        {
+            vk::MemoryAllocInfoMapKey memoryAllocInfoMapKey(handle);
+            MemoryAllocInfoMap &memInfoMap = memInfoPerBacktrace.second;
+            std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
+
+            if (memInfoMap.find(memoryAllocInfoMapKey) != memInfoMap.end())
+            {
+                // Object found; remove it from the allocation tracker.
+                vk::MemoryAllocationInfo *memInfoEntry = &memInfoMap[memoryAllocInfoMapKey];
+                ASSERT(memInfoEntry->allocType == allocType && memInfoEntry->size == size);
+
+                uint32_t allocTypeIndex = ToUnderlying(memInfoEntry->allocType);
+                ASSERT(mActiveMemoryAllocationsCount[allocTypeIndex] != 0 &&
+                       mActiveMemoryAllocationsSize[allocTypeIndex] >= size);
+                mActiveMemoryAllocationsCount[allocTypeIndex]--;
+                mActiveMemoryAllocationsSize[allocTypeIndex] -= size;
+
+                INFO() << "Memory deallocation: (id " << memInfoEntry->id << ") for object "
+                       << memInfoEntry->handle << " | Size: " << memInfoEntry->size
+                       << " | Type: " << vk::kMemoryAllocationTypeMessage[allocTypeIndex];
+
+                memInfoMap.erase(memoryAllocInfoMapKey);
+            }
+        }
+    }
+    else if (kTrackMemoryAllocation)
+    {
+        // Remove the allocation size from the allocation counter.
+        uint32_t allocTypeIndex = ToUnderlying(allocType);
+        ASSERT(mActiveMemoryAllocationsSize[allocTypeIndex] >= size);
+        mActiveMemoryAllocationsSize[allocTypeIndex] -= size;
+    }
+}
+
+VkDeviceSize RendererVk::getActiveMemoryAllocationsSize(uint32_t allocTypeIndex)
+{
+    if (kDebugMemoryAllocationLogs)
+    {
+        return mActiveMemoryAllocationsSize[allocTypeIndex];
+    }
+    else
+    {
+        return 0;
+    }
+}
+
+VkDeviceSize RendererVk::getActiveMemoryAllocationsCount(uint32_t allocTypeIndex)
+{
+    if (kDebugMemoryAllocationLogs)
+    {
+        return mActiveMemoryAllocationsCount[allocTypeIndex];
+    }
+    else
+    {
+        return 0;
     }
 }
 
@@ -5135,6 +5276,24 @@ VkDeviceSize RendererVk::getPreferedBufferBlockSize(uint32_t memoryTypeIndex) co
     // Try not to exceed 1/64 of heap size to begin with.
     const VkDeviceSize heapSize = getMemoryProperties().getHeapSizeForMemoryType(memoryTypeIndex);
     return std::min(heapSize / 64, mPreferredLargeHeapBlockSize);
+}
+
+angle::Result RendererVk::allocateQueueSerialIndex(SerialIndex *indexOut, Serial *serialOut)
+{
+    SerialIndex index = mQueueSerialIndexAllocator.allocate();
+    if (index == kInvalidQueueSerialIndex)
+    {
+        return angle::Result::Stop;
+    }
+    *indexOut  = index;
+    *serialOut = isAsyncCommandQueueEnabled() ? mCommandProcessor.getLastSubmittedSerial(index)
+                                              : mCommandQueue.getLastSubmittedSerial(index);
+    return angle::Result::Continue;
+}
+
+void RendererVk::releaseQueueSerialIndex(SerialIndex index)
+{
+    mQueueSerialIndexAllocator.release(index);
 }
 
 namespace vk

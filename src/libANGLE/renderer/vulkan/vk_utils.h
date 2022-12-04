@@ -189,6 +189,52 @@ struct Error
     uint32_t line;
 };
 
+class QueueSerialIndexAllocator final
+{
+  public:
+    QueueSerialIndexAllocator() : mLargestAllocatedIndex(kInvalidQueueSerialIndex)
+    {
+        // Start with every index is free
+        mFreeIndexBitSetArray.set();
+        ASSERT(mFreeIndexBitSetArray.all());
+    }
+    SerialIndex allocate()
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        if (mFreeIndexBitSetArray.none())
+        {
+            ERR() << "Run out of queue serial index. All " << kMaxQueueSerialIndexCount
+                  << " indices are used.";
+            return kInvalidQueueSerialIndex;
+        }
+        SerialIndex index = static_cast<SerialIndex>(mFreeIndexBitSetArray.first());
+        ASSERT(index < kMaxQueueSerialIndexCount);
+        mFreeIndexBitSetArray.reset(index);
+        mLargestAllocatedIndex = (~mFreeIndexBitSetArray).last();
+        return index;
+    }
+
+    void release(SerialIndex index)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        ASSERT(index <= mLargestAllocatedIndex);
+        ASSERT(!mFreeIndexBitSetArray.test(index));
+        mFreeIndexBitSetArray.set(index);
+        if (index == mLargestAllocatedIndex)
+        {
+            mLargestAllocatedIndex = mFreeIndexBitSetArray.all() ? kInvalidQueueSerialIndex
+                                                                 : (~mFreeIndexBitSetArray).last();
+        }
+    }
+
+    size_t getLarrgestAllocatedIndex() const { return mLargestAllocatedIndex; }
+
+  private:
+    angle::BitSetArray<kMaxQueueSerialIndexCount> mFreeIndexBitSetArray;
+    size_t mLargestAllocatedIndex;
+    std::mutex mMutex;
+};
+
 // Abstracts error handling. Implemented by both ContextVk for GL and DisplayVk for EGL errors.
 class Context : angle::NonCopyable
 {
@@ -207,9 +253,19 @@ class Context : angle::NonCopyable
     const angle::VulkanPerfCounters &getPerfCounters() const { return mPerfCounters; }
     angle::VulkanPerfCounters &getPerfCounters() { return mPerfCounters; }
 
+    SerialIndex getCurrentQueueSerialIndex() const { return mCurrentQueueSerialIndex; }
+    Serial getCurrentSerial() const { return mCurrentSerial; }
+    Serial getLastSubmittedSerial() const { return mLastSubmittedSerial; }
+
   protected:
     RendererVk *const mRenderer;
     angle::VulkanPerfCounters mPerfCounters;
+
+    // Per context queue serial
+    SerialIndex mCurrentQueueSerialIndex;
+    Serial mCurrentSerial;
+    Serial mLastFlushedSerial;
+    Serial mLastSubmittedSerial;
 };
 
 class RenderPassDesc;
@@ -969,6 +1025,33 @@ angle::Result SetDebugUtilsObjectName(ContextVk *contextVk,
                                       uint64_t handle,
                                       const std::string &label);
 
+// Used to store memory allocation information for tracking purposes.
+struct MemoryAllocationInfo
+{
+    MemoryAllocationInfo() = default;
+    uint64_t id;
+    MemoryAllocationType allocType;
+    void *handle;
+    VkDeviceSize size;
+};
+
+class MemoryAllocInfoMapKey
+{
+  public:
+    MemoryAllocInfoMapKey() : handle(nullptr) {}
+    MemoryAllocInfoMapKey(void *handle) : handle(handle) {}
+
+    bool operator==(const MemoryAllocInfoMapKey &rhs) const
+    {
+        return reinterpret_cast<uint64_t>(handle) == reinterpret_cast<uint64_t>(rhs.handle);
+    }
+
+    size_t hash() const;
+
+  private:
+    void *handle;
+};
+
 }  // namespace vk
 
 #if !defined(ANGLE_SHARED_LIBVULKAN)
@@ -1181,6 +1264,7 @@ enum class RenderPassClosureReason
     CopyTextureOnCPU,
     TextureReformatToRenderable,
     DeviceLocalBufferMap,
+    OutOfReservedQueueSerialForOutsideCommands,
 
     // UtilsVk
     PrepareForBlit,
@@ -1194,6 +1278,16 @@ enum class RenderPassClosureReason
 };
 
 }  // namespace rx
+
+// Introduce std::hash for MemoryAllocInfoMapKey.
+namespace std
+{
+template <>
+struct hash<rx::vk::MemoryAllocInfoMapKey>
+{
+    size_t operator()(const rx::vk::MemoryAllocInfoMapKey &key) const { return key.hash(); }
+};
+}  // namespace std
 
 #define ANGLE_VK_TRY(context, command)                                                   \
     do                                                                                   \
