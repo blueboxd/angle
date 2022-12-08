@@ -620,9 +620,9 @@ class RendererVk : angle::NonCopyable
     }
 
     angle::Result allocateQueueSerialIndex(SerialIndex *indexOut, Serial *serialOut);
-    size_t getLargestAllocatedQueueSerialIndex() const
+    size_t getLargestQueueSerialIndexEverAllocated() const
     {
-        return mQueueSerialIndexAllocator.getLarrgestAllocatedIndex();
+        return mQueueSerialIndexAllocator.getLargestIndexEverAllocated();
     }
     void releaseQueueSerialIndex(SerialIndex index);
     Serial generateQueueSerial(SerialIndex index);
@@ -632,10 +632,6 @@ class RendererVk : angle::NonCopyable
 
     // The ResourceUse still have unfinished queue serial by vulkan.
     bool hasUnfinishedUse(const vk::ResourceUse &use) const;
-
-    // The ResourceUse still have unfinished queue serial by vulkan.
-    bool useInRunningCommands(const vk::ResourceUse &use) const;
-
     // The ResourceUse still have queue serial not yet submitted to vulkan.
     bool hasUnsubmittedUse(const vk::ResourceUse &use) const;
 
@@ -951,18 +947,6 @@ ANGLE_INLINE bool RendererVk::hasUnfinishedUse(const vk::ResourceUse &use) const
     else
     {
         return mCommandQueue.hasUnfinishedUse(use);
-    }
-}
-
-ANGLE_INLINE bool RendererVk::useInRunningCommands(const vk::ResourceUse &use) const
-{
-    if (isAsyncCommandQueueEnabled())
-    {
-        return mCommandProcessor.useInRunningCommands(use);
-    }
-    else
-    {
-        return mCommandQueue.useInRunningCommands(use);
     }
 }
 

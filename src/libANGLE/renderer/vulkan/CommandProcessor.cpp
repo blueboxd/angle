@@ -1482,11 +1482,6 @@ bool CommandQueue::hasUnfinishedUse(const vk::ResourceUse &use) const
     return use > mLastCompletedSerials;
 }
 
-bool CommandQueue::useInRunningCommands(const vk::ResourceUse &use) const
-{
-    return use > mLastCompletedSerials;
-}
-
 bool CommandQueue::hasUnsubmittedUse(const vk::ResourceUse &use) const
 {
     return use > mLastSubmittedSerials;
@@ -1496,7 +1491,7 @@ size_t CommandQueue::getBatchCountUpToSerials(RendererVk *renderer,
                                               const Serials &serials,
                                               Shared<Fence> **fenceToWaitOnOut)
 {
-    if (renderer->getLargestAllocatedQueueSerialIndex() < 64)
+    if (renderer->getLargestQueueSerialIndexEverAllocated() < 64)
     {
         return GetBatchCountUpToSerials<angle::BitSet64<64>>(
             mInFlightCommands, mLastSubmittedSerials, mLastCompletedSerials, serials,
