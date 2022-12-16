@@ -59,24 +59,24 @@ class ResourceUse final
         return *this;
     }
 
-    ANGLE_INLINE bool valid() const { return mSerials.size() > 0; }
+    bool valid() const { return mSerials.size() > 0; }
 
-    ANGLE_INLINE void reset() { mSerials.clear(); }
+    void reset() { mSerials.clear(); }
 
-    ANGLE_INLINE const Serials &getSerials() const { return mSerials; }
+    const Serials &getSerials() const { return mSerials; }
 
-    ANGLE_INLINE void setSerial(SerialIndex index, Serial serial)
+    void setSerial(SerialIndex index, Serial serial)
     {
         ASSERT(index != kInvalidQueueSerialIndex);
-        ASSERT(serial.valid());
         if (mSerials.size() <= index)
         {
-            mSerials.resize(index + 1);
+            mSerials.resize(index + 1, kZeroSerial);
         }
+        ASSERT(mSerials[index] <= serial);
         mSerials[index] = serial;
     }
 
-    ANGLE_INLINE void setQueueSerial(const QueueSerial &queueSerial)
+    void setQueueSerial(const QueueSerial &queueSerial)
     {
         setSerial(queueSerial.getIndex(), queueSerial.getSerial());
     }
@@ -102,13 +102,30 @@ class ResourceUse final
                mSerials[queuSerial.getIndex()] > queuSerial.getSerial();
     }
 
-    ANGLE_INLINE bool usedByCommandBuffer(const QueueSerial &commandBufferQueueSerial) const
+    bool usedByCommandBuffer(const QueueSerial &commandBufferQueueSerial) const
     {
         // Return true if we have the exact queue serial in the array.
         return commandBufferQueueSerial.valid() &&
                mSerials.size() > commandBufferQueueSerial.getIndex() &&
                mSerials[commandBufferQueueSerial.getIndex()] ==
                    commandBufferQueueSerial.getSerial();
+    }
+
+    // Merge other's serials into this object.
+    void merge(const ResourceUse &other)
+    {
+        if (mSerials.size() < other.mSerials.size())
+        {
+            mSerials.resize(other.mSerials.size(), kZeroSerial);
+        }
+
+        for (SerialIndex i = 0; i < other.mSerials.size(); ++i)
+        {
+            if (mSerials[i] < other.mSerials[i])
+            {
+                mSerials[i] = other.mSerials[i];
+            }
+        }
     }
 
   private:
@@ -140,18 +157,21 @@ using SharedGarbageList = std::queue<SharedGarbage>;
 class Resource : angle::NonCopyable
 {
   public:
-    virtual ~Resource();
-
-    // Returns true if the resource is in use by ANGLE or the driver.
-    bool isCurrentlyInUse(RendererVk *renderer) const;
+    virtual ~Resource() {}
 
     // Complete all recorded and in-flight commands involving this resource
     angle::Result waitForIdle(ContextVk *contextVk,
                               const char *debugMessage,
                               RenderPassClosureReason reason);
 
-    // Adds the resource to the list and also records command buffer use.
-    void retainCommands(const QueueSerial &queueSerial);
+    void setSerial(SerialIndex index, Serial serial) { mUse.setSerial(index, serial); }
+
+    void setQueueSerial(const QueueSerial &queueSerial)
+    {
+        mUse.setSerial(queueSerial.getIndex(), queueSerial.getSerial());
+    }
+
+    void mergeResourceUse(const ResourceUse &use) { mUse.merge(use); }
 
     // Check if this resource is used by a command buffer.
     bool usedByCommandBuffer(const QueueSerial &commandBufferQueueSerial) const
@@ -162,82 +182,64 @@ class Resource : angle::NonCopyable
     const ResourceUse &getResourceUse() const { return mUse; }
 
   protected:
-    Resource();
-    Resource(Resource &&other);
-    Resource &operator=(Resource &&rhs);
+    Resource() {}
+    Resource(Resource &&other) : Resource() { mUse = std::move(other.mUse); }
+    Resource &operator=(Resource &&rhs)
+    {
+        std::swap(mUse, rhs.mUse);
+        return *this;
+    }
 
     // Current resource lifetime.
     ResourceUse mUse;
 };
 
-ANGLE_INLINE void Resource::retainCommands(const QueueSerial &queueSerial)
-{
-    mUse.setQueueSerial(queueSerial);
-}
-
 // Similar to |Resource| above, this tracks object usage. This includes additional granularity to
 // track whether an object is used for read-only or read/write access.
-class ReadWriteResource : public angle::NonCopyable
+class ReadWriteResource : public Resource
 {
   public:
-    virtual ~ReadWriteResource();
-
-    // Returns true if the resource is in use by ANGLE or the driver.
-    bool isCurrentlyInUse(RendererVk *renderer) const;
-    bool isCurrentlyInUseForWrite(RendererVk *renderer) const;
-
-    // Ensures the GPU write commands is completed.
-    angle::Result finishGPUWriteCommands(ContextVk *contextVk);
+    virtual ~ReadWriteResource() override {}
 
     // Complete all recorded and in-flight commands involving this resource
     angle::Result waitForIdle(ContextVk *contextVk,
                               const char *debugMessage,
-                              RenderPassClosureReason reason);
+                              RenderPassClosureReason reason)
+    {
+        return Resource::waitForIdle(contextVk, debugMessage, reason);
+    }
 
-    // Adds the resource to a resource use list.
-    void retainReadOnly(const QueueSerial &queueSerial);
-    void retainReadWrite(const QueueSerial &queueSerial);
+    void setWriteQueueSerial(const QueueSerial &writeQueueSerial)
+    {
+        mUse.setQueueSerial(writeQueueSerial);
+        mWriteUse.setQueueSerial(writeQueueSerial);
+    }
 
     // Check if this resource is used by a command buffer.
-    bool usedByCommandBuffer(const QueueSerial &commandBufferQueueSerial) const;
-    bool writtenByCommandBuffer(const QueueSerial &commandBufferQueueSerial) const;
+    bool usedByCommandBuffer(const QueueSerial &commandBufferQueueSerial) const
+    {
+        return mUse.usedByCommandBuffer(commandBufferQueueSerial);
+    }
+    bool writtenByCommandBuffer(const QueueSerial &commandBufferQueueSerial) const
+    {
+        return mWriteUse.usedByCommandBuffer(commandBufferQueueSerial);
+    }
 
-    const ResourceUse &getResourceUse() const { return mReadOnlyUse; }
-    const ResourceUse &getWriteResourceUse() const { return mReadWriteUse; }
+    const ResourceUse &getWriteResourceUse() const { return mWriteUse; }
 
   protected:
-    ReadWriteResource();
-    ReadWriteResource(ReadWriteResource &&other);
-    ReadWriteResource &operator=(ReadWriteResource &&other);
+    ReadWriteResource() {}
+    ReadWriteResource(ReadWriteResource &&other) { *this = std::move(other); }
+    ReadWriteResource &operator=(ReadWriteResource &&other)
+    {
+        Resource::operator=(std::move(other));
+        mWriteUse = std::move(other.mWriteUse);
+        return *this;
+    }
 
-    // Track any use of the object. Always updated on every retain call.
-    ResourceUse mReadOnlyUse;
-    // Track read/write use of the object. Only updated for retainReadWrite().
-    ResourceUse mReadWriteUse;
+    // Track write use of the object. Only updated for setWriteQueueSerial().
+    ResourceUse mWriteUse;
 };
-
-ANGLE_INLINE void ReadWriteResource::retainReadOnly(const QueueSerial &queueSerial)
-{
-    mReadOnlyUse.setQueueSerial(queueSerial);
-}
-
-ANGLE_INLINE void ReadWriteResource::retainReadWrite(const QueueSerial &queueSerial)
-{
-    mReadOnlyUse.setQueueSerial(queueSerial);
-    mReadWriteUse.setQueueSerial(queueSerial);
-}
-
-ANGLE_INLINE bool ReadWriteResource::usedByCommandBuffer(
-    const QueueSerial &commandBufferQueueSerial) const
-{
-    return mReadOnlyUse.usedByCommandBuffer(commandBufferQueueSerial);
-}
-
-ANGLE_INLINE bool ReadWriteResource::writtenByCommandBuffer(
-    const QueueSerial &commandBufferQueueSerial) const
-{
-    return mReadWriteUse.usedByCommandBuffer(commandBufferQueueSerial);
-}
 }  // namespace vk
 }  // namespace rx
 

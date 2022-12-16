@@ -15,108 +15,31 @@ namespace rx
 {
 namespace vk
 {
-namespace
-{
-angle::Result FinishRunningCommands(Context *context, const ResourceUse &use)
-{
-    return context->getRenderer()->finishResourceUse(context, use);
-}
-
-template <typename T>
-angle::Result WaitForIdle(ContextVk *contextVk,
-                          T *resource,
-                          const char *debugMessage,
-                          RenderPassClosureReason reason)
+// Resource implementation.
+angle::Result Resource::waitForIdle(ContextVk *contextVk,
+                                    const char *debugMessage,
+                                    RenderPassClosureReason reason)
 {
     // If there are pending commands for the resource, flush them.
-    if (contextVk->hasUnsubmittedUse(resource->getResourceUse()))
+    if (contextVk->hasUnsubmittedUse(mUse))
     {
         ANGLE_TRY(contextVk->flushImpl(nullptr, reason));
     }
 
+    RendererVk *renderer = contextVk->getRenderer();
     // Make sure the driver is done with the resource.
-    if (contextVk->getRenderer()->hasUnfinishedUse(resource->getResourceUse()))
+    if (renderer->hasUnfinishedUse(mUse))
     {
         if (debugMessage)
         {
             ANGLE_VK_PERF_WARNING(contextVk, GL_DEBUG_SEVERITY_HIGH, "%s", debugMessage);
         }
-        ANGLE_TRY(
-            contextVk->getRenderer()->finishResourceUse(contextVk, resource->getResourceUse()));
+        ANGLE_TRY(renderer->finishResourceUse(contextVk, mUse));
     }
 
-    ASSERT(!resource->isCurrentlyInUse(contextVk->getRenderer()));
+    ASSERT(!renderer->hasUnfinishedUse(mUse));
 
     return angle::Result::Continue;
-}
-}  // namespace
-
-// Resource implementation.
-Resource::Resource() {}
-
-Resource::Resource(Resource &&other) : Resource()
-{
-    mUse = std::move(other.mUse);
-}
-
-Resource &Resource::operator=(Resource &&rhs)
-{
-    std::swap(mUse, rhs.mUse);
-    return *this;
-}
-
-Resource::~Resource() {}
-
-bool Resource::isCurrentlyInUse(RendererVk *renderer) const
-{
-    return renderer->hasUnfinishedUse(mUse);
-}
-
-angle::Result Resource::waitForIdle(ContextVk *contextVk,
-                                    const char *debugMessage,
-                                    RenderPassClosureReason reason)
-{
-    return WaitForIdle(contextVk, this, debugMessage, reason);
-}
-
-// ReadWriteResource implementation.
-ReadWriteResource::ReadWriteResource() {}
-
-ReadWriteResource::ReadWriteResource(ReadWriteResource &&other) : ReadWriteResource()
-{
-    *this = std::move(other);
-}
-
-ReadWriteResource::~ReadWriteResource() {}
-
-ReadWriteResource &ReadWriteResource::operator=(ReadWriteResource &&other)
-{
-    mReadOnlyUse  = std::move(other.mReadOnlyUse);
-    mReadWriteUse = std::move(other.mReadWriteUse);
-    return *this;
-}
-
-bool ReadWriteResource::isCurrentlyInUse(RendererVk *renderer) const
-{
-    return renderer->hasUnfinishedUse(mReadOnlyUse);
-}
-
-bool ReadWriteResource::isCurrentlyInUseForWrite(RendererVk *renderer) const
-{
-    return renderer->hasUnfinishedUse(mReadWriteUse);
-}
-
-angle::Result ReadWriteResource::finishGPUWriteCommands(ContextVk *contextVk)
-{
-    ASSERT(!contextVk->getRenderer()->hasUnsubmittedUse(mReadWriteUse));
-    return FinishRunningCommands(contextVk, mReadWriteUse);
-}
-
-angle::Result ReadWriteResource::waitForIdle(ContextVk *contextVk,
-                                             const char *debugMessage,
-                                             RenderPassClosureReason reason)
-{
-    return WaitForIdle(contextVk, this, debugMessage, reason);
 }
 
 // SharedGarbage implementation.

@@ -510,7 +510,8 @@ TEST_P(MultithreadingTest, MultiCreateContext)
             }
 
             while (barrier < kThreadCount)
-            {}
+            {
+            }
 
             {
                 EXPECT_TRUE(eglDestroyContext(dpy, contexts[threadIdx]));
@@ -602,7 +603,8 @@ TEST_P(MultithreadingTest, CreateMultiSharedContextAndDraw)
 
             // Wait for all contexts created.
             while (numOfContextsCreated < threadCount)
-            {}
+            {
+            }
 
             // Now draw with shared vertex buffer
             {
@@ -1342,6 +1344,350 @@ TEST_P(MultithreadingTestES3, ThreadCWaitBeforeThreadBSyncFinish)
     ASSERT_NE(currentStep, Step::Abort);
 }
 
+// Test that having commands recorded but not submitted on one thread using a texture, does not
+// interfere with similar commands on another thread using the same texture.  Regression test for a
+// bug in the Vulkan backend where the first thread would batch updates to a descriptor set not
+// visible to the other thread, while the other thread picks up the (unupdated) descriptor set from
+// a shared cache.
+TEST_P(MultithreadingTestES3, UnsynchronizedTextureReads)
+{
+    ANGLE_SKIP_TEST_IF(!platformSupportsMultithreading());
+    ANGLE_SKIP_TEST_IF(!hasFenceSyncExtension() || !hasGLSyncExtension());
+
+    GLsync sync    = 0;
+    GLuint texture = 0;
+
+    constexpr GLubyte kInitialData[4] = {127, 63, 191, 255};
+
+    std::mutex mutex;
+    std::condition_variable condVar;
+
+    enum class Step
+    {
+        Start,
+        Thread0CreateTextureAndDraw,
+        Thread1DrawAndFlush,
+        Finish,
+        Abort,
+    };
+    Step currentStep = Step::Start;
+
+    auto thread0 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Start));
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, context));
+
+        // Create a texture, and record a command that draws into it.
+        GLTexture color;
+        texture = color;
+
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 1, 1);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, kInitialData);
+
+        sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        ASSERT_NE(sync, nullptr);
+
+        ANGLE_GL_PROGRAM(drawTexture, essl1_shaders::vs::Texture2D(),
+                         essl1_shaders::fs::Texture2D());
+        drawQuad(drawTexture, essl1_shaders::PositionAttrib(), 0.0f);
+
+        // Don't flush yet; this leaves the descriptor set updates to the texture pending in the
+        // Vulkan backend.
+        threadSynchronization.nextStep(Step::Thread0CreateTextureAndDraw);
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Thread1DrawAndFlush));
+
+        // Flush after thread 1
+        EXPECT_PIXEL_COLOR_NEAR(
+            0, 0, GLColor(kInitialData[0], kInitialData[1], kInitialData[2], kInitialData[3]), 1);
+
+        // Clean up
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+
+        threadSynchronization.nextStep(Step::Finish);
+    };
+
+    auto thread1 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Start));
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, context));
+
+        // Wait for thread 0 to set up
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Thread0CreateTextureAndDraw));
+
+        // Synchronize with the texture upload (but not the concurrent read)
+        glWaitSync(sync, 0, GL_TIMEOUT_IGNORED);
+
+        // Draw with the same texture, in the same way as thread 0.  This ensures that the
+        // descriptor sets used in the Vulkan backend are identical.
+        glBindTexture(GL_TEXTURE_2D, texture);
+        ANGLE_GL_PROGRAM(drawTexture, essl1_shaders::vs::Texture2D(),
+                         essl1_shaders::fs::Texture2D());
+        drawQuad(drawTexture, essl1_shaders::PositionAttrib(), 0.0f);
+
+        // Flush
+        EXPECT_PIXEL_COLOR_NEAR(
+            0, 0, GLColor(kInitialData[0], kInitialData[1], kInitialData[2], kInitialData[3]), 1);
+
+        threadSynchronization.nextStep(Step::Thread1DrawAndFlush);
+
+        // Clean up
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Finish));
+    };
+
+    std::array<LockStepThreadFunc, 2> threadFuncs = {
+        std::move(thread0),
+        std::move(thread1),
+    };
+
+    RunLockStepThreads(getEGLWindow(), threadFuncs.size(), threadFuncs.data());
+
+    ASSERT_NE(currentStep, Step::Abort);
+}
+
+// Similar to UnsynchronizedTextureReads, but the texture update is done through framebuffer write.
+TEST_P(MultithreadingTestES3, UnsynchronizedTextureReads2)
+{
+    ANGLE_SKIP_TEST_IF(!platformSupportsMultithreading());
+    ANGLE_SKIP_TEST_IF(!hasFenceSyncExtension() || !hasGLSyncExtension());
+
+    GLsync sync    = 0;
+    GLuint texture = 0;
+
+    std::mutex mutex;
+    std::condition_variable condVar;
+
+    enum class Step
+    {
+        Start,
+        Thread0CreateTextureAndDraw,
+        Thread1DrawAndFlush,
+        Finish,
+        Abort,
+    };
+    Step currentStep = Step::Start;
+
+    auto thread0 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Start));
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, context));
+
+        // Create a texture, and record a command that draws into it.
+        GLTexture color;
+        texture = color;
+
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 1, 1);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        GLFramebuffer fbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+
+        glClearColor(1, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        ASSERT_NE(sync, nullptr);
+
+        ANGLE_GL_PROGRAM(drawTexture, essl1_shaders::vs::Texture2D(),
+                         essl1_shaders::fs::Texture2D());
+        drawQuad(drawTexture, essl1_shaders::PositionAttrib(), 0.0f);
+
+        // Don't flush yet; this leaves the descriptor set updates to the texture pending in the
+        // Vulkan backend.
+        threadSynchronization.nextStep(Step::Thread0CreateTextureAndDraw);
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Thread1DrawAndFlush));
+
+        // Flush after thread 1
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+
+        // Clean up
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+
+        threadSynchronization.nextStep(Step::Finish);
+    };
+
+    auto thread1 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Start));
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, context));
+
+        // Wait for thread 0 to set up
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Thread0CreateTextureAndDraw));
+
+        // Synchronize with the texture update (but not the concurrent read)
+        glWaitSync(sync, 0, GL_TIMEOUT_IGNORED);
+
+        // Draw with the same texture, in the same way as thread 0.  This ensures that the
+        // descriptor sets used in the Vulkan backend are identical.
+        glBindTexture(GL_TEXTURE_2D, texture);
+        ANGLE_GL_PROGRAM(drawTexture, essl1_shaders::vs::Texture2D(),
+                         essl1_shaders::fs::Texture2D());
+        drawQuad(drawTexture, essl1_shaders::PositionAttrib(), 0.0f);
+
+        // Flush
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+
+        threadSynchronization.nextStep(Step::Thread1DrawAndFlush);
+
+        // Clean up
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Finish));
+    };
+
+    std::array<LockStepThreadFunc, 2> threadFuncs = {
+        std::move(thread0),
+        std::move(thread1),
+    };
+
+    RunLockStepThreads(getEGLWindow(), threadFuncs.size(), threadFuncs.data());
+
+    ASSERT_NE(currentStep, Step::Abort);
+}
+
+// Similar to UnsynchronizedTextureReads, but the texture is used once.  This is because
+// UnsynchronizedTextureRead hits a different bug than it intends to test.  This test makes sure the
+// image is put in the right layout, by using it together with another texture (i.e. a different
+// descriptor set).
+TEST_P(MultithreadingTestES3, UnsynchronizedTextureReads3)
+{
+    ANGLE_SKIP_TEST_IF(!platformSupportsMultithreading());
+
+    constexpr GLubyte kInitialData[4] = {127, 63, 191, 255};
+
+    GLuint texture = 0;
+
+    std::mutex mutex;
+    std::condition_variable condVar;
+
+    enum class Step
+    {
+        Start,
+        Thread0CreateTextureAndDraw,
+        Thread1DrawAndFlush,
+        Finish,
+        Abort,
+    };
+    Step currentStep = Step::Start;
+
+    auto thread0 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Start));
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, context));
+
+        // Create a texture, and record a command that draws into it.
+        GLTexture color;
+        texture = color;
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 1, 1);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, kInitialData);
+
+        glActiveTexture(GL_TEXTURE1);
+        GLTexture color2;
+        glBindTexture(GL_TEXTURE_2D, color2);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 1, 1);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, kInitialData);
+
+        ANGLE_GL_PROGRAM(setupTexture, essl1_shaders::vs::Texture2D(),
+                         R"(precision mediump float;
+uniform sampler2D tex2D;
+uniform sampler2D tex2D2;
+varying vec2 v_texCoord;
+
+void main()
+{
+    gl_FragColor = texture2D(tex2D, v_texCoord) + texture2D(tex2D2, v_texCoord);
+})");
+        drawQuad(setupTexture, essl1_shaders::PositionAttrib(), 0.0f);
+        ASSERT_GL_NO_ERROR();
+
+        glFinish();
+
+        ANGLE_GL_PROGRAM(drawTexture, essl1_shaders::vs::Texture2D(),
+                         essl1_shaders::fs::Texture2D());
+        drawQuad(drawTexture, essl1_shaders::PositionAttrib(), 0.0f);
+        ASSERT_GL_NO_ERROR();
+
+        // Don't flush yet; this leaves the descriptor set updates to the texture pending in the
+        // Vulkan backend.
+        threadSynchronization.nextStep(Step::Thread0CreateTextureAndDraw);
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Thread1DrawAndFlush));
+
+        // Flush after thread 1
+        EXPECT_PIXEL_COLOR_NEAR(
+            0, 0, GLColor(kInitialData[0], kInitialData[1], kInitialData[2], kInitialData[3]), 1);
+
+        // Clean up
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+
+        threadSynchronization.nextStep(Step::Finish);
+    };
+
+    auto thread1 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Start));
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, context));
+
+        // Wait for thread 0 to set up
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Thread0CreateTextureAndDraw));
+
+        // Draw with the same texture, in the same way as thread 0.  This ensures that the
+        // descriptor sets used in the Vulkan backend are identical.
+        glBindTexture(GL_TEXTURE_2D, texture);
+        ANGLE_GL_PROGRAM(drawTexture, essl1_shaders::vs::Texture2D(),
+                         essl1_shaders::fs::Texture2D());
+        drawQuad(drawTexture, essl1_shaders::PositionAttrib(), 0.0f);
+        ASSERT_GL_NO_ERROR();
+
+        // Flush
+        EXPECT_PIXEL_COLOR_NEAR(
+            0, 0, GLColor(kInitialData[0], kInitialData[1], kInitialData[2], kInitialData[3]), 1);
+
+        threadSynchronization.nextStep(Step::Thread1DrawAndFlush);
+
+        // Clean up
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Finish));
+    };
+
+    std::array<LockStepThreadFunc, 2> threadFuncs = {
+        std::move(thread0),
+        std::move(thread1),
+    };
+
+    RunLockStepThreads(getEGLWindow(), threadFuncs.size(), threadFuncs.data());
+
+    ASSERT_NE(currentStep, Step::Abort);
+}
+
 // Test framebuffer fetch program used between share groups.
 void MultithreadingTestES3::testFramebufferFetch(DrawOrder drawOrder)
 {
@@ -1473,24 +1819,165 @@ TEST_P(MultithreadingTestES3, CreateFramebufferFetchMidRenderPass)
     testFramebufferFetch(DrawOrder::Before);
 }
 
-// TODO(geofflang): Test sharing a program between multiple shared contexts on multiple threads
+// Test async monolithic pipeline creation in the Vulkan backend vs shared programs.  This test
+// makes one context/thread create a set of programs, then has another context/thread use them a few
+// times, and then the original context destroys them.
+TEST_P(MultithreadingTestES3, ProgramUseAndDestroyInTwoContexts)
+{
+    ANGLE_SKIP_TEST_IF(!platformSupportsMultithreading());
 
-ANGLE_INSTANTIATE_TEST(MultithreadingTest,
-                       ES2_OPENGL(),
-                       ES3_OPENGL(),
-                       ES2_OPENGLES(),
-                       ES3_OPENGLES(),
-                       ES3_VULKAN(),
-                       ES3_VULKAN_SWIFTSHADER(),
-                       ES2_D3D11(),
-                       ES3_D3D11());
+    GLProgram programs[6];
+
+    GLsync sync = 0;
+
+    std::mutex mutex;
+    std::condition_variable condVar;
+
+    enum class Step
+    {
+        Start,
+        Thread0CreatePrograms,
+        Thread1UsePrograms,
+        Finish,
+        Abort,
+    };
+    Step currentStep = Step::Start;
+
+    auto thread0 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Start));
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, context));
+
+        // Create the programs
+        programs[0].makeRaster(essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+        programs[1].makeRaster(essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
+        programs[2].makeRaster(essl1_shaders::vs::Simple(), essl1_shaders::fs::Blue());
+        programs[3].makeRaster(essl1_shaders::vs::Passthrough(), essl1_shaders::fs::Checkered());
+        programs[4].makeRaster(essl1_shaders::vs::Simple(), essl1_shaders::fs::UniformColor());
+        programs[5].makeRaster(essl1_shaders::vs::Texture2D(), essl1_shaders::fs::Texture2D());
+
+        EXPECT_TRUE(programs[0].valid());
+        EXPECT_TRUE(programs[1].valid());
+        EXPECT_TRUE(programs[2].valid());
+        EXPECT_TRUE(programs[3].valid());
+        EXPECT_TRUE(programs[4].valid());
+        EXPECT_TRUE(programs[5].valid());
+
+        // Wait for the other thread to use the programs
+        threadSynchronization.nextStep(Step::Thread0CreatePrograms);
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Thread1UsePrograms));
+
+        // Destroy them
+        glWaitSync(sync, 0, GL_TIMEOUT_IGNORED);
+        programs[0].reset();
+        programs[1].reset();
+        programs[2].reset();
+        programs[3].reset();
+        programs[4].reset();
+        programs[5].reset();
+
+        threadSynchronization.nextStep(Step::Finish);
+
+        // Clean up
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+    };
+
+    auto thread1 = [&](EGLDisplay dpy, EGLSurface surface, EGLContext context) {
+        ThreadSynchronization<Step> threadSynchronization(&currentStep, &mutex, &condVar);
+
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Start));
+
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, context));
+
+        // Wait for thread 0 to create the programs
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Thread0CreatePrograms));
+
+        // Use them a few times.
+        drawQuad(programs[0], essl1_shaders::PositionAttrib(), 0.0f);
+        drawQuad(programs[1], essl1_shaders::PositionAttrib(), 0.0f);
+        drawQuad(programs[2], essl1_shaders::PositionAttrib(), 0.0f);
+        drawQuad(programs[3], essl1_shaders::PositionAttrib(), 0.0f);
+        drawQuad(programs[4], essl1_shaders::PositionAttrib(), 0.0f);
+
+        drawQuad(programs[0], essl1_shaders::PositionAttrib(), 0.0f);
+        drawQuad(programs[1], essl1_shaders::PositionAttrib(), 0.0f);
+        drawQuad(programs[2], essl1_shaders::PositionAttrib(), 0.0f);
+
+        drawQuad(programs[0], essl1_shaders::PositionAttrib(), 0.0f);
+
+        sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        ASSERT_NE(sync, nullptr);
+
+        // Notify the other thread to destroy the programs.
+        threadSynchronization.nextStep(Step::Thread1UsePrograms);
+        ASSERT_TRUE(threadSynchronization.waitForStep(Step::Finish));
+
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+
+        // Clean up
+        EXPECT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+    };
+
+    std::array<LockStepThreadFunc, 2> threadFuncs = {
+        std::move(thread0),
+        std::move(thread1),
+    };
+
+    RunLockStepThreads(getEGLWindow(), threadFuncs.size(), threadFuncs.data());
+
+    ASSERT_NE(currentStep, Step::Abort);
+}
+
+ANGLE_INSTANTIATE_TEST(
+    MultithreadingTest,
+    ES2_OPENGL(),
+    ES3_OPENGL(),
+    ES2_OPENGLES(),
+    ES3_OPENGLES(),
+    ES3_VULKAN(),
+    ES3_VULKAN_SWIFTSHADER().disable(Feature::PreferMonolithicPipelinesOverLibraries),
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::PreferMonolithicPipelinesOverLibraries),
+    ES3_VULKAN_SWIFTSHADER()
+        .enable(Feature::PreferMonolithicPipelinesOverLibraries)
+        .enable(Feature::SlowDownMonolithicPipelineCreationForTesting),
+    ES3_VULKAN_SWIFTSHADER()
+        .enable(Feature::PreferMonolithicPipelinesOverLibraries)
+        .disable(Feature::MergeProgramPipelineCachesToGlobalCache),
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::PermanentlySwitchToFramebufferFetchMode),
+    ES3_VULKAN_SWIFTSHADER()
+        .enable(Feature::PermanentlySwitchToFramebufferFetchMode)
+        .enable(Feature::PreferMonolithicPipelinesOverLibraries),
+    ES3_VULKAN_SWIFTSHADER()
+        .enable(Feature::PermanentlySwitchToFramebufferFetchMode)
+        .enable(Feature::PreferMonolithicPipelinesOverLibraries)
+        .enable(Feature::SlowDownMonolithicPipelineCreationForTesting),
+    ES2_D3D11(),
+    ES3_D3D11());
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(MultithreadingTestES3);
-ANGLE_INSTANTIATE_TEST(MultithreadingTestES3,
-                       ES3_OPENGL(),
-                       ES3_OPENGLES(),
-                       ES3_VULKAN(),
-                       ES3_VULKAN_SWIFTSHADER(),
-                       ES3_D3D11());
+ANGLE_INSTANTIATE_TEST(
+    MultithreadingTestES3,
+    ES3_OPENGL(),
+    ES3_OPENGLES(),
+    ES3_VULKAN(),
+    ES3_VULKAN_SWIFTSHADER().disable(Feature::PreferMonolithicPipelinesOverLibraries),
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::PreferMonolithicPipelinesOverLibraries),
+    ES3_VULKAN_SWIFTSHADER()
+        .enable(Feature::PreferMonolithicPipelinesOverLibraries)
+        .enable(Feature::SlowDownMonolithicPipelineCreationForTesting),
+    ES3_VULKAN_SWIFTSHADER()
+        .enable(Feature::PreferMonolithicPipelinesOverLibraries)
+        .disable(Feature::MergeProgramPipelineCachesToGlobalCache),
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::PermanentlySwitchToFramebufferFetchMode),
+    ES3_VULKAN_SWIFTSHADER()
+        .enable(Feature::PermanentlySwitchToFramebufferFetchMode)
+        .enable(Feature::PreferMonolithicPipelinesOverLibraries),
+    ES3_VULKAN_SWIFTSHADER()
+        .enable(Feature::PermanentlySwitchToFramebufferFetchMode)
+        .enable(Feature::PreferMonolithicPipelinesOverLibraries)
+        .enable(Feature::SlowDownMonolithicPipelineCreationForTesting),
+    ES3_D3D11());
 
 }  // namespace angle

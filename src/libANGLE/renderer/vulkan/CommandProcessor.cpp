@@ -83,13 +83,10 @@ size_t GetBatchCountUpToSerials(std::vector<CommandBatch> &inFlightCommands,
     BitSetArrayT serialBitMaskToFinish;
     for (SerialIndex i = 0; i < serials.size(); i++)
     {
-        if (serials[i].valid())
+        ASSERT(serials[i] <= lastSubmittedSerials[i]);
+        if (serials[i] > lastCompletedSerials[i])
         {
-            ASSERT(serials[i] <= lastSubmittedSerials[i]);
-            if (serials[i] > lastCompletedSerials[i])
-            {
-                serialBitMaskToFinish.set(i);
-            }
+            serialBitMaskToFinish.set(i);
         }
     }
 
@@ -826,11 +823,18 @@ angle::Result CommandProcessor::flushOutsideRPCommands(
     ANGLE_TRY(checkAndPopPendingError(context));
 
     (*outsideRPCommands)->markClosed();
+
+    // Detach functions are only used for ring buffer allocators.
+    SecondaryCommandMemoryAllocator *allocator = (*outsideRPCommands)->detachAllocator();
+
     CommandProcessorTask task;
     task.initOutsideRenderPassProcessCommands(hasProtectedContent, *outsideRPCommands);
     queueCommand(std::move(task));
-    return mRenderer->getOutsideRenderPassCommandBufferHelper(
-        context, (*outsideRPCommands)->getCommandPool(), outsideRPCommands);
+
+    ANGLE_TRY(mRenderer->getOutsideRenderPassCommandBufferHelper(
+        context, (*outsideRPCommands)->getCommandPool(), allocator, outsideRPCommands));
+
+    return angle::Result::Continue;
 }
 
 angle::Result CommandProcessor::flushRenderPassCommands(
@@ -842,11 +846,18 @@ angle::Result CommandProcessor::flushRenderPassCommands(
     ANGLE_TRY(checkAndPopPendingError(context));
 
     (*renderPassCommands)->markClosed();
+
+    // Detach functions are only used for ring buffer allocators.
+    SecondaryCommandMemoryAllocator *allocator = (*renderPassCommands)->detachAllocator();
+
     CommandProcessorTask task;
     task.initRenderPassProcessCommands(hasProtectedContent, *renderPassCommands, &renderPass);
     queueCommand(std::move(task));
-    return mRenderer->getRenderPassCommandBufferHelper(
-        context, (*renderPassCommands)->getCommandPool(), renderPassCommands);
+
+    ANGLE_TRY(mRenderer->getRenderPassCommandBufferHelper(
+        context, (*renderPassCommands)->getCommandPool(), allocator, renderPassCommands));
+
+    return angle::Result::Continue;
 }
 
 angle::Result CommandProcessor::ensureNoPendingWork(Context *context)
@@ -990,7 +1001,8 @@ angle::Result CommandQueue::retireFinishedCommands(Context *context, size_t fini
 
     for (SerialIndex index = 0; index < lastCompletedQueueSerials.size(); index++)
     {
-        if (lastCompletedQueueSerials[index].valid())
+        // Set mLastCompletedSerials only if there is a lastCompletedQueueSerials in the index.
+        if (lastCompletedQueueSerials[index] != kZeroSerial)
         {
             mLastCompletedSerials.setQueueSerial(index, lastCompletedQueueSerials[index]);
         }
@@ -1096,7 +1108,7 @@ bool CommandQueue::allInFlightCommandsAreAfterSerials(const Serials &serials)
     for (const CommandBatch &batch : mInFlightCommands)
     {
         if (batch.queueSerial.getIndex() < serials.size() &&
-            serials[batch.queueSerial.getIndex()].valid() &&
+            serials[batch.queueSerial.getIndex()] != kZeroSerial &&
             batch.queueSerial.getSerial() <= serials[batch.queueSerial.getIndex()])
         {
             return false;

@@ -22,7 +22,7 @@
 #include "libANGLE/renderer/metal/ContextMtl.h"
 #include "libANGLE/renderer/metal/DisplayMtl.h"
 #include "libANGLE/renderer/metal/TextureMtl.h"
-#include "libANGLE/renderer/metal/mtl_glslang_mtl_utils.h"
+#include "libANGLE/renderer/metal/mtl_msl_utils.h"
 #include "libANGLE/renderer/metal/mtl_utils.h"
 #include "libANGLE/renderer/renderer_utils.h"
 
@@ -325,15 +325,14 @@ angle::Result ProgramMtl::linkImplDirect(const gl::Context *glContext,
 
     reset(contextMtl);
     ANGLE_TRY(initDefaultUniformBlocks(glContext));
-    ShaderInterfaceVariableInfoMap variableInfoMap;
 
     gl::ShaderMap<std::string> shaderSources;
     gl::ShaderMap<std::string> translatedMslShaders;
-    mtl::MSLGetShaderSource(glContext, mState, resources, &shaderSources, &variableInfoMap);
+    mtl::MSLGetShaderSource(glContext, mState, resources, &shaderSources);
 
-    ANGLE_TRY(mtl::GlslangGetMSL(glContext, mState, contextMtl->getCaps(), shaderSources,
-                                 variableInfoMap, &mMslShaderTranslateInfo, &translatedMslShaders,
-                                 mState.getExecutable().getTransformFeedbackBufferCount()));
+    ANGLE_TRY(mtl::MTLGetMSL(glContext, mState, contextMtl->getCaps(), shaderSources,
+                             &mMslShaderTranslateInfo, &translatedMslShaders,
+                             mState.getExecutable().getTransformFeedbackBufferCount()));
     mMslXfbOnlyVertexShaderInfo = mMslShaderTranslateInfo[gl::ShaderType::Vertex];
     for (gl::ShaderType shaderType : gl::kAllGLES2ShaderTypes)
     {

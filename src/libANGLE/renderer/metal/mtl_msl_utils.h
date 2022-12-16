@@ -3,14 +3,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
-// mtl_glslang_mtl_utils.h: Wrapper for Khronos's glslang compiler for MSL.
+// mtl_msl_utils.h: Utilities to manipulate MSL.
 //
 
-#ifndef mtl_glslang_mtl_utils_h
-#define mtl_glslang_mtl_utils_h
+#ifndef mtl_msl_utils_h
+#define mtl_msl_utils_h
 #include "libANGLE/Context.h"
 #include "libANGLE/renderer/ProgramImpl.h"
-#include "libANGLE/renderer/glslang_wrapper_utils.h"
 #include "libANGLE/renderer/metal/mtl_common.h"
 
 namespace rx
@@ -40,17 +39,15 @@ struct TranslatedShaderInfo
 void MSLGetShaderSource(const gl::Context *context,
                         const gl::ProgramState &programState,
                         const gl::ProgramLinkedResources &resources,
-                        gl::ShaderMap<std::string> *shaderSourcesOut,
-                        ShaderInterfaceVariableInfoMap *variableInfoMapOut);
+                        gl::ShaderMap<std::string> *shaderSourcesOut);
 
-angle::Result GlslangGetMSL(const gl::Context *glContext,
-                            const gl::ProgramState &programState,
-                            const gl::Caps &glCaps,
-                            const gl::ShaderMap<std::string> &shaderSources,
-                            const ShaderInterfaceVariableInfoMap &variableInfoMap,
-                            gl::ShaderMap<TranslatedShaderInfo> *mslShaderInfoOut,
-                            gl::ShaderMap<std::string> *mslCodeOut,
-                            size_t xfbBufferCount);
+angle::Result MTLGetMSL(const gl::Context *glContext,
+                        const gl::ProgramState &programState,
+                        const gl::Caps &glCaps,
+                        const gl::ShaderMap<std::string> &shaderSources,
+                        gl::ShaderMap<TranslatedShaderInfo> *mslShaderInfoOut,
+                        gl::ShaderMap<std::string> *mslCodeOut,
+                        size_t xfbBufferCount);
 
 // Get equivalent shadow compare mode that is used in translated msl shader.
 uint MslGetShaderShadowCompareMode(GLenum mode, GLenum func);
@@ -58,4 +55,4 @@ uint MslGetShaderShadowCompareMode(GLenum mode, GLenum func);
 }  // namespace mtl
 }  // namespace rx
 
-#endif /* mtl_glslang_mtl_utils_h */
+#endif /* mtl_msl_utils_h */

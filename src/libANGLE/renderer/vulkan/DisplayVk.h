@@ -38,6 +38,37 @@ class TextureUpload
     TextureVk *mPrevUploadedMutableTexture;
 };
 
+class UpdateDescriptorSetsBuilder final : angle::NonCopyable
+{
+  public:
+    UpdateDescriptorSetsBuilder();
+    ~UpdateDescriptorSetsBuilder();
+
+    VkDescriptorBufferInfo *allocDescriptorBufferInfos(size_t count);
+    VkDescriptorImageInfo *allocDescriptorImageInfos(size_t count);
+    VkWriteDescriptorSet *allocWriteDescriptorSets(size_t count);
+    VkBufferView *allocBufferViews(size_t count);
+
+    VkDescriptorBufferInfo &allocDescriptorBufferInfo() { return *allocDescriptorBufferInfos(1); }
+    VkDescriptorImageInfo &allocDescriptorImageInfo() { return *allocDescriptorImageInfos(1); }
+    VkWriteDescriptorSet &allocWriteDescriptorSet() { return *allocWriteDescriptorSets(1); }
+    VkBufferView &allocBufferView() { return *allocBufferViews(1); }
+
+    // Returns the number of written descriptor sets.
+    uint32_t flushDescriptorSetUpdates(VkDevice device);
+
+  private:
+    template <typename T, const T *VkWriteDescriptorSet::*pInfo>
+    T *allocDescriptorInfos(std::vector<T> *descriptorVector, size_t count);
+    template <typename T, const T *VkWriteDescriptorSet::*pInfo>
+    void growDescriptorCapacity(std::vector<T> *descriptorVector, size_t newSize);
+
+    std::vector<VkDescriptorBufferInfo> mDescriptorBufferInfos;
+    std::vector<VkDescriptorImageInfo> mDescriptorImageInfos;
+    std::vector<VkWriteDescriptorSet> mWriteDescriptorSets;
+    std::vector<VkBufferView> mBufferViews;
+};
+
 class ShareGroupVk : public ShareGroupImpl
 {
   public:
@@ -72,7 +103,17 @@ class ShareGroupVk : public ShareGroupImpl
     void addContext(ContextVk *contextVk);
     void removeContext(ContextVk *contextVk);
 
+    UpdateDescriptorSetsBuilder *getUpdateDescriptorSetsBuilder()
+    {
+        return &mUpdateDescriptorSetsBuilder;
+    }
+
     void onTextureRelease(TextureVk *textureVk);
+
+    angle::Result scheduleMonolithicPipelineCreationTask(
+        ContextVk *contextVk,
+        vk::WaitableMonolithicPipelineCreationTask *taskOut);
+    void waitForCurrentMonolithicPipelineCreationTask();
 
   private:
     // VkFramebuffer caches
@@ -92,6 +133,9 @@ class ShareGroupVk : public ShareGroupImpl
     // The list of contexts within the share group
     ContextVkSet mContexts;
 
+    // Storage for vkUpdateDescriptorSets
+    UpdateDescriptorSetsBuilder mUpdateDescriptorSetsBuilder;
+
     // The per shared group buffer pools that all buffers should sub-allocate from.
     vk::BufferPoolPointerArray mDefaultBufferPools;
 
@@ -101,6 +145,12 @@ class ShareGroupVk : public ShareGroupImpl
 
     // The system time when last pruneEmptyBuffer gets called.
     double mLastPruneTime;
+
+    // The system time when the last monolithic pipeline creation job was launched.  This is
+    // rate-limited to avoid hogging all cores and interfering with the application threads.  A
+    // single pipeline creation job is currently supported.
+    double mLastMonolithicPipelineJobTime;
+    std::shared_ptr<angle::WaitableEvent> mMonolithicPipelineCreationEvent;
 
     // Texture update manager used to flush uploaded mutable textures.
     TextureUpload mTextureUpload;

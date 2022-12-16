@@ -24,7 +24,6 @@
 #include "libANGLE/Context.h"
 #include "libANGLE/Display.h"
 #include "libANGLE/renderer/driver_utils.h"
-#include "libANGLE/renderer/glslang_wrapper_utils.h"
 #include "libANGLE/renderer/vulkan/CompilerVk.h"
 #include "libANGLE/renderer/vulkan/ContextVk.h"
 #include "libANGLE/renderer/vulkan/DisplayVk.h"
@@ -1350,14 +1349,6 @@ void RendererVk::onDestroy(vk::Context *context)
     if (isDeviceLost())
     {
         handleDeviceLost();
-    }
-    else
-    {
-        // ToDo: OneoffSubmission is doing wait on fence directly which by pass the
-        // retireFinishedCommands logic and may leave mInFlightCommands non-empty. For now call
-        // finish here to ensure everything is finished. We should chnage OneOffSUbmission code go
-        // through the code path just like others.
-        (void)finish(context, false);
     }
 
     for (std::unique_ptr<vk::BufferBlock> &block : mOrphanedBufferBlocks)
@@ -4084,13 +4075,8 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
                             mPipelineProtectedAccessFeatures.pipelineProtectedAccess == VK_TRUE &&
                                 mProtectedMemoryFeatures.protectedMemory == VK_TRUE);
 
-    // TODO(anglebug.com/7369): Remove depenency to graphicsPipelineLibraryFastLinking when async
-    // pipeline creation is added and the preferMonolithicPipelinesOverLibraries feature is
-    // appropriately set.
-    ANGLE_FEATURE_CONDITION(
-        &mFeatures, supportsGraphicsPipelineLibrary,
-        mGraphicsPipelineLibraryFeatures.graphicsPipelineLibrary == VK_TRUE &&
-            mGraphicsPipelineLibraryProperties.graphicsPipelineLibraryFastLinking);
+    ANGLE_FEATURE_CONDITION(&mFeatures, supportsGraphicsPipelineLibrary,
+                            mGraphicsPipelineLibraryFeatures.graphicsPipelineLibrary == VK_TRUE);
 
     // The following drivers are known to key the pipeline cache blobs with vertex input and
     // fragment output state, causing draw-time pipeline creation to miss the cache regardless of
@@ -4119,13 +4105,28 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // serialize it or put it in the blob cache.
     ANGLE_FEATURE_CONDITION(&mFeatures, hasEffectivePipelineCacheSerialization, !isSwiftShader);
 
+    // When the driver sets graphicsPipelineLibraryFastLinking, it means that monolithic pipelines
+    // are just a bundle of the libraries, and that there is no benefit in creating monolithic
+    // pipelines.
+    //
+    // Note: for testing purposes, this is enabled on SwiftShader despite the fact that it doesn't
+    // need it.  This should be undone once there is at least one bot that supports
+    // VK_EXT_graphics_pipeline_library without graphicsPipelineLibraryFastLinking
+    ANGLE_FEATURE_CONDITION(
+        &mFeatures, preferMonolithicPipelinesOverLibraries,
+        !mGraphicsPipelineLibraryProperties.graphicsPipelineLibraryFastLinking || isSwiftShader);
+
     // Whether the pipeline caches should merge into the global pipeline cache.  This should only be
     // enabled on platforms if:
     //
     // - VK_EXT_graphics_pipeline_library is not supported.  In that case, only the program's cache
     //   used during warm up is merged into the global cache for later monolithic pipeline creation.
+    // - VK_EXT_graphics_pipeline_library is supported, monolithic pipelines are preferred, and the
+    //   driver is able to reuse blobs from partial pipelines when creating monolithic pipelines.
     ANGLE_FEATURE_CONDITION(&mFeatures, mergeProgramPipelineCachesToGlobalCache,
-                            !mFeatures.supportsGraphicsPipelineLibrary.enabled);
+                            !mFeatures.supportsGraphicsPipelineLibrary.enabled ||
+                                (mFeatures.preferMonolithicPipelinesOverLibraries.enabled &&
+                                 libraryBlobsAreReusedByMonolithicPipelines));
 
     ANGLE_FEATURE_CONDITION(&mFeatures, enableAsyncPipelineCacheCompression, false);
 
@@ -4135,11 +4136,19 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // - VK_EXT_graphics_pipeline_library is not supported, and the program cache is not warmed up:
     //   If the pipeline cache is being warmed up at link time, the blobs corresponding to each
     //   program is individually retrieved and stored in the blob cache already.
+    // - VK_EXT_graphics_pipeline_library is supported, but monolithic pipelines are still prefered,
+    //   and the cost of syncing the large cache is acceptable.
     //
+    // Otherwise monolithic pipelines are recreated on every run.
+    const bool hasNoPipelineWarmUp = !mFeatures.supportsGraphicsPipelineLibrary.enabled &&
+                                     !mFeatures.warmUpPipelineCacheAtLink.enabled;
+    const bool canSyncLargeMonolithicCache =
+        mFeatures.supportsGraphicsPipelineLibrary.enabled &&
+        mFeatures.preferMonolithicPipelinesOverLibraries.enabled &&
+        (!IsAndroid() || mFeatures.enableAsyncPipelineCacheCompression.enabled);
     ANGLE_FEATURE_CONDITION(&mFeatures, syncMonolithicPipelinesToBlobCache,
                             mFeatures.hasEffectivePipelineCacheSerialization.enabled &&
-                                !mFeatures.supportsGraphicsPipelineLibrary.enabled &&
-                                !mFeatures.warmUpPipelineCacheAtLink.enabled);
+                                (hasNoPipelineWarmUp || canSyncLargeMonolithicCache));
 
     // On ARM, dynamic state for stencil write mask doesn't work correctly in the presence of
     // discard or alpha to coverage, if the static state provided when creating the pipeline has a
@@ -5058,33 +5067,38 @@ VkResult RendererVk::queuePresent(vk::Context *context,
 }
 
 template <typename CommandBufferHelperT, typename RecyclerT>
-angle::Result RendererVk::getCommandBufferImpl(vk::Context *context,
-                                               vk::CommandPool *commandPool,
-                                               RecyclerT *recycler,
-                                               CommandBufferHelperT **commandBufferHelperOut)
+angle::Result RendererVk::getCommandBufferImpl(
+    vk::Context *context,
+    vk::CommandPool *commandPool,
+    vk::SecondaryCommandMemoryAllocator *commandsAllocator,
+    RecyclerT *recycler,
+    CommandBufferHelperT **commandBufferHelperOut)
 {
     std::unique_lock<std::mutex> lock(mCommandBufferRecyclerMutex);
-    return recycler->getCommandBufferHelper(context, commandPool, commandBufferHelperOut);
+    return recycler->getCommandBufferHelper(context, commandPool, commandsAllocator,
+                                            commandBufferHelperOut);
 }
 
 angle::Result RendererVk::getOutsideRenderPassCommandBufferHelper(
     vk::Context *context,
     vk::CommandPool *commandPool,
+    vk::SecondaryCommandMemoryAllocator *commandsAllocator,
     vk::OutsideRenderPassCommandBufferHelper **commandBufferHelperOut)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::getOutsideRenderPassCommandBufferHelper");
-    return getCommandBufferImpl(context, commandPool, &mOutsideRenderPassCommandBufferRecycler,
-                                commandBufferHelperOut);
+    return getCommandBufferImpl(context, commandPool, commandsAllocator,
+                                &mOutsideRenderPassCommandBufferRecycler, commandBufferHelperOut);
 }
 
 angle::Result RendererVk::getRenderPassCommandBufferHelper(
     vk::Context *context,
     vk::CommandPool *commandPool,
+    vk::SecondaryCommandMemoryAllocator *commandsAllocator,
     vk::RenderPassCommandBufferHelper **commandBufferHelperOut)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::getRenderPassCommandBufferHelper");
-    return getCommandBufferImpl(context, commandPool, &mRenderPassCommandBufferRecycler,
-                                commandBufferHelperOut);
+    return getCommandBufferImpl(context, commandPool, commandsAllocator,
+                                &mRenderPassCommandBufferRecycler, commandBufferHelperOut);
 }
 
 void RendererVk::recycleOutsideRenderPassCommandBufferHelper(

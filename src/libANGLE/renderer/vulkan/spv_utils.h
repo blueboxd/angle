@@ -3,17 +3,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
-// Wrapper for Khronos glslang compiler. This file is used by Vulkan and Metal backends.
+// Utilities to map shader interface variables to Vulkan mappings, and transform the SPIR-V
+// accordingly.
 //
 
-#ifndef LIBANGLE_RENDERER_GLSLANG_WRAPPER_UTILS_H_
-#define LIBANGLE_RENDERER_GLSLANG_WRAPPER_UTILS_H_
+#ifndef LIBANGLE_RENDERER_VULKAN_SPV_UTILS_H_
+#define LIBANGLE_RENDERER_VULKAN_SPV_UTILS_H_
 
 #include <functional>
 
 #include "common/spirv/spirv_types.h"
 #include "libANGLE/renderer/ProgramImpl.h"
 #include "libANGLE/renderer/renderer_utils.h"
+#include "platform/FeaturesVk_autogen.h"
 
 namespace rx
 {
@@ -27,31 +29,25 @@ constexpr gl::ShaderMap<const char *> kDefaultUniformNames = {
     {gl::ShaderType::Compute, sh::vk::kDefaultUniformsNameCS},
 };
 
-struct GlslangProgramInterfaceInfo
+struct SpvProgramInterfaceInfo
 {
-    // Uniforms set index:
-    uint32_t uniformsAndXfbDescriptorSetIndex;
-    uint32_t currentUniformBindingIndex;
-    // Textures set index:
-    uint32_t textureDescriptorSetIndex;
-    uint32_t currentTextureBindingIndex;
-    // Other shader resources set index:
-    uint32_t shaderResourceDescriptorSetIndex;
-    uint32_t currentShaderResourceBindingIndex;
-    // ANGLE driver uniforms set index:
-    uint32_t driverUniformsDescriptorSetIndex;
+    uint32_t currentUniformBindingIndex        = 0;
+    uint32_t currentTextureBindingIndex        = 0;
+    uint32_t currentShaderResourceBindingIndex = 0;
 
-    uint32_t locationsUsedForXfbExtension;
+    uint32_t locationsUsedForXfbExtension = 0;
 };
 
-struct GlslangSourceOptions
+struct SpvSourceOptions
 {
     bool supportsTransformFeedbackExtension = false;
     bool supportsTransformFeedbackEmulation = false;
     bool enableTransformFeedbackEmulation   = false;
 };
 
-struct GlslangSpirvOptions
+SpvSourceOptions SpvCreateSourceOptions(const angle::FeaturesVk &features);
+
+struct SpvTransformOptions
 {
     gl::ShaderType shaderType           = gl::ShaderType::InvalidEnum;
     bool negativeViewportSupported      = false;
@@ -140,39 +136,39 @@ struct ShaderInterfaceVariableInfo
 bool GetImageNameWithoutIndices(std::string *name);
 
 // Get the mapped sampler name.
-std::string GlslangGetMappedSamplerName(const std::string &originalName);
-std::string GetXfbBufferName(const uint32_t bufferIndex);
+std::string SpvGetMappedSamplerName(const std::string &originalName);
+std::string SpvGetXfbBufferName(const uint32_t bufferIndex);
 
-void GlslangAssignLocations(const GlslangSourceOptions &options,
-                            const gl::ProgramExecutable &programExecutable,
-                            const gl::ProgramVaryingPacking &varyingPacking,
-                            const gl::ShaderType shaderType,
-                            const gl::ShaderType frontShaderType,
-                            bool isTransformFeedbackStage,
-                            GlslangProgramInterfaceInfo *programInterfaceInfo,
-                            UniformBindingIndexMap *uniformBindingIndexMapOut,
-                            ShaderInterfaceVariableInfoMap *variableInfoMapOut);
+void SpvAssignLocations(const SpvSourceOptions &options,
+                        const gl::ProgramExecutable &programExecutable,
+                        const gl::ProgramVaryingPacking &varyingPacking,
+                        const gl::ShaderType shaderType,
+                        const gl::ShaderType frontShaderType,
+                        bool isTransformFeedbackStage,
+                        SpvProgramInterfaceInfo *programInterfaceInfo,
+                        UniformBindingIndexMap *uniformBindingIndexMapOut,
+                        ShaderInterfaceVariableInfoMap *variableInfoMapOut);
 
-void GlslangAssignTransformFeedbackLocations(gl::ShaderType shaderType,
-                                             const gl::ProgramExecutable &programExecutable,
-                                             bool isTransformFeedbackStage,
-                                             GlslangProgramInterfaceInfo *programInterfaceInfo,
-                                             ShaderInterfaceVariableInfoMap *variableInfoMapOut);
+void SpvAssignTransformFeedbackLocations(gl::ShaderType shaderType,
+                                         const gl::ProgramExecutable &programExecutable,
+                                         bool isTransformFeedbackStage,
+                                         SpvProgramInterfaceInfo *programInterfaceInfo,
+                                         ShaderInterfaceVariableInfoMap *variableInfoMapOut);
 
-// Retrieves the compiled SPIR-V code for each shader stage, and calls |GlslangAssignLocations|.
-void GlslangGetShaderSpirvCode(const gl::Context *context,
-                               const GlslangSourceOptions &options,
-                               const gl::ProgramState &programState,
-                               const gl::ProgramLinkedResources &resources,
-                               GlslangProgramInterfaceInfo *programInterfaceInfo,
-                               gl::ShaderMap<const angle::spirv::Blob *> *spirvBlobsOut,
-                               ShaderInterfaceVariableInfoMap *variableInfoMapOut);
+// Retrieves the compiled SPIR-V code for each shader stage, and calls |SpvAssignLocations|.
+void SpvGetShaderSpirvCode(const gl::Context *context,
+                           const SpvSourceOptions &options,
+                           const gl::ProgramState &programState,
+                           const gl::ProgramLinkedResources &resources,
+                           SpvProgramInterfaceInfo *programInterfaceInfo,
+                           gl::ShaderMap<const angle::spirv::Blob *> *spirvBlobsOut,
+                           ShaderInterfaceVariableInfoMap *variableInfoMapOut);
 
-angle::Result GlslangTransformSpirvCode(const GlslangSpirvOptions &options,
-                                        const ShaderInterfaceVariableInfoMap &variableInfoMap,
-                                        const angle::spirv::Blob &initialSpirvBlob,
-                                        angle::spirv::Blob *spirvBlobOut);
+angle::Result SpvTransformSpirvCode(const SpvTransformOptions &options,
+                                    const ShaderInterfaceVariableInfoMap &variableInfoMap,
+                                    const angle::spirv::Blob &initialSpirvBlob,
+                                    angle::spirv::Blob *spirvBlobOut);
 
 }  // namespace rx
 
-#endif  // LIBANGLE_RENDERER_GLSLANG_WRAPPER_UTILS_H_
+#endif  // LIBANGLE_RENDERER_VULKAN_SPV_UTILS_H_
