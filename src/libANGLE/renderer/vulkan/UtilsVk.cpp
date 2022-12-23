@@ -1059,17 +1059,15 @@ void UpdateDepthStencilAccess(ContextVk *contextVk,
     {
         // Explicitly mark a depth write because we are modifying the depth buffer.
         renderPassCommands->onDepthAccess(vk::ResourceAccess::Write);
+        // Because we may have changed the depth access mode, update read only depth mode.
+        framebuffer->updateRenderPassDepthReadOnlyMode(contextVk, renderPassCommands);
     }
     if (stencilWrite)
     {
         // Explicitly mark a stencil write because we are modifying the stencil buffer.
         renderPassCommands->onStencilAccess(vk::ResourceAccess::Write);
-    }
-    if (depthWrite || stencilWrite)
-    {
-        // Because we may have changed the depth stencil access mode, update read only depth mode
-        // now.
-        framebuffer->updateRenderPassReadOnlyDepthMode(contextVk, renderPassCommands);
+        // Because we may have changed the stencil access mode, update read only stencil mode.
+        framebuffer->updateRenderPassStencilReadOnlyMode(contextVk, renderPassCommands);
     }
 }
 
@@ -2168,9 +2166,8 @@ angle::Result UtilsVk::startRenderPass(ContextVk *contextVk,
     vk::PackedClearValuesArray clearValues;
     clearValues.store(vk::kAttachmentIndexZero, VK_IMAGE_ASPECT_COLOR_BIT, {});
 
-    renderPassAttachmentOps.initWithLoadStore(vk::kAttachmentIndexZero,
-                                              vk::ImageLayout::ColorAttachment,
-                                              vk::ImageLayout::ColorAttachment);
+    renderPassAttachmentOps.initWithLoadStore(vk::kAttachmentIndexZero, vk::ImageLayout::ColorWrite,
+                                              vk::ImageLayout::ColorWrite);
 
     ANGLE_TRY(contextVk->beginNewRenderPass(
         framebuffer, renderArea, renderPassDesc, renderPassAttachmentOps,
@@ -2391,8 +2388,7 @@ angle::Result UtilsVk::clearImage(ContextVk *contextVk,
     UpdateColorAccess(contextVk, MakeColorBufferMask(0), MakeColorBufferMask(0));
 
     contextVk->onImageRenderPassWrite(dst->toGLLevel(params.dstMip), params.dstLayer, 1,
-                                      VK_IMAGE_ASPECT_COLOR_BIT, vk::ImageLayout::ColorAttachment,
-                                      dst);
+                                      VK_IMAGE_ASPECT_COLOR_BIT, vk::ImageLayout::ColorWrite, dst);
 
     const uint32_t flags = GetImageClearFlags(dstActualFormat, 0, false);
 
@@ -2619,17 +2615,17 @@ angle::Result UtilsVk::blitResolveImpl(ContextVk *contextVk,
     if (blitColor)
     {
         imageInfos[0].imageView   = srcColorView->getHandle();
-        imageInfos[0].imageLayout = src->getCurrentLayout();
+        imageInfos[0].imageLayout = src->getCurrentLayout(contextVk);
     }
     if (blitDepth)
     {
         imageInfos[0].imageView   = srcDepthView->getHandle();
-        imageInfos[0].imageLayout = src->getCurrentLayout();
+        imageInfos[0].imageLayout = src->getCurrentLayout(contextVk);
     }
     if (blitStencil)
     {
         imageInfos[1].imageView   = srcStencilView->getHandle();
-        imageInfos[1].imageLayout = src->getCurrentLayout();
+        imageInfos[1].imageLayout = src->getCurrentLayout(contextVk);
     }
 
     VkDescriptorImageInfo samplerInfo = {};
@@ -2821,7 +2817,7 @@ angle::Result UtilsVk::stencilBlitResolveNoShaderExport(ContextVk *contextVk,
     // Blit/resolve stencil into the buffer.
     VkDescriptorImageInfo imageInfo = {};
     imageInfo.imageView             = srcStencilView->getHandle();
-    imageInfo.imageLayout           = src->getCurrentLayout();
+    imageInfo.imageLayout           = src->getCurrentLayout(contextVk);
 
     VkDescriptorBufferInfo bufferInfo = {};
     bufferInfo.buffer                 = blitBuffer.get().getBuffer().getHandle();
@@ -2893,7 +2889,7 @@ angle::Result UtilsVk::stencilBlitResolveNoShaderExport(ContextVk *contextVk,
 
     commandBuffer->copyBufferToImage(blitBuffer.get().getBuffer().getHandle(),
                                      depthStencilImage->getImage(),
-                                     depthStencilImage->getCurrentLayout(), 1, &region);
+                                     depthStencilImage->getCurrentLayout(contextVk), 1, &region);
 
     return angle::Result::Continue;
 }
@@ -3039,11 +3035,11 @@ angle::Result UtilsVk::copyImage(ContextVk *contextVk,
     contextVk->onImageRenderPassRead(VK_IMAGE_ASPECT_COLOR_BIT,
                                      vk::ImageLayout::FragmentShaderReadOnly, src);
     contextVk->onImageRenderPassWrite(params.dstMip, params.dstLayer, 1, VK_IMAGE_ASPECT_COLOR_BIT,
-                                      vk::ImageLayout::ColorAttachment, dst);
+                                      vk::ImageLayout::ColorWrite, dst);
 
     VkDescriptorImageInfo imageInfo = {};
     imageInfo.imageView             = srcView->getHandle();
-    imageInfo.imageLayout           = src->getCurrentLayout();
+    imageInfo.imageLayout           = src->getCurrentLayout(contextVk);
 
     VkWriteDescriptorSet writeInfo = {};
     writeInfo.sType                = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -3180,7 +3176,7 @@ angle::Result UtilsVk::copyImageBits(ContextVk *contextVk,
     srcRegion.imageExtent.height              = params.copyExtents[1];
     srcRegion.imageExtent.depth               = isSrc3D ? params.copyExtents[2] : 1;
 
-    commandBuffer->copyImageToBuffer(src->getImage(), src->getCurrentLayout(),
+    commandBuffer->copyImageToBuffer(src->getImage(), src->getCurrentLayout(contextVk),
                                      srcBuffer.get().getBuffer().getHandle(), 1, &srcRegion);
 
     // Add a barrier prior to dispatch call.
@@ -3306,7 +3302,7 @@ angle::Result UtilsVk::copyImageBits(ContextVk *contextVk,
     dstRegion.imageExtent.depth               = isDst3D ? params.copyExtents[2] : 1;
 
     commandBuffer->copyBufferToImage(dstBuffer.get().getBuffer().getHandle(), dst->getImage(),
-                                     dst->getCurrentLayout(), 1, &dstRegion);
+                                     dst->getCurrentLayout(contextVk), 1, &dstRegion);
 
     return angle::Result::Continue;
 }
@@ -3491,12 +3487,12 @@ angle::Result UtilsVk::generateMipmap(ContextVk *contextVk,
     for (uint32_t level = 0; level < kGenerateMipmapMaxLevels; ++level)
     {
         destImageInfos[level].imageView   = destLevelViews[level]->getHandle();
-        destImageInfos[level].imageLayout = dst->getCurrentLayout();
+        destImageInfos[level].imageLayout = dst->getCurrentLayout(contextVk);
     }
 
     VkDescriptorImageInfo srcImageInfo = {};
     srcImageInfo.imageView             = srcLevelZeroView->getHandle();
-    srcImageInfo.imageLayout           = src->getCurrentLayout();
+    srcImageInfo.imageLayout           = src->getCurrentLayout(contextVk);
     srcImageInfo.sampler               = sampler.getHandle();
 
     VkWriteDescriptorSet writeInfos[2] = {};
@@ -3883,16 +3879,16 @@ angle::Result UtilsVk::drawOverlay(ContextVk *contextVk,
 
     UpdateColorAccess(contextVk, MakeColorBufferMask(0), MakeColorBufferMask(0));
 
-    commandBufferHelper->retainReadOnlyResource(textWidgetsBuffer);
-    commandBufferHelper->retainReadOnlyResource(graphWidgetsBuffer);
+    commandBufferHelper->retainResource(textWidgetsBuffer);
+    commandBufferHelper->retainResource(graphWidgetsBuffer);
     contextVk->onImageRenderPassRead(VK_IMAGE_ASPECT_COLOR_BIT,
                                      vk::ImageLayout::FragmentShaderReadOnly, font);
     contextVk->onImageRenderPassWrite(gl::LevelIndex(0), 0, 1, VK_IMAGE_ASPECT_COLOR_BIT,
-                                      vk::ImageLayout::ColorAttachment, dst);
+                                      vk::ImageLayout::ColorWrite, dst);
 
     VkDescriptorImageInfo imageInfo = {};
     imageInfo.imageView             = fontView->getHandle();
-    imageInfo.imageLayout           = font->getCurrentLayout();
+    imageInfo.imageLayout           = font->getCurrentLayout(contextVk);
 
     VkDescriptorBufferInfo bufferInfos[2] = {};
     bufferInfos[0].buffer                 = textWidgetsBuffer->getBuffer().getHandle();

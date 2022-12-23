@@ -571,6 +571,14 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessagesWithoutStoreOpNone[] 
         "",
     },
     {
+        "SYNC-HAZARD-WRITE-AFTER-READ",
+        "stencil aspect during store with stencilStoreOp VK_ATTACHMENT_STORE_OP_STORE. Access info "
+        "(usage: SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, prior_usage: "
+        "SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, read_barriers: VK_PIPELINE_STAGE_2_NONE, "
+        "command: vkCmdDraw",
+        "",
+    },
+    {
         "SYNC-HAZARD-READ-AFTER-WRITE",
         "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: "
         "VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, binding ",
@@ -1251,8 +1259,9 @@ ANGLE_INLINE gl::ShadingRate GetShadingRateFromVkExtent(const VkExtent2D &extent
     return gl::ShadingRate::_1x1;
 }
 
-// Check for remaining memory allocations at the end of the renderer object.
-void checkForRemainingMemoryAllocations(RendererVk *renderer)
+// Check for currently allocated memory. It is used at the end of the renderer object and when there
+// is an allocation error (from ANGLE_VK_TRY()).
+void checkForCurrentMemoryAllocations(RendererVk *renderer)
 {
     if (kDebugMemoryAllocationLogs)
     {
@@ -1260,13 +1269,123 @@ void checkForRemainingMemoryAllocations(RendererVk *renderer)
         {
             if (renderer->getActiveMemoryAllocationsSize(i) != 0)
             {
-                INFO() << "Remaining allocated size for memory allocation type ("
+                INFO() << "Currently allocated size for memory allocation type ("
                        << vk::kMemoryAllocationTypeMessage[i]
                        << "): " << renderer->getActiveMemoryAllocationsSize(i)
                        << " | Count: " << renderer->getActiveMemoryAllocationsCount(i);
             }
         }
     }
+    else if (kTrackMemoryAllocation)
+    {
+        for (uint32_t i = 0; i < vk::kMemoryAllocationTypeCount; i++)
+        {
+            if (renderer->getActiveMemoryAllocationsSize(i) != 0)
+            {
+                INFO() << "Currently allocated size for memory allocation type ("
+                       << vk::kMemoryAllocationTypeMessage[i]
+                       << "): " << renderer->getActiveMemoryAllocationsSize(i);
+            }
+        }
+    }
+}
+
+// In case of an allocation error, log pending memory allocation if the size in non-zero.
+void logPendingMemoryAllocation(vk::MemoryAllocationType allocInfo, VkDeviceSize allocSize)
+{
+    if (!kTrackMemoryAllocation)
+    {
+        return;
+    }
+
+    if (allocSize != 0)
+    {
+        WARN() << "Pending allocation size for memory allocation type ("
+               << vk::kMemoryAllocationTypeMessage[ToUnderlying(allocInfo)] << "): " << allocSize;
+    }
+}
+
+// Output memory log stream based on level of severity.
+void outputMemoryLogStream(std::stringstream &outStream, vk::MemoryLogSeverity severity)
+{
+    if (!kTrackMemoryAllocation)
+    {
+        return;
+    }
+
+    switch (severity)
+    {
+        case vk::MemoryLogSeverity::INFO:
+            INFO() << outStream.str();
+            break;
+        case vk::MemoryLogSeverity::WARN:
+            WARN() << outStream.str();
+            break;
+        default:
+            UNREACHABLE();
+            break;
+    }
+}
+
+// Log memory heap stats, including budget and usage.
+void logMemoryHeapStats(RendererVk *renderer, vk::MemoryLogSeverity severity)
+{
+    if (!kTrackMemoryAllocation)
+    {
+        return;
+    }
+
+    // Log stream for the heap information.
+    std::stringstream outStream;
+
+    // VkPhysicalDeviceMemoryProperties2 enables the use of memory budget properties if supported.
+    VkPhysicalDeviceMemoryProperties2KHR memoryProperties;
+    memoryProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2_KHR;
+    memoryProperties.pNext = nullptr;
+
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT memoryBudgetProperties;
+    memoryBudgetProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    memoryBudgetProperties.pNext = nullptr;
+
+    if (renderer->getFeatures().supportsMemoryBudget.enabled)
+    {
+        vk::AddToPNextChain(&memoryProperties, &memoryBudgetProperties);
+    }
+
+    vkGetPhysicalDeviceMemoryProperties2KHR(renderer->getPhysicalDevice(), &memoryProperties);
+
+    // Add memory heap information to the stream.
+    outStream << "Memory heap info" << std::endl;
+
+    outStream << "* Available memory heaps:" << std::endl;
+    for (uint32_t i = 0; i < memoryProperties.memoryProperties.memoryHeapCount; i++)
+    {
+        outStream << i << " | Size: " << memoryProperties.memoryProperties.memoryHeaps[i].size
+                  << " | Flags: " << memoryProperties.memoryProperties.memoryHeaps[i].flags
+                  << std::endl;
+    }
+
+    outStream << "* Available memory types:" << std::endl;
+    for (uint32_t i = 0; i < memoryProperties.memoryProperties.memoryTypeCount; i++)
+    {
+        outStream << i
+                  << " | Heap index: " << memoryProperties.memoryProperties.memoryTypes[i].heapIndex
+                  << " | Property flags: "
+                  << memoryProperties.memoryProperties.memoryTypes[i].propertyFlags << std::endl;
+    }
+
+    if (renderer->getFeatures().supportsMemoryBudget.enabled)
+    {
+        outStream << "* Available memory budget and usage:" << std::endl;
+        for (uint32_t i = 0; i < VK_MAX_MEMORY_HEAPS; i++)
+        {
+            outStream << i << " | Heap budget: " << memoryBudgetProperties.heapBudget[i]
+                      << " | Heap usage: " << memoryBudgetProperties.heapUsage[i] << std::endl;
+        }
+    }
+
+    // Output the log stream based on the level of severity.
+    outputMemoryLogStream(outStream, severity);
 }
 }  // namespace
 
@@ -1323,6 +1442,8 @@ RendererVk::RendererVk()
         mActiveMemoryAllocationsSize[i]  = 0;
         mActiveMemoryAllocationsCount[i] = 0;
     }
+
+    resetPendingMemoryAlloc();
 }
 
 RendererVk::~RendererVk()
@@ -1393,7 +1514,10 @@ void RendererVk::onDestroy(vk::Context *context)
 
     // When the renderer is being destroyed, it is possible to check if all the allocated memory
     // throughout the execution has been freed.
-    checkForRemainingMemoryAllocations(this);
+    if (kDebugMemoryAllocationLogs)
+    {
+        checkForCurrentMemoryAllocations(this);
+    }
 
     if (mDevice)
     {
@@ -2463,6 +2587,12 @@ angle::Result RendererVk::initializeDevice(DisplayVk *displayVk, uint32_t queueF
         hasGetMemoryRequirements2KHR = true;
     }
 
+    // Enable VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, if supported
+    if (ExtensionFound(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, deviceExtensionNames))
+    {
+        mEnabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+    }
+
     if (ExtensionFound(VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME, deviceExtensionNames))
     {
         mEnabledDeviceExtensions.push_back(VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME);
@@ -3089,6 +3219,12 @@ angle::Result RendererVk::initializeDevice(DisplayVk *displayVk, uint32_t queueF
     }
     mSupportedVulkanPipelineStageMask = ~unsupportedStages;
 
+    // Log the memory heap stats when the device has been initialized (when debugging).
+    if (kDebugMemoryAllocationLogs)
+    {
+        logMemoryHeapStats(this, vk::MemoryLogSeverity::INFO);
+    }
+
     return angle::Result::Continue;
 }
 
@@ -3552,6 +3688,13 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsHostQueryReset,
                             mHostQueryResetFeatures.hostQueryReset == VK_TRUE);
 
+    // VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL and
+    // VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL are introduced by
+    // VK_KHR_maintenance2 and promoted to Vulkan 1.1.  For simplicity, this feature is only enabled
+    // on Vulkan 1.1.
+    ANGLE_FEATURE_CONDITION(&mFeatures, supportsMixedReadWriteDepthStencilLayouts,
+                            mPhysicalDeviceProperties.apiVersion >= VK_API_VERSION_1_1);
+
     // VK_EXT_pipeline_creation_feedback is promoted to core in Vulkan 1.3.
     ANGLE_FEATURE_CONDITION(
         &mFeatures, supportsPipelineCreationFeedback,
@@ -3925,6 +4068,9 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // Whether non-conformant configurations and extensions should be exposed.
     ANGLE_FEATURE_CONDITION(&mFeatures, exposeNonConformantExtensionsAndVersions,
                             kExposeNonConformantExtensionsAndVersions);
+
+    // Memory budget extension is disabled for Swiftshader due to lack of support.
+    ANGLE_FEATURE_CONDITION(&mFeatures, supportsMemoryBudget, !isSwiftShader);
 
     // Disabled by default. Only enable it for experimental purpose, as this will cause various
     // tests to fail.
@@ -4673,11 +4819,6 @@ void RendererVk::cleanupGarbage()
                                                        std::memory_order_release);
 }
 
-void RendererVk::cleanupCompletedCommandsGarbage()
-{
-    cleanupGarbage();
-}
-
 void RendererVk::cleanupPendingSubmissionGarbage()
 {
     std::unique_lock<std::mutex> lock(mGarbageMutex);
@@ -4859,7 +5000,6 @@ angle::Result RendererVk::submitCommands(
     std::vector<VkSemaphore> &&waitSemaphores,
     std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks,
     const vk::Semaphore *signalSemaphore,
-    vk::GarbageList &&currentGarbage,
     vk::SecondaryCommandPools *commandPools,
     const QueueSerial &submitQueueSerial)
 {
@@ -4877,15 +5017,13 @@ angle::Result RendererVk::submitCommands(
     {
         ANGLE_TRY(mCommandProcessor.submitCommands(
             context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
-            signalVkSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
-            commandPools, submitQueueSerial));
+            signalVkSemaphore, std::move(commandBuffersToReset), commandPools, submitQueueSerial));
     }
     else
     {
         ANGLE_TRY(mCommandQueue.submitCommands(
             context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
-            signalVkSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
-            commandPools, submitQueueSerial));
+            signalVkSemaphore, std::move(commandBuffersToReset), commandPools, submitQueueSerial));
     }
 
     waitSemaphores.clear();
@@ -5166,12 +5304,16 @@ void RendererVk::onMemoryAllocImpl(vk::MemoryAllocationType allocType,
         INFO() << "Memory allocation: (id " << memAllocLogInfo.id << ") for object "
                << memAllocLogInfo.handle << " | Size: " << memAllocLogInfo.size
                << " | Type: " << vk::kMemoryAllocationTypeMessage[allocTypeIndex];
+
+        resetPendingMemoryAlloc();
     }
     else if (kTrackMemoryAllocation)
     {
         // Add the new allocation size to the allocation counter.
         uint32_t allocTypeIndex = ToUnderlying(allocType);
         mActiveMemoryAllocationsSize[allocTypeIndex] += size;
+
+        resetPendingMemoryAlloc();
     }
 }
 
@@ -5221,28 +5363,53 @@ void RendererVk::onMemoryDeallocImpl(vk::MemoryAllocationType allocType,
     }
 }
 
+void RendererVk::logMemoryStatsOnError()
+{
+    checkForCurrentMemoryAllocations(this);
+    logPendingMemoryAllocation(mPendingMemoryAllocationType, mPendingMemoryAllocationSize);
+    logMemoryHeapStats(this, vk::MemoryLogSeverity::WARN);
+}
+
+void RendererVk::setPendingMemoryAlloc(vk::MemoryAllocationType allocType, VkDeviceSize size)
+{
+    if (!kTrackMemoryAllocation)
+    {
+        return;
+    }
+
+    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
+    mPendingMemoryAllocationType = allocType;
+    mPendingMemoryAllocationSize = size;
+}
+void RendererVk::resetPendingMemoryAlloc()
+{
+    if (!kTrackMemoryAllocation)
+    {
+        return;
+    }
+
+    mPendingMemoryAllocationType = vk::MemoryAllocationType::Unspecified;
+    mPendingMemoryAllocationSize = 0;
+}
+
 VkDeviceSize RendererVk::getActiveMemoryAllocationsSize(uint32_t allocTypeIndex)
 {
-    if (kDebugMemoryAllocationLogs)
-    {
-        return mActiveMemoryAllocationsSize[allocTypeIndex];
-    }
-    else
+    if (!kTrackMemoryAllocation)
     {
         return 0;
     }
+
+    return mActiveMemoryAllocationsSize[allocTypeIndex];
 }
 
 VkDeviceSize RendererVk::getActiveMemoryAllocationsCount(uint32_t allocTypeIndex)
 {
-    if (kDebugMemoryAllocationLogs)
-    {
-        return mActiveMemoryAllocationsCount[allocTypeIndex];
-    }
-    else
+    if (!kDebugMemoryAllocationLogs)
     {
         return 0;
     }
+
+    return mActiveMemoryAllocationsCount[allocTypeIndex];
 }
 
 angle::Result RendererVk::getFormatDescriptorCountForVkFormat(ContextVk *contextVk,

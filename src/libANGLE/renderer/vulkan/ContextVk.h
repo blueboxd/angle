@@ -600,6 +600,16 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
         return hasStartedRenderPass() && mRenderPassCommands->getQueueSerial() == queueSerial;
     }
 
+    bool isRenderPassStartedAndUsesBuffer(const vk::BufferHelper &buffer) const
+    {
+        return mRenderPassCommands->started() && mRenderPassCommands->usesBuffer(buffer);
+    }
+
+    bool isRenderPassStartedAndUsesBufferForWrite(const vk::BufferHelper &buffer) const
+    {
+        return mRenderPassCommands->started() && mRenderPassCommands->usesBufferForWrite(buffer);
+    }
+
     bool hasStartedRenderPassWithCommands() const
     {
         return hasStartedRenderPass() && !mRenderPassCommands->getCommandBuffer().empty();
@@ -734,10 +744,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     }
 
     std::ostringstream &getPipelineCacheGraphStream() { return mPipelineCacheGraph; }
-
-    // Add resource to the resource use list tracking the last CommandBuffer (i.e,
-    // RenderpassCommands if exists, or outsideRenderPassCommands)
-    void retainResource(vk::Resource *resource);
 
     // Whether VK_EXT_pipeline_robustness should be used to enable robust buffer access in the
     // pipeline.
@@ -1254,8 +1260,9 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
         DirtyBits dirtyBitMask,
         UpdateDepthFeedbackLoopReason depthReason,
         UpdateDepthFeedbackLoopReason stencilReason);
-    bool shouldSwitchToReadOnlyDepthFeedbackLoopMode(gl::Texture *texture,
-                                                     gl::Command command) const;
+    bool shouldSwitchToReadOnlyDepthStencilFeedbackLoopMode(gl::Texture *texture,
+                                                            gl::Command command,
+                                                            bool isStencilTexture) const;
 
     angle::Result onResourceAccess(const vk::CommandBufferAccess &access);
     angle::Result flushCommandBuffersIfNecessary(const vk::CommandBufferAccess &access);
@@ -1442,6 +1449,9 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // We use a single pool for recording commands. We also keep a free list for pool recycling.
     vk::SecondaryCommandPools mCommandPools;
 
+    // The garbage list for single context use objects. The list will be GPU tracked by next
+    // submission queueSerial. Note: Resource based shared object should always be added to
+    // renderer's mSharedGarbage.
     vk::GarbageList mCurrentGarbage;
 
     RenderPassCache mRenderPassCache;
@@ -1605,18 +1615,6 @@ ANGLE_INLINE angle::Result ContextVk::onVertexAttributeChange(size_t attribIndex
         divisor > mRenderer->getMaxVertexAttribDivisor() ? 1 : divisor, format, compressed,
         relativeOffset);
     return onVertexBufferChange(vertexBuffer);
-}
-
-ANGLE_INLINE void ContextVk::retainResource(vk::Resource *resource)
-{
-    if (hasStartedRenderPass())
-    {
-        mRenderPassCommands->retainResource(resource);
-    }
-    else
-    {
-        mOutsideRenderPassCommands->retainResource(resource);
-    }
 }
 
 ANGLE_INLINE bool ContextVk::hasUnsubmittedUse(const vk::ResourceUse &use) const

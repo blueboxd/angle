@@ -55,6 +55,7 @@
 #include "compiler/translator/tree_util/BuiltIn.h"
 #include "compiler/translator/tree_util/IntermNodePatternMatcher.h"
 #include "compiler/translator/tree_util/ReplaceShadowingVariables.h"
+#include "compiler/translator/tree_util/ReplaceVariable.h"
 #include "compiler/translator/util.h"
 
 // #define ANGLE_FUZZER_CORPUS_OUTPUT_DIR "corpus/"
@@ -841,13 +842,19 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
         return false;
     }
 
-    if (parseContext.isExtensionEnabled(TExtension::EXT_clip_cull_distance) ||
+    if (parseContext.isExtensionEnabled(TExtension::ANGLE_clip_cull_distance) ||
+        parseContext.isExtensionEnabled(TExtension::EXT_clip_cull_distance) ||
         parseContext.isExtensionEnabled(TExtension::APPLE_clip_distance))
     {
-        if (!ValidateClipCullDistance(
-                root, &mDiagnostics, mResources.MaxCombinedClipAndCullDistances,
-                compileOptions.limitSimultaneousClipAndCullDistanceUsage, &mClipDistanceSize,
-                &mCullDistanceSize, &mClipDistanceMaxIndex, &mCullDistanceMaxIndex))
+        if (!ValidateClipCullDistance(root, &mDiagnostics, mResources.MaxCullDistances,
+                                      mResources.MaxCombinedClipAndCullDistances,
+                                      &mClipDistanceSize, &mCullDistanceSize,
+                                      &mClipDistanceMaxIndex, &mCullDistanceMaxIndex))
+        {
+            return false;
+        }
+
+        if (!resizeClipAndCullDistanceBuiltins(root))
         {
             return false;
         }
@@ -1161,6 +1168,41 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
     return true;
 }
 
+bool TCompiler::resizeClipAndCullDistanceBuiltins(TIntermBlock *root)
+{
+    auto resizeVariable = [=](const ImmutableString &name, int maxIndex, int maxSize) {
+        // Skip if the variable is not used or implicitly has the maximum size
+        if (maxIndex == -1 || maxIndex + 1 == maxSize)
+            return true;
+        ASSERT(maxIndex >= 0 && maxIndex + 1 < maxSize);
+        const TVariable *builtInVar =
+            static_cast<const TVariable *>(mSymbolTable.findBuiltIn(name, getShaderVersion()));
+        TType *resizedType = new TType(builtInVar->getType());
+        resizedType->setArraySize(0, maxIndex + 1);
+
+        TVariable *resizedVar =
+            new TVariable(&mSymbolTable, name, resizedType, SymbolType::BuiltIn);
+
+        return ReplaceVariable(this, root, builtInVar, resizedVar);
+    };
+
+    if (mClipDistanceSize == 0 &&
+        !resizeVariable(ImmutableString("gl_ClipDistance"), mClipDistanceMaxIndex,
+                        mResources.MaxClipDistances))
+    {
+        return false;
+    }
+
+    if (mCullDistanceSize == 0 &&
+        !resizeVariable(ImmutableString("gl_CullDistance"), mCullDistanceMaxIndex,
+                        mResources.MaxCullDistances))
+    {
+        return false;
+    }
+
+    return true;
+}
+
 bool TCompiler::postParseChecks(const TParseContext &parseContext)
 {
     std::stringstream errorMessage;
@@ -1343,6 +1385,7 @@ void TCompiler::setResourceString()
         << ":EXT_texture_buffer:" << mResources.EXT_texture_buffer
         << ":OES_sample_variables:" << mResources.OES_sample_variables
         << ":EXT_clip_cull_distance:" << mResources.EXT_clip_cull_distance
+        << ":ANGLE_clip_cull_distance:" << mResources.ANGLE_clip_cull_distance
         << ":MinProgramTextureGatherOffset:" << mResources.MinProgramTextureGatherOffset
         << ":MaxProgramTextureGatherOffset:" << mResources.MaxProgramTextureGatherOffset
         << ":MaxImageUnits:" << mResources.MaxImageUnits

@@ -56,6 +56,13 @@ struct FeaturesVk : FeatureSetBase
         "Enable uploading the previously defined mutable mipmap texture.", &members,
         "https://anglebug.com/7308"};
 
+    FeatureInfo supportsMemoryBudget = {
+        "supportsMemoryBudget",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_EXT_memory_budget extension.",
+        &members,
+    };
+
     FeatureInfo supportsRenderpass2 = {
         "supportsRenderpass2",
         FeatureCategory::VulkanFeatures,
@@ -798,6 +805,12 @@ struct FeaturesVk : FeatureSetBase
         "supportsPipelineProtectedAccess", FeatureCategory::VulkanFeatures,
         "VkDevice supports the VK_EXT_pipeline_protected_access extension", &members,
         "https://anglebug.com/7714"};
+
+    FeatureInfo supportsMixedReadWriteDepthStencilLayouts = {
+        "supportsMixedReadWriteDepthStencilLayouts", FeatureCategory::VulkanFeatures,
+        "VkDevice supports the mixed read and write depth/stencil layouts introduced by "
+        "VK_KHR_maintenance2",
+        &members, "https://anglebug.com/7899"};
 
     FeatureInfo preferSubmitOnAnySamplesPassedQueryEnd = {
         "preferSubmitOnAnySamplesPassedQueryEnd", FeatureCategory::VulkanWorkarounds,

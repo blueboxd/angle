@@ -30,8 +30,8 @@ class ValidateClipCullDistanceTraverser : public TIntermTraverser
   public:
     ValidateClipCullDistanceTraverser();
     void validate(TDiagnostics *diagnostics,
+                  const unsigned int maxCullDistances,
                   const unsigned int maxCombinedClipAndCullDistances,
-                  const bool limitSimultaneousClipAndCullDistanceUsage,
                   uint8_t *clipDistanceSizeOut,
                   uint8_t *cullDistanceSizeOut,
                   int8_t *clipDistanceMaxIndexOut,
@@ -47,6 +47,9 @@ class ValidateClipCullDistanceTraverser : public TIntermTraverser
     int8_t mMaxClipDistanceIndex;
     int8_t mMaxCullDistanceIndex;
 
+    bool mHasNonConstClipDistanceIndex;
+    bool mHasNonConstCullDistanceIndex;
+
     const TIntermSymbol *mClipDistance;
     const TIntermSymbol *mCullDistance;
 };
@@ -57,6 +60,8 @@ ValidateClipCullDistanceTraverser::ValidateClipCullDistanceTraverser()
       mCullDistanceSize(0),
       mMaxClipDistanceIndex(-1),
       mMaxCullDistanceIndex(-1),
+      mHasNonConstClipDistanceIndex(false),
+      mHasNonConstCullDistanceIndex(false),
       mClipDistance(nullptr),
       mCullDistance(nullptr)
 {}
@@ -157,20 +162,55 @@ bool ValidateClipCullDistanceTraverser::visitBinary(Visit visit, TIntermBinary *
             }
         }
     }
+    else
+    {
+        if (varName == "gl_ClipDistance")
+        {
+            mHasNonConstClipDistanceIndex = true;
+            if (!mClipDistance)
+            {
+                mClipDistance = left;
+            }
+        }
+        else
+        {
+            ASSERT(varName == "gl_CullDistance");
+            mHasNonConstCullDistanceIndex = true;
+            if (!mCullDistance)
+            {
+                mCullDistance = left;
+            }
+        }
+    }
 
     return true;
 }
 
-void ValidateClipCullDistanceTraverser::validate(
-    TDiagnostics *diagnostics,
-    const unsigned int maxCombinedClipAndCullDistances,
-    const bool limitSimultaneousClipAndCullDistanceUsage,
-    uint8_t *clipDistanceSizeOut,
-    uint8_t *cullDistanceSizeOut,
-    int8_t *clipDistanceMaxIndexOut,
-    int8_t *cullDistanceMaxIndexOut)
+void ValidateClipCullDistanceTraverser::validate(TDiagnostics *diagnostics,
+                                                 const unsigned int maxCullDistances,
+                                                 const unsigned int maxCombinedClipAndCullDistances,
+                                                 uint8_t *clipDistanceSizeOut,
+                                                 uint8_t *cullDistanceSizeOut,
+                                                 int8_t *clipDistanceMaxIndexOut,
+                                                 int8_t *cullDistanceMaxIndexOut)
 {
     ASSERT(diagnostics);
+
+    if (mClipDistanceSize == 0 && mHasNonConstClipDistanceIndex)
+    {
+        error(*mClipDistance,
+              "The array must be sized by the shader either redeclaring it with a size or "
+              "indexing it only with constant integral expressions",
+              diagnostics);
+    }
+
+    if (mCullDistanceSize == 0 && mHasNonConstCullDistanceIndex)
+    {
+        error(*mCullDistance,
+              "The array must be sized by the shader either redeclaring it with a size or "
+              "indexing it only with constant integral expressions",
+              diagnostics);
+    }
 
     unsigned int enabledClipDistances =
         (mClipDistanceSize > 0 ? mClipDistanceSize
@@ -182,6 +222,11 @@ void ValidateClipCullDistanceTraverser::validate(
         (enabledClipDistances > 0 && enabledCullDistances > 0
              ? enabledClipDistances + enabledCullDistances
              : 0);
+
+    if (enabledCullDistances > 0 && maxCullDistances == 0)
+    {
+        error(*mCullDistance, "Cull distance functionality is not available", diagnostics);
+    }
 
     if (combinedClipAndCullDistances > maxCombinedClipAndCullDistances)
     {
@@ -195,16 +240,6 @@ void ValidateClipCullDistanceTraverser::validate(
         error(*greaterSymbol, strstr.str().c_str(), diagnostics);
     }
 
-    if (limitSimultaneousClipAndCullDistanceUsage &&
-        (enabledClipDistances && enabledCullDistances) &&
-        (enabledClipDistances > 4 || enabledCullDistances > 4))
-    {
-        error(enabledClipDistances > 4 ? *mClipDistance : *mCullDistance,
-              "When both 'gl_ClipDistance' and 'gl_CullDistance' are used, each size must "
-              "not be greater than 4.",
-              diagnostics);
-    }
-
     // Update the compiler state
     *clipDistanceSizeOut     = mClipDistanceSize;
     *cullDistanceSizeOut     = mCullDistanceSize;
@@ -216,8 +251,8 @@ void ValidateClipCullDistanceTraverser::validate(
 
 bool ValidateClipCullDistance(TIntermBlock *root,
                               TDiagnostics *diagnostics,
+                              const unsigned int maxCullDistances,
                               const unsigned int maxCombinedClipAndCullDistances,
-                              const bool limitSimultaneousClipAndCullDistanceUsage,
                               uint8_t *clipDistanceSizeOut,
                               uint8_t *cullDistanceSizeOut,
                               int8_t *clipDistanceMaxIndexOut,
@@ -226,9 +261,9 @@ bool ValidateClipCullDistance(TIntermBlock *root,
     ValidateClipCullDistanceTraverser varyingValidator;
     root->traverse(&varyingValidator);
     int numErrorsBefore = diagnostics->numErrors();
-    varyingValidator.validate(
-        diagnostics, maxCombinedClipAndCullDistances, limitSimultaneousClipAndCullDistanceUsage,
-        clipDistanceSizeOut, cullDistanceSizeOut, clipDistanceMaxIndexOut, cullDistanceMaxIndexOut);
+    varyingValidator.validate(diagnostics, maxCullDistances, maxCombinedClipAndCullDistances,
+                              clipDistanceSizeOut, cullDistanceSizeOut, clipDistanceMaxIndexOut,
+                              cullDistanceMaxIndexOut);
     return (diagnostics->numErrors() == numErrorsBefore);
 }
 

@@ -743,19 +743,20 @@
 5491 IOS : IOSurfaceClientBufferTest.MakeCurrent/ES2_OpenGL = SKIP
 5491 IOS : IOSurfaceClientBufferTest.MakeCurrent/ES3_OpenGL = SKIP
 
-4452 MAC AMD OPENGL : ClipDistanceTest.EachClipDistance/ES2_OpenGL = SKIP
-4452 MAC AMD OPENGL : ClipDistanceTest.EachClipDistance/ES3_OpenGL = SKIP
+4452 MAC AMD OPENGL : ClipDistanceAPPLETest.EachClipDistance/ES2_OpenGL = SKIP
+4452 MAC AMD OPENGL : ClipDistanceAPPLETest.EachClipDistance/ES3_OpenGL = SKIP
+4452 MAC AMD OPENGL : ClipCullDistanceTest.EachClipDistance/ES3_OpenGL__ANGLE = SKIP
 
-7768 IOS : ClipDistanceTest.OneClipDistance/ES2_OpenGL = SKIP
-7768 IOS : ClipDistanceTest.OneClipDistance/ES3_OpenGL = SKIP
-7768 IOS : ClipDistanceTest.EachClipDistance/ES2_OpenGL = SKIP
-7768 IOS : ClipDistanceTest.EachClipDistance/ES3_OpenGL = SKIP
-7768 IOS : ClipDistanceTest.Octagon/ES2_OpenGL = SKIP
-7768 IOS : ClipDistanceTest.Octagon/ES3_OpenGL = SKIP
-7768 IOS : ClipDistanceTest.ThreeClipDistances/ES2_OpenGL = SKIP
-7768 IOS : ClipDistanceTest.ThreeClipDistances/ES3_OpenGL = SKIP
-7768 IOS : ClipDistanceTest.ThreeClipDistancesRedeclared/ES2_OpenGL = SKIP
-7768 IOS : ClipDistanceTest.ThreeClipDistancesRedeclared/ES3_OpenGL = SKIP
+7768 IOS : ClipDistanceAPPLETest.OneClipDistance/ES2_OpenGL = SKIP
+7768 IOS : ClipDistanceAPPLETest.OneClipDistance/ES3_OpenGL = SKIP
+7768 IOS : ClipDistanceAPPLETest.EachClipDistance/ES2_OpenGL = SKIP
+7768 IOS : ClipDistanceAPPLETest.EachClipDistance/ES3_OpenGL = SKIP
+7768 IOS : ClipDistanceAPPLETest.Octagon/ES2_OpenGL = SKIP
+7768 IOS : ClipDistanceAPPLETest.Octagon/ES3_OpenGL = SKIP
+7768 IOS : ClipDistanceAPPLETest.ThreeClipDistances/ES2_OpenGL = SKIP
+7768 IOS : ClipDistanceAPPLETest.ThreeClipDistances/ES3_OpenGL = SKIP
+7768 IOS : ClipDistanceAPPLETest.ThreeClipDistancesRedeclared/ES2_OpenGL = SKIP
+7768 IOS : ClipDistanceAPPLETest.ThreeClipDistancesRedeclared/ES3_OpenGL = SKIP
 
 7778 IOS : FramebufferTest_ES3.DrawWithDifferentPreRotations/ES3_OpenGL = SKIP
 
@@ -887,6 +888,9 @@
 7419 WIN SWIFTSHADER : MultithreadingTestES3.CreateFramebufferFetchMidRenderPass/* = SKIP
 7419 SWIFTSHADER : MultithreadingTestES3.Thread* = SKIP
 
+// Flaky timeout on Windows SwANGLE
+7900 WIN SWIFTSHADER : InstancingTestES3.LargeDivisor/ES3_Vulkan_SwiftShader/* = SKIP
+
 // Timeout with SwiftShader and MAC OpenGL due to large workloads
 7389 SWIFTSHADER : Texture2DTest.ManySupersedingTextureUpdates/* = SKIP
 7389 MAC OPENGL : Texture2DTest.ManySupersedingTextureUpdates/* = SKIP
@@ -942,6 +946,9 @@
 7473 WIN INTEL OPENGL : CompressedTextureETC2RGB8Test.Test/* = SKIP
 7473 WIN INTEL OPENGL : CompressedTextureETC2RGBA8SRGBTest.Test/* = SKIP
 7473 WIN INTEL OPENGL : CompressedTextureETC2RGBA8Test.Test/* = SKIP
+
+// Takes several minutes to complete with ASAN
+5458 ASAN VULKAN SWIFTSHADER : ClipCullDistanceTest.SizeCheckCombined/* = SKIP
 
 // Slow tests, should appear last in this file
 5076 : GLSLTest.VerifyMaxVertexUniformVectors* = TIMEOUT
