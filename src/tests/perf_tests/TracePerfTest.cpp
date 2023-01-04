@@ -1096,7 +1096,7 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
     }
 
     if (traceNameIs("hill_climb_racing") || traceNameIs("dead_trigger_2") ||
-        traceNameIs("disney_mirrorverse"))
+        traceNameIs("disney_mirrorverse") || traceNameIs("cut_the_rope"))
     {
         if (IsAndroid() && (IsPixel4() || IsPixel4XL()) &&
             mParams->driver == GLESDriverType::SystemEGL)
@@ -1359,6 +1359,11 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
             skipTest("http://anglebug.com/7125 Renders incorrectly on NVIDIA");
         }
 
+        if (IsPixel6() && mParams->isVulkan())
+        {
+            skipTest("http://anglebug.com/7916 Assert on Pixel 6");
+        }
+
         addExtensionPrerequisite("GL_EXT_geometry_shader");
         addExtensionPrerequisite("GL_EXT_primitive_bounding_box");
         addExtensionPrerequisite("GL_EXT_tessellation_shader");
@@ -1464,6 +1469,13 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
     if (traceNameIs("diablo_immortal"))
     {
         addExtensionPrerequisite("GL_EXT_shader_framebuffer_fetch");
+    }
+
+    if (traceNameIs("mu_origin_3"))
+    {
+        addExtensionPrerequisite("GL_EXT_texture_buffer");
+        addExtensionPrerequisite("GL_EXT_shader_framebuffer_fetch");
+        addExtensionPrerequisite("GL_OES_EGL_image_external");
     }
 
     // glDebugMessageControlKHR and glDebugMessageCallbackKHR crash on ARM GLES1.
