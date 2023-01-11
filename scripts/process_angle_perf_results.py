@@ -12,11 +12,14 @@ from __future__ import print_function
 
 import argparse
 import collections
+import datetime
 import json
 import logging
 import multiprocessing
 import os
+import pathlib
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -27,9 +30,13 @@ logging.basicConfig(
     format='(%(levelname)s) %(asctime)s pid=%(process)d'
     '  %(module)s.%(funcName)s:%(lineno)d  %(message)s')
 
-d = os.path.dirname
-ANGLE_DIR = d(d(os.path.realpath(__file__)))
-sys.path.append(os.path.join(ANGLE_DIR, 'tools', 'perf'))
+PY_UTILS = str(pathlib.Path(__file__).resolve().parents[1] / 'src' / 'tests' / 'py_utils')
+if PY_UTILS not in sys.path:
+    os.stat(PY_UTILS) and sys.path.insert(0, PY_UTILS)
+import angle_metrics
+import angle_path_util
+
+angle_path_util.AddDepsDirToPath('tools/perf')
 from core import path_util
 
 path_util.AddTelemetryToPath()
@@ -238,6 +245,42 @@ def _scan_output_dir(task_output_dir):
     return benchmark_directory_map, benchmarks_shard_map_file
 
 
+def _upload_to_skia_perf(benchmark_directory_map, benchmark_enabled_map, build_properties_map):
+    metric_filenames = []
+
+    for benchmark_name, directories in benchmark_directory_map.items():
+        if not benchmark_enabled_map.get(benchmark_name, False):
+            continue
+
+        for directory in directories:
+            metric_filenames.append(os.path.join(directory, 'angle_metrics.json'))
+
+    assert metric_filenames
+
+    buildername = build_properties_map['buildername']  # e.g. win10-nvidia-gtx1660-perf
+    skia_data = {
+        'version': 1,
+        'git_hash': build_properties_map['got_angle_revision'],
+        'key': {
+            'buildername': buildername,
+        },
+        'results': angle_metrics.ConvertToSkiaPerf(metric_filenames),
+    }
+
+    skia_perf_dir = tempfile.mkdtemp('skia_perf')
+    try:
+        local_file = os.path.join(skia_perf_dir, '%s.%s.json' % (buildername, time.time()))
+        with open(local_file, 'w') as f:
+            json.dump(skia_data, f, indent=2)
+        gs_dir = 'gs://angle-perf-skia/angle_perftests/%s/' % (
+            datetime.datetime.now().strftime('%Y/%m/%d/%H'))
+        upload_cmd = ['gsutil', 'cp', local_file, gs_dir]
+        logging.info('Skia upload: %s', ' '.join(upload_cmd))
+        subprocess.check_call(upload_cmd)
+    finally:
+        shutil.rmtree(skia_perf_dir)
+
+
 def process_perf_results(output_json,
                          configuration_name,
                          build_properties,
@@ -306,6 +349,14 @@ def process_perf_results(output_json,
         except Exception:
             logging.exception('Error handling perf results jsons')
             return_code = 1
+
+        try:
+            _upload_to_skia_perf(benchmark_directory_map, benchmark_enabled_map,
+                                 build_properties_map)
+        except Exception:
+            logging.exception('Error uploading to skia perf')
+            if sys.platform != 'win32':  # TODO: gsutil on Windows
+                return_code = 1
 
     if handle_non_perf:
         # Finally, merge all test results json, add the extra links and write out to

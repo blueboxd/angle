@@ -3742,7 +3742,6 @@ void CaptureShareGroupMidExecutionSetup(
     // Set a unpack alignment of 1. Otherwise, computeRowPitch() will compute the wrong value,
     // leading to a crash in memcpy() when capturing the texture contents.
     gl::PixelUnpackState &currentUnpackState = replayState.getUnpackState();
-    GLint savedUnpackAlignment               = currentUnpackState.alignment;
     if (currentUnpackState.alignment != 1)
     {
         cap(CapturePixelStorei(replayState, true, GL_UNPACK_ALIGNMENT, 1));
@@ -4362,10 +4361,11 @@ void CaptureShareGroupMidExecutionSetup(
         resourceTracker->getStartingFenceSyncs().insert(syncID);
     }
 
-    if (savedUnpackAlignment != currentUnpackState.alignment)
+    GLint contextUnpackAlignment = context->getState().getUnpackState().alignment;
+    if (currentUnpackState.alignment != contextUnpackAlignment)
     {
-        cap(CapturePixelStorei(replayState, true, GL_UNPACK_ALIGNMENT, savedUnpackAlignment));
-        replayState.setUnpackAlignment(savedUnpackAlignment);
+        cap(CapturePixelStorei(replayState, true, GL_UNPACK_ALIGNMENT, contextUnpackAlignment));
+        replayState.setUnpackAlignment(contextUnpackAlignment);
     }
 }
 
@@ -4500,7 +4500,6 @@ void CaptureMidExecutionSetup(const gl::Context *context,
     // Set a unpack alignment of 1. Otherwise, computeRowPitch() will compute the wrong value,
     // leading to a crash in memcpy() when capturing the texture contents.
     gl::PixelUnpackState &currentUnpackState = replayState.getUnpackState();
-    GLint savedUnpackAlignment               = currentUnpackState.alignment;
     if (currentUnpackState.alignment != 1)
     {
         cap(CapturePixelStorei(replayState, true, GL_UNPACK_ALIGNMENT, 1));
@@ -5271,10 +5270,11 @@ void CaptureMidExecutionSetup(const gl::Context *context,
     // Clean up the replay state.
     replayState.reset(context);
 
-    if (savedUnpackAlignment != currentUnpackState.alignment)
+    GLint contextUnpackAlignment = context->getState().getUnpackState().alignment;
+    if (currentUnpackState.alignment != contextUnpackAlignment)
     {
-        cap(CapturePixelStorei(replayState, true, GL_UNPACK_ALIGNMENT, savedUnpackAlignment));
-        replayState.setUnpackAlignment(savedUnpackAlignment);
+        cap(CapturePixelStorei(replayState, true, GL_UNPACK_ALIGNMENT, contextUnpackAlignment));
+        replayState.setUnpackAlignment(contextUnpackAlignment);
     }
 
     if (validationEnabled)
@@ -6321,6 +6321,13 @@ void FrameCaptureShared::trackTextureUpdate(const gl::Context *context, const Ca
         {
             GLenum target =
                 call.params.getParam(paramName.c_str(), ParamType::TGLenum, index).value.GLenumVal;
+
+            if (target == GL_TEXTURE_CUBE_MAP)
+            {
+                // CopyImageSubData doesn't support cube faces, but PackedParams requires one
+                target = GL_TEXTURE_CUBE_MAP_POSITIVE_X;
+            }
+
             gl::TextureTarget targetPacked = gl::PackParam<gl::TextureTarget>(target);
             gl::TextureType textureType    = gl::TextureTargetToType(targetPacked);
             gl::Texture *texture           = context->getState().getTargetTexture(textureType);
@@ -8597,7 +8604,7 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
                 {
                     // Only call SetupReplayContext for secondary contexts that were current before
                     // MEC started
-                    if (mActiveSecondaryContexts.find(context->id().value) !=
+                    if (mActiveSecondaryContexts.find(shareContext->id().value) !=
                         mActiveSecondaryContexts.end())
                     {
                         // TODO(http://anglebug.com/5878): Support capture/replay of

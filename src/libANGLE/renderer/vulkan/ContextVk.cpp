@@ -219,20 +219,6 @@ void ApplySampleCoverage(const gl::State &glState, uint32_t coverageSampleCount,
     *maskOut &= coverageMask;
 }
 
-ANGLE_INLINE bool IsRenderPassStartedAndUsesImage(
-    const vk::RenderPassCommandBufferHelper &renderPassCommands,
-    const vk::ImageHelper &image)
-{
-    return renderPassCommands.started() && renderPassCommands.usesImage(image);
-}
-
-ANGLE_INLINE bool IsRenderPassStartedAndTransitionsImageLayout(
-    const vk::RenderPassCommandBufferHelper &renderPassCommands,
-    vk::ImageHelper &image)
-{
-    return renderPassCommands.started() && renderPassCommands.isImageWithLayoutTransition(image);
-}
-
 SurfaceRotation DetermineSurfaceRotation(const gl::Framebuffer *framebuffer,
                                          const WindowSurfaceVk *windowSurface)
 {
@@ -1386,6 +1372,11 @@ angle::Result ContextVk::flush(const gl::Context *context)
     const bool isSingleBuffer =
         mCurrentWindowSurface != nullptr && mCurrentWindowSurface->isSharedPresentMode();
 
+    FramebufferVk *drawFramebufferVk = getDrawFramebuffer();
+    ASSERT(drawFramebufferVk == vk::GetImpl(mState.getDrawFramebuffer()));
+
+    const bool isAndroidHardwareBuffer = drawFramebufferVk->attachmentHasAHB();
+
     if (!mHasAnyCommandsPendingSubmission && !hasStartedRenderPass() &&
         mOutsideRenderPassCommands->empty() &&
         !(isSingleBuffer && mCurrentWindowSurface->hasStagedUpdates()))
@@ -1395,8 +1386,13 @@ angle::Result ContextVk::flush(const gl::Context *context)
 
     // Don't defer flushes in single-buffer mode.  In this mode, the application is not required to
     // call eglSwapBuffers(), and glFlush() is expected to ensure that work is submitted.
+    // Don't defer flushes when the FBO attachment is Android Hardware Buffer.
+    // Android Hardware Buffer (AHB) read access is outside of ANGLE code control,
+    // we don't know when the app is going to read from AHB, if we defer flush it is possible that
+    // when app is reading from AHB, the draw commands have not been flushed and executed yet,
+    // causing app to read unexpected data from AHB.
     if (mRenderer->getFeatures().deferFlushUntilEndRenderPass.enabled && hasStartedRenderPass() &&
-        !isSingleBuffer)
+        !isSingleBuffer && !isAndroidHardwareBuffer)
     {
         mHasDeferredFlush = true;
         return angle::Result::Continue;
@@ -1949,8 +1945,10 @@ angle::Result ContextVk::handleDirtyGraphicsDefaultAttribs(DirtyBits::Iterator *
 {
     ASSERT(mDirtyDefaultAttribsMask.any());
 
+    gl::AttributesMask attribsMask =
+        mDirtyDefaultAttribsMask & mState.getProgramExecutable()->getAttributesMask();
     VertexArrayVk *vertexArrayVk = getVertexArray();
-    for (size_t attribIndex : mDirtyDefaultAttribsMask)
+    for (size_t attribIndex : attribsMask)
     {
         ANGLE_TRY(vertexArrayVk->updateDefaultAttrib(this, attribIndex));
     }
@@ -7102,7 +7100,7 @@ angle::Result ContextVk::onBufferReleaseToExternal(const vk::BufferHelper &buffe
 
 angle::Result ContextVk::onImageReleaseToExternal(const vk::ImageHelper &image)
 {
-    if (IsRenderPassStartedAndUsesImage(*mRenderPassCommands, image))
+    if (isRenderPassStartedAndUsesImage(image))
     {
         return flushCommandsAndEndRenderPass(
             RenderPassClosureReason::ImageUseThenReleaseToExternal);
@@ -7761,7 +7759,7 @@ angle::Result ContextVk::onResourceAccess(const vk::CommandBufferAccess &access)
 
     for (const vk::CommandBufferImageAccess &imageAccess : access.getReadImages())
     {
-        ASSERT(!IsRenderPassStartedAndUsesImage(*mRenderPassCommands, *imageAccess.image));
+        ASSERT(!isRenderPassStartedAndUsesImage(*imageAccess.image));
 
         imageAccess.image->recordReadBarrier(this, imageAccess.aspectFlags, imageAccess.imageLayout,
                                              commandBuffer);
@@ -7770,7 +7768,7 @@ angle::Result ContextVk::onResourceAccess(const vk::CommandBufferAccess &access)
 
     for (const vk::CommandBufferImageWrite &imageWrite : access.getWriteImages())
     {
-        ASSERT(!IsRenderPassStartedAndUsesImage(*mRenderPassCommands, *imageWrite.access.image));
+        ASSERT(!isRenderPassStartedAndUsesImage(*imageWrite.access.image));
 
         imageWrite.access.image->recordWriteBarrier(this, imageWrite.access.aspectFlags,
                                                     imageWrite.access.imageLayout, commandBuffer);
@@ -7828,7 +7826,7 @@ angle::Result ContextVk::flushCommandBuffersIfNecessary(const vk::CommandBufferA
         // layout than a transfer read. So we cannot support simultaneous read usage as easily as
         // for Buffers.  TODO: Don't close the render pass if the image was only used read-only in
         // the render pass.  http://anglebug.com/4984
-        if (IsRenderPassStartedAndUsesImage(*mRenderPassCommands, *imageAccess.image))
+        if (isRenderPassStartedAndUsesImage(*imageAccess.image))
         {
             return flushCommandsAndEndRenderPass(RenderPassClosureReason::ImageUseThenOutOfRPRead);
         }
@@ -7837,7 +7835,7 @@ angle::Result ContextVk::flushCommandBuffersIfNecessary(const vk::CommandBufferA
     // Write images only need to close the render pass if they need a layout transition.
     for (const vk::CommandBufferImageWrite &imageWrite : access.getWriteImages())
     {
-        if (IsRenderPassStartedAndUsesImage(*mRenderPassCommands, *imageWrite.access.image))
+        if (isRenderPassStartedAndUsesImage(*imageWrite.access.image))
         {
             return flushCommandsAndEndRenderPass(RenderPassClosureReason::ImageUseThenOutOfRPWrite);
         }
@@ -7946,7 +7944,7 @@ angle::Result ContextVk::endRenderPassIfComputeAccessAfterGraphicsImageAccess()
 
             // This is to handle the implicit layout transition in renderpass of this image,
             // while it currently be bound and used by current compute program.
-            if (IsRenderPassStartedAndTransitionsImageLayout(*mRenderPassCommands, image))
+            if (mRenderPassCommands->startedAndUsesImageWithBarrier(image))
             {
                 return flushCommandsAndEndRenderPass(
                     RenderPassClosureReason::GraphicsTextureImageAccessThenComputeAccess);
@@ -7975,14 +7973,14 @@ angle::Result ContextVk::endRenderPassIfComputeAccessAfterGraphicsImageAccess()
         // by the current (compute) program.  This is to handle read-after-write hazards where the
         // write originates from a framebuffer attachment.
         if (image.hasRenderPassUsageFlag(vk::RenderPassUsage::RenderTargetAttachment) &&
-            IsRenderPassStartedAndUsesImage(*mRenderPassCommands, image))
+            isRenderPassStartedAndUsesImage(image))
         {
             return flushCommandsAndEndRenderPass(
                 RenderPassClosureReason::ImageAttachmentThenComputeRead);
         }
 
         // Take care of the read image layout transition require implicit synchronization.
-        if (IsRenderPassStartedAndTransitionsImageLayout(*mRenderPassCommands, image))
+        if (mRenderPassCommands->startedAndUsesImageWithBarrier(image))
         {
             return flushCommandsAndEndRenderPass(
                 RenderPassClosureReason::GraphicsTextureImageAccessThenComputeAccess);

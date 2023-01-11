@@ -324,17 +324,6 @@ egl::Error DisplayMtl::waitUntilWorkScheduled()
     for (auto context : mState.contextSet)
     {
         auto contextMtl = GetImplAs<ContextMtl>(context);
-
-        // TODO(anglebug.com/7890) if this context doesn't currently
-        // have a pending command buffer then this will be a no-op.
-        // If the previous command buffer was committed with NoWait
-        // then it's possible we won't be waiting as expected.
-        // If we track how the last command buffer, that actually had
-        // commands in it, was committed (NoWait, WaitUntilScheduled, etc..)
-        // Then, if there is no command buffer, there's been no commits
-        // with that were WaitUntilScheduled/WaitUntilCompleted since
-        // the last command buffer with commands, then create a command
-        // buffer so we can wait on it?
         contextMtl->flushCommandBuffer(mtl::WaitUntilScheduled);
     }
     return egl::NoError();
@@ -499,7 +488,10 @@ void DisplayMtl::generateExtensions(egl::DisplayExtensions *outExtensions) const
     outExtensions->mtlSyncSharedEventANGLE = true;
 }
 
-void DisplayMtl::generateCaps(egl::Caps *outCaps) const {}
+void DisplayMtl::generateCaps(egl::Caps *outCaps) const
+{
+    outCaps->textureNPOT = true;
+}
 
 void DisplayMtl::populateFeatureList(angle::FeatureList *features)
 {
@@ -895,7 +887,7 @@ void DisplayMtl::ensureCapsInitialized() const
     // GL_OES_get_program_binary
     mNativeCaps.programBinaryFormats.push_back(GL_PROGRAM_BINARY_ANGLE);
 
-    // GL_APPLE_clip_distance
+    // GL_APPLE_clip_distance / GL_ANGLE_clip_cull_distance
     mNativeCaps.maxClipDistances = 8;
 
     // Metal doesn't support GL_TEXTURE_COMPARE_MODE=GL_NONE for shadow samplers
@@ -1009,6 +1001,9 @@ void DisplayMtl::initializeExtensions() const
 
     // GL_APPLE_clip_distance
     mNativeExtensions.clipDistanceAPPLE = true;
+
+    // GL_ANGLE_clip_cull_distance
+    mNativeExtensions.clipCullDistanceANGLE = true;
 
     // GL_NV_pixel_buffer_object
     mNativeExtensions.pixelBufferObjectNV = true;

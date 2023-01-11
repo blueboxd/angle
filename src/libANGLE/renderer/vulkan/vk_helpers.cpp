@@ -1438,10 +1438,7 @@ void CommandBufferHelperCommon::bufferWrite(ContextVk *contextVk,
                                             PipelineStage writeStage,
                                             BufferHelper *buffer)
 {
-    if (!buffer->writtenByCommandBuffer(mQueueSerial))
-    {
-        buffer->setWriteQueueSerial(mQueueSerial);
-    }
+    buffer->setWriteQueueSerial(mQueueSerial);
 
     VkPipelineStageFlagBits stageBits = kPipelineStageFlagBitMap[writeStage];
     if (buffer->recordWriteBarrier(writeAccessType, stageBits, &mPipelineBarriers[writeStage]))
@@ -1492,13 +1489,11 @@ void CommandBufferHelperCommon::executeBarriers(const angle::FeaturesVk &feature
 void CommandBufferHelperCommon::imageReadImpl(ContextVk *contextVk,
                                               VkImageAspectFlags aspectFlags,
                                               ImageLayout imageLayout,
-                                              ImageHelper *image,
-                                              bool *needLayoutTransition)
+                                              ImageHelper *image)
 {
     if (image->isReadBarrierNecessary(imageLayout))
     {
         updateImageLayoutAndBarrier(contextVk, image, aspectFlags, imageLayout);
-        *needLayoutTransition = true;
     }
 }
 
@@ -1523,7 +1518,7 @@ void CommandBufferHelperCommon::updateImageLayoutAndBarrier(Context *context,
     PipelineStage barrierIndex = kImageMemoryBarrierData[imageLayout].barrierIndex;
     ASSERT(barrierIndex != PipelineStage::InvalidEnum);
     PipelineBarrier *barrier = &mPipelineBarriers[barrierIndex];
-    if (image->updateLayoutAndBarrier(context, aspectFlags, imageLayout, barrier))
+    if (image->updateLayoutAndBarrier(context, aspectFlags, imageLayout, mQueueSerial, barrier))
     {
         mPipelineBarrierMask.set(barrierIndex);
     }
@@ -1603,9 +1598,16 @@ void OutsideRenderPassCommandBufferHelper::imageRead(ContextVk *contextVk,
                                                      ImageLayout imageLayout,
                                                      ImageHelper *image)
 {
-    bool needLayoutTransition = false;
-    imageReadImpl(contextVk, aspectFlags, imageLayout, image, &needLayoutTransition);
-    image->setQueueSerial(mQueueSerial);
+    imageReadImpl(contextVk, aspectFlags, imageLayout, image);
+
+    if (!contextVk->isRenderPassStartedAndUsesImage(*image))
+    {
+        // Usually an image can only used by a RenderPassCommands or OutsideRenderPassCommands
+        // because the layout will be different, except with image sampled from compute shader. In
+        // this case, the renderPassCommands' read will override the outsideRenderPassCommands'
+        // read, since its queueSerial must be greater than outsideRP.
+        image->setQueueSerial(mQueueSerial);
+    }
 }
 
 void OutsideRenderPassCommandBufferHelper::imageWrite(ContextVk *contextVk,
@@ -1617,6 +1619,7 @@ void OutsideRenderPassCommandBufferHelper::imageWrite(ContextVk *contextVk,
                                                       ImageHelper *image)
 {
     imageWriteImpl(contextVk, level, layerStart, layerCount, aspectFlags, imageLayout, image);
+    image->setQueueSerial(mQueueSerial);
 }
 
 angle::Result OutsideRenderPassCommandBufferHelper::flushToPrimary(Context *context,
@@ -1714,8 +1717,7 @@ angle::Result RenderPassCommandBufferHelper::reset(Context *context)
     mPreviousSubpassesCmdCount         = 0;
     mColorAttachmentsCount             = PackedAttachmentCount(0);
     mDepthStencilAttachmentIndex       = kAttachmentIndexInvalid;
-    mRenderPassImagesWithLayoutTransition.clear();
-    mImageOptimizeForPresent = nullptr;
+    mImageOptimizeForPresent           = nullptr;
 
     // Reset and re-initialize the command buffers
     for (uint32_t subpass = 0; subpass <= mCurrentSubpass; ++subpass)
@@ -1754,16 +1756,10 @@ void RenderPassCommandBufferHelper::imageRead(ContextVk *contextVk,
                                               ImageLayout imageLayout,
                                               ImageHelper *image)
 {
-    bool needLayoutTransition = false;
-    imageReadImpl(contextVk, aspectFlags, imageLayout, image, &needLayoutTransition);
-    if (needLayoutTransition && !isImageWithLayoutTransition(*image))
-    {
-        mRenderPassImagesWithLayoutTransition.insert(image->getImageSerial());
-    }
-
+    imageReadImpl(contextVk, aspectFlags, imageLayout, image);
     // As noted in the header we don't support multiple read layouts for Images.
     // We allow duplicate uses in the RP to accommodate for normal GL sampler usage.
-    retainResource(image);
+    image->setQueueSerial(mQueueSerial);
 }
 
 void RenderPassCommandBufferHelper::imageWrite(ContextVk *contextVk,
@@ -1775,11 +1771,7 @@ void RenderPassCommandBufferHelper::imageWrite(ContextVk *contextVk,
                                                ImageHelper *image)
 {
     imageWriteImpl(contextVk, level, layerStart, layerCount, aspectFlags, imageLayout, image);
-    if (!isImageWithLayoutTransition(*image))
-    {
-        mRenderPassImagesWithLayoutTransition.insert(image->getImageSerial());
-    }
-    retainResource(image);
+    image->setQueueSerial(mQueueSerial);
 }
 
 void RenderPassCommandBufferHelper::colorImagesDraw(gl::LevelIndex level,
@@ -1791,14 +1783,14 @@ void RenderPassCommandBufferHelper::colorImagesDraw(gl::LevelIndex level,
 {
     ASSERT(packedAttachmentIndex < mColorAttachmentsCount);
 
-    retainResource(image);
+    image->setQueueSerial(mQueueSerial);
 
     mColorAttachments[packedAttachmentIndex].init(image, level, layerStart, layerCount,
                                                   VK_IMAGE_ASPECT_COLOR_BIT);
 
     if (resolveImage)
     {
-        retainResource(resolveImage);
+        resolveImage->setQueueSerial(mQueueSerial);
         mColorResolveAttachments[packedAttachmentIndex].init(resolveImage, level, layerStart,
                                                              layerCount, VK_IMAGE_ASPECT_COLOR_BIT);
     }
@@ -6278,8 +6270,14 @@ template void ImageHelper::barrierImpl<priv::CommandBuffer>(Context *context,
 bool ImageHelper::updateLayoutAndBarrier(Context *context,
                                          VkImageAspectFlags aspectMask,
                                          ImageLayout newLayout,
+                                         const QueueSerial &queueSerial,
                                          PipelineBarrier *barrier)
 {
+    ASSERT(queueSerial.valid());
+    ASSERT(!mBarrierQueueSerial.valid() ||
+           mBarrierQueueSerial.getIndex() != queueSerial.getIndex() ||
+           mBarrierQueueSerial.getSerial() <= queueSerial.getSerial());
+
     // Once you transition to ImageLayout::SharedPresent, you never transition out of it.
     if (mCurrentLayout == ImageLayout::SharedPresent)
     {
@@ -6296,7 +6294,8 @@ bool ImageHelper::updateLayoutAndBarrier(Context *context,
         barrier->mergeMemoryBarrier(GetImageLayoutSrcStageMask(context, layoutData),
                                     GetImageLayoutDstStageMask(context, layoutData),
                                     layoutData.srcAccessMask, layoutData.dstAccessMask);
-        barrierModified = true;
+        barrierModified     = true;
+        mBarrierQueueSerial = queueSerial;
     }
     else
     {
@@ -6319,7 +6318,8 @@ bool ImageHelper::updateLayoutAndBarrier(Context *context,
                 barrier->mergeMemoryBarrier(GetImageLayoutSrcStageMask(context, layoutData),
                                             dstStageMask, layoutData.srcAccessMask,
                                             transitionTo.dstAccessMask);
-                barrierModified = true;
+                barrierModified     = true;
+                mBarrierQueueSerial = queueSerial;
                 // Accumulate new read stage.
                 mCurrentShaderReadStageMask |= dstStageMask;
             }
@@ -6339,7 +6339,8 @@ bool ImageHelper::updateLayoutAndBarrier(Context *context,
                 mLastNonShaderReadOnlyLayout = ImageLayout::Undefined;
             }
             barrier->mergeImageBarrier(srcStageMask, dstStageMask, imageMemoryBarrier);
-            barrierModified = true;
+            barrierModified     = true;
+            mBarrierQueueSerial = queueSerial;
 
             // If we are transition into shaderRead layout, remember the last
             // non-shaderRead layout here.

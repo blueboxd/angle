@@ -12,6 +12,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include "mtl_command_buffer.h"
 #if ANGLE_MTL_SIMULATE_DISCARD_FRAMEBUFFER
 #    include <random>
 #endif
@@ -377,7 +378,9 @@ inline void UseResourceCmd(id<MTLRenderCommandEncoder> encoder, IntermediateComm
     else
 #endif
     {
+        ANGLE_APPLE_ALLOW_DEPRECATED_BEGIN
         [encoder useResource:resource usage:usage];
+        ANGLE_APPLE_ALLOW_DEPRECATED_END
     }
     [resource ANGLE_MTL_RELEASE];
 }
@@ -623,14 +626,44 @@ void CommandBuffer::commit(CommandBufferFinishOperation operation)
     std::lock_guard<std::mutex> lg(mLock);
     if (commitImpl())
     {
-        if (operation == WaitUntilScheduled)
-        {
-            [get() waitUntilScheduled];
-        }
-        else if (operation == WaitUntilFinished)
-        {
-            [get() waitUntilCompleted];
-        }
+        wait(operation);
+    }
+}
+
+void CommandBuffer::wait(CommandBufferFinishOperation operation)
+{
+    // NOTE: A CommandBuffer is valid forever under current conditions (2022-12-22)
+    // except before the first call to restart.
+    if (!valid())
+    {
+        return;
+    }
+
+    // You can't wait on an uncommitted command buffer.
+    ASSERT(mCommitted);
+
+    switch (operation)
+    {
+        case NoWait:
+            break;
+
+        case WaitUntilScheduled:
+            // Only wait if we haven't already waited
+            if (mLastWaitOp == NoWait)
+            {
+                [get() waitUntilScheduled];
+                mLastWaitOp = WaitUntilScheduled;
+            }
+            break;
+
+        case WaitUntilFinished:
+            // Only wait if we haven't already waited until finished.
+            if (mLastWaitOp != WaitUntilFinished)
+            {
+                [get() waitUntilCompleted];
+                mLastWaitOp = WaitUntilFinished;
+            }
+            break;
     }
 }
 
@@ -725,6 +758,7 @@ void CommandBuffer::restart()
     set(metalCmdBuffer);
     mQueueSerial = serial;
     mCommitted   = false;
+    mLastWaitOp  = mtl::NoWait;
 
     for (std::string &marker : mDebugGroups)
     {
