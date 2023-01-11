@@ -844,7 +844,8 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
     if (parseContext.isExtensionEnabled(TExtension::EXT_clip_cull_distance))
     {
         if (!ValidateClipCullDistance(root, &mDiagnostics,
-                                      mResources.MaxCombinedClipAndCullDistances))
+                                      mResources.MaxCombinedClipAndCullDistances,
+                                      compileOptions.limitSimultaneousClipAndCullDistanceUsage))
         {
             return false;
         }
@@ -1661,7 +1662,8 @@ bool TCompiler::initializeOutputVariables(TIntermBlock *root)
 {
     InitVariableList list;
     list.reserve(mOutputVaryings.size());
-    if (mShaderType == GL_VERTEX_SHADER || mShaderType == GL_GEOMETRY_SHADER_EXT)
+    if (mShaderType == GL_VERTEX_SHADER || mShaderType == GL_GEOMETRY_SHADER_EXT ||
+        mShaderType == GL_TESS_CONTROL_SHADER_EXT || mShaderType == GL_TESS_EVALUATION_SHADER_EXT)
     {
         for (const sh::ShaderVariable &var : mOutputVaryings)
         {

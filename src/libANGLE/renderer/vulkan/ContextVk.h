@@ -471,6 +471,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                        gl::SamplerFormat format,
                                        gl::Texture **textureOut);
     void updateColorMasks();
+    void updateMissingOutputsMask();
     void updateBlendFuncsAndEquations();
     void updateSampleMaskWithRasterizationSamples(const uint32_t rasterizationSamples);
     void updateFrameBufferFetchSamples(const uint32_t prevSamples, const uint32_t curSamples);
@@ -784,6 +785,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     }
 
     vk::ComputePipelineFlags getComputePipelineFlags() const;
+
+    angle::ImageLoadContext getImageLoadContext() const;
 
   private:
     // Dirty bits.
@@ -1313,9 +1316,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // An alternative could have been to set the static state unconditionally to non-zero.  This is
     // avoided however, as on the affected driver that would disable certain optimizations.
     void updateStencilWriteWorkaround();
-
-    SpecConstUsageBits getCurrentProgramSpecConstUsageBits() const;
-    void updateGraphicsPipelineDescWithSpecConstUsageBits(SpecConstUsageBits usageBits);
 
     angle::Result updateShaderResourcesDescriptorDesc(PipelineType pipelineType);
 

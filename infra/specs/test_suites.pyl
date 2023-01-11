@@ -695,6 +695,7 @@
         },
         'args': [
           '--log=debug',
+          '--samples-per-test=6',
           '--show-test-stdout',
           '--split-shard-samples',
         ],
@@ -751,6 +752,120 @@
           'shards': 6,
         },
       }
+    },
+
+    'angle_trace_interpreter_isolated_scripts': {
+      'angle_trace_interpreter_tests': {
+        'args': [
+          '--log=debug',
+          'interpret',
+          'trex_200',
+          '-L=2',
+          '--show-test-stdout',
+        ],
+      },
+    },
+
+    'angle_trace_perf_native_isolated_scripts': {
+      'angle_trace_perf_native_tests': {
+        'android_args': {
+          '--trial-time=10',
+        },
+        'args': [
+          '--log=debug',
+          '--show-test-stdout',
+          '--split-shard-samples',
+          '--use-gl=native',
+          '--trace-tests',
+        ],
+        'merge': {
+          'script': '//scripts/process_angle_perf_results.py',
+        },
+        'android_swarming': {
+          'shards': 30,
+        },
+        'swarming': {
+          'shards': 10,
+        },
+        'test': 'angle_trace_perf_tests',
+      },
+    },
+
+    'angle_trace_perf_native_smoke_isolated_scripts': {
+      'angle_trace_perf_native_tests': {
+        'args': [
+          '--log=debug',
+          '--smoke-test-mode',
+          '--show-test-stdout',
+          '--use-gl=native',
+          '--trace-tests',
+        ],
+        'merge': {
+          'script': '//scripts/process_angle_perf_results.py',
+          # Does not upload to the perf dashboard
+          'args': [
+            '--smoke-test-mode',
+          ],
+        },
+        'swarming': {
+          'shards': 2,
+        },
+        'android_swarming': {
+          'shards': 6,
+        },
+        'test': 'angle_trace_perf_tests',
+      },
+    },
+
+    'angle_trace_perf_vulkan_isolated_scripts': {
+      'angle_trace_perf_vulkan_tests': {
+        'android_args': {
+          '--trial-time=10',
+        },
+        'args': [
+          '--log=debug',
+          '--show-test-stdout',
+          '--split-shard-samples',
+          '--use-angle=vulkan',
+          '--trace-tests',
+        ],
+        'merge': {
+          'script': '//scripts/process_angle_perf_results.py',
+        },
+        'android_swarming': {
+          'shards': 30,
+        },
+        'swarming': {
+          'shards': 10,
+        },
+        'test': 'angle_trace_perf_tests',
+      },
+    },
+
+    'angle_trace_perf_vulkan_smoke_isolated_scripts': {
+      'angle_trace_perf_vulkan_tests': {
+        'args': [
+          '--log=debug',
+          '--smoke-test-mode',
+          '--show-test-stdout',
+          '--use-angle=vulkan',
+          '--trace-tests',
+        ],
+        'merge': {
+          'script': '//scripts/process_angle_perf_results.py',
+          # Does not upload to the perf dashboard
+          'args': [
+            '--smoke-test-mode',
+          ],
+        },
+        'swarming': {
+          'shards': 2,
+        },
+        'android_swarming': {
+          'shards': 6,
+        },
+        'test': 'angle_trace_perf_tests',
+      },
     },
 
     'angle_unit_gtests': {
@@ -947,6 +1062,8 @@
       'angle_end2end_tests': {
         'args': [
           '--gtest_filter=*Vulkan_SwiftShader*',
+          # Flaky retries enabled on ASAN/TSAN. http://anglebug.com/7772
+          '--flaky-retries=2',
         ],
         'use_isolated_scripts_api': True,
         'swarming': {
@@ -1029,6 +1146,15 @@
     'common_isolated_scripts': [
       'angle_perf_smoke_isolated_scripts',
       'angle_restricted_trace_gold_isolated_scripts',
+      'angle_trace_interpreter_isolated_scripts',
+      'angle_trace_perf_native_smoke_isolated_scripts',
+      'angle_trace_perf_vulkan_smoke_isolated_scripts',
+    ],
+
+    'common_perf_isolated_scripts': [
+      'angle_perf_isolated_scripts',
+      'angle_trace_perf_native_isolated_scripts',
+      'angle_trace_perf_vulkan_isolated_scripts',
     ],
 
     'linux_intel_gtests': [
@@ -1118,7 +1244,6 @@
     'win10_intel_gtests': [
       'angle_deqp_gles2_d3d11_gtests',
       'angle_end2end_gtests',
-      'angle_gles1_conformance_gtests',
       'angle_unit_gtests',
       'angle_white_box_gtests',
     ],

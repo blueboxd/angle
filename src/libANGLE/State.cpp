@@ -412,7 +412,7 @@ State::State(const State *shareContextState,
       mLogicOp(LogicalOperation::Copy),
       mMaxShaderCompilerThreads(std::numeric_limits<GLuint>::max()),
       mPatchVertices(3),
-      mPixelLocalStorageActive(false),
+      mPixelLocalStorageActivePlanes(0),
       mOverlay(overlay),
       mNoSimultaneousConstantColorAndAlphaBlendFunc(false),
       mSetBlendIndexedInvoked(false),
@@ -518,17 +518,17 @@ void State::initialize(Context *context)
         mShaderStorageBuffers.resize(mCaps.maxShaderStorageBufferBindings);
     }
     if (clientVersion >= Version(3, 1) ||
-        (mExtensions.shaderPixelLocalStorageANGLE &&
+        (nativeExtensions.shaderPixelLocalStorageANGLE &&
          ShPixelLocalStorageTypeUsesImages(
              context->getImplementation()->getNativePixelLocalStorageType())))
     {
         mImageUnits.resize(mCaps.maxImageUnits);
     }
-    if (clientVersion >= Version(3, 2) || mExtensions.textureCubeMapArrayAny())
+    if (clientVersion >= Version(3, 1) || nativeExtensions.textureCubeMapArrayAny())
     {
         mSamplerTextures[TextureType::CubeMapArray].resize(mCaps.maxCombinedTextureImageUnits);
     }
-    if (clientVersion >= Version(3, 2) || mExtensions.textureBufferAny())
+    if (clientVersion >= Version(3, 1) || nativeExtensions.textureCubeMapArrayAny())
     {
         mSamplerTextures[TextureType::Buffer].resize(mCaps.maxCombinedTextureImageUnits);
     }
@@ -2410,9 +2410,9 @@ void State::setPatchVertices(GLuint value)
     }
 }
 
-void State::setPixelLocalStorageActive(bool active)
+void State::setPixelLocalStorageActivePlanes(GLsizei n)
 {
-    mPixelLocalStorageActive = active;
+    mPixelLocalStorageActivePlanes = n;
 }
 
 void State::setShadingRate(GLenum rate)
@@ -2541,10 +2541,6 @@ void State::getBooleanv(GLenum pname, GLboolean *params) const
             break;
         case GL_ROBUST_FRAGMENT_SHADER_OUTPUT_ANGLE:
             *params = mExtensions.robustFragmentShaderOutputANGLE ? GL_TRUE : GL_FALSE;
-            break;
-        // GL_ANGLE_shader_pixel_local_storage
-        case GL_PIXEL_LOCAL_STORAGE_ACTIVE_ANGLE:
-            *params = mPixelLocalStorageActive ? GL_TRUE : GL_FALSE;
             break;
         default:
             UNREACHABLE();
@@ -3150,6 +3146,11 @@ angle::Result State::getIntegerv(const Context *context, GLenum pname, GLint *pa
             *params = ToGLenum(mShadingRate);
             break;
 
+        // GL_ANGLE_shader_pixel_local_storage
+        case GL_PIXEL_LOCAL_STORAGE_ACTIVE_PLANES_ANGLE:
+            *params = mPixelLocalStorageActivePlanes;
+            break;
+
         default:
             UNREACHABLE();
             break;
@@ -3267,17 +3268,6 @@ void State::getIntegeri_v(const Context *context, GLenum target, GLuint index, G
             ASSERT(static_cast<size_t>(index) < mImageUnits.size());
             *data = mImageUnits[index].format;
             break;
-        // GL_ANGLE_shader_pixel_local_storage.
-        case GL_PIXEL_LOCAL_FORMAT_ANGLE:
-        case GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE:
-        case GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE:
-        case GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE:
-        {
-            ASSERT(mDrawFramebuffer);
-            *data = mDrawFramebuffer->getPixelLocalStorage(context).getPlane(index).getIntegeri(
-                context, target, index);
-            break;
-        }
         default:
             UNREACHABLE();
             break;
