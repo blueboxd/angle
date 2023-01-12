@@ -158,8 +158,6 @@ constexpr const char *kSkippedMessages[] = {
     "UNASSIGNED-CoreValidation-Shader-OutputNotConsumed",
     // http://anglebug.com/4883
     "UNASSIGNED-CoreValidation-Shader-InputNotProduced",
-    // http://anglebug.com/2796
-    "UNASSIGNED-CoreValidation-Shader-PointSizeMissing",
     // http://anglebug.com/4928
     "VUID-vkMapMemory-memory-00683",
     // http://anglebug.com/5027
@@ -169,9 +167,6 @@ constexpr const char *kSkippedMessages[] = {
     "VUID-vkCmdDrawIndexed-magFilter-04553",
     // http://anglebug.com/5309
     "VUID-VkImageViewCreateInfo-usage-02652",
-    // http://anglebug.com/5331
-    "VUID-VkSubpassDescriptionDepthStencilResolve-depthResolveMode-parameter",
-    "VUID-VkSubpassDescriptionDepthStencilResolve-stencilResolveMode-parameter",
     // http://issuetracker.google.com/175584609
     "VUID-vkCmdDraw-None-04584",
     "VUID-vkCmdDrawIndexed-None-04584",
@@ -238,77 +233,18 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessages[] = {
         "write_barriers: 0, command: vkCmdEndRenderPass",
     },
     // These errors are caused by a feedback loop tests that don't produce correct Vulkan to begin
-    // with.  The message to check is made more specific (by checking the exact set/binding and part
-    // of seq_no) to reduce the chances of it suppressing a bug in other valid tests.
+    // with.
     // http://anglebug.com/6417
+    // http://anglebug.com/7070
     //
-    // From: Texture2DBaseMaxTestES3.Fuzz545ImmutableTexRenderFeedback/ES3_Vulkan
+    // Occassionally, this is due to VVL's lack of support for some extensions.  For example,
+    // syncval doesn't properly account for VK_EXT_fragment_shader_interlock, which gives
+    // synchronization guarantees without the need for an image barrier.
+    // https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/4387
     {
         "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 6",
-    },
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 7",
-    },
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdDraw",
-    },
-    // From: FramebufferTest_ES3.FramebufferBindToNewLevelAfterMaxIncreaseShouldntCrash/ES3_Vulkan
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 10,",
-    },
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 2,",
-    },
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 9,",
-    },
-    // From: FramebufferTest_ES3.SampleFromAttachedTextureWithDifferentLOD/ES3_Vulkan
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 8,",
-    },
-    // With Vulkan secondary command buffers:
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "Recorded access info (recorded_usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, command: "
-        "vkCmdDraw, seq_no: 1, reset_no: 1). Access info (prior_usage: "
-        "SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, command: "
-        "vkCmdBeginRenderPass, seq_no:",
-    },
-    // From: TraceTest.vulkan_aztec_ruins
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 11",
+        "imageLayout: VK_IMAGE_LAYOUT_GENERAL",
+        "usage: SYNC_FRAGMENT_SHADER_SHADER_",
     },
     // http://anglebug.com/6551
     {
@@ -431,14 +367,6 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessages[] = {
      "VK_IMAGE_LAYOUT_GENERAL). Access info (usage: SYNC_IMAGE_LAYOUT_TRANSITION, prior_usage: "
      "SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers:",
      true},
-    // http://anglebug.com/7070
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass",
-    },
     // From: TraceTest.car_chase http://anglebug.com/7125
     {
         "SYNC-HAZARD-WRITE-AFTER-READ",
@@ -507,16 +435,6 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessages[] = {
         "SYNC_FRAGMENT_SHADER_UNIFORM_READ, "
         "command: vkCmdPipelineBarrier",
     },
-    // The validation layers don't properly account for VK_EXT_fragment_shader_interlock, which
-    // gives synchronization guarantees without the need for an image barrier. Suppress these
-    // syncval errors globally until it's fixed.
-    // https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/4387
-    {"SYNC-HAZARD-READ-AFTER-WRITE",
-     "type: VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, "
-     "imageLayout: VK_IMAGE_LAYOUT_GENERAL",
-     "Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-     "prior_usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_WRITE, "
-     "write_barriers: 0"},
     // From: TraceTest.life_is_strange http://anglebug.com/7711
     {"SYNC-HAZARD-WRITE-AFTER-READ",
      "vkCmdEndRenderPass: Hazard WRITE_AFTER_READ in subpass 0 for attachment 1 "
@@ -1274,10 +1192,14 @@ void checkForCurrentMemoryAllocations(RendererVk *renderer)
         {
             if (renderer->getActiveMemoryAllocationsSize(i) != 0)
             {
-                INFO() << "Currently allocated size for memory allocation type ("
-                       << vk::kMemoryAllocationTypeMessage[i]
-                       << "): " << renderer->getActiveMemoryAllocationsSize(i)
-                       << " | Count: " << renderer->getActiveMemoryAllocationsCount(i);
+                std::stringstream outStream;
+                outStream.imbue(std::locale(""));
+
+                outStream << "Currently allocated size for memory allocation type ("
+                          << vk::kMemoryAllocationTypeMessage[i]
+                          << "): " << renderer->getActiveMemoryAllocationsSize(i)
+                          << " | Count: " << renderer->getActiveMemoryAllocationsCount(i);
+                INFO() << outStream.str();
             }
         }
     }
@@ -1287,9 +1209,13 @@ void checkForCurrentMemoryAllocations(RendererVk *renderer)
         {
             if (renderer->getActiveMemoryAllocationsSize(i) != 0)
             {
-                INFO() << "Currently allocated size for memory allocation type ("
-                       << vk::kMemoryAllocationTypeMessage[i]
-                       << "): " << renderer->getActiveMemoryAllocationsSize(i);
+                std::stringstream outStream;
+                outStream.imbue(std::locale(""));
+
+                outStream << "Currently allocated size for memory allocation type ("
+                          << vk::kMemoryAllocationTypeMessage[i]
+                          << "): " << renderer->getActiveMemoryAllocationsSize(i);
+                INFO() << outStream.str();
             }
         }
     }
@@ -1305,8 +1231,13 @@ void logPendingMemoryAllocation(vk::MemoryAllocationType allocInfo, VkDeviceSize
 
     if (allocSize != 0)
     {
-        WARN() << "Pending allocation size for memory allocation type ("
-               << vk::kMemoryAllocationTypeMessage[ToUnderlying(allocInfo)] << "): " << allocSize;
+        std::stringstream outStream;
+        outStream.imbue(std::locale(""));
+
+        outStream << "Pending allocation size for memory allocation type ("
+                  << vk::kMemoryAllocationTypeMessage[ToUnderlying(allocInfo)]
+                  << "): " << allocSize;
+        WARN() << outStream.str();
     }
 }
 
@@ -1342,6 +1273,7 @@ void logMemoryHeapStats(RendererVk *renderer, vk::MemoryLogSeverity severity)
 
     // Log stream for the heap information.
     std::stringstream outStream;
+    outStream.imbue(std::locale(""));
 
     // VkPhysicalDeviceMemoryProperties2 enables the use of memory budget properties if supported.
     VkPhysicalDeviceMemoryProperties2KHR memoryProperties;
@@ -1362,31 +1294,32 @@ void logMemoryHeapStats(RendererVk *renderer, vk::MemoryLogSeverity severity)
     // Add memory heap information to the stream.
     outStream << "Memory heap info" << std::endl;
 
-    outStream << "* Available memory heaps:" << std::endl;
+    outStream << std::endl << "* Available memory heaps:" << std::endl;
     for (uint32_t i = 0; i < memoryProperties.memoryProperties.memoryHeapCount; i++)
     {
-        outStream << i << " | Size: " << memoryProperties.memoryProperties.memoryHeaps[i].size
-                  << " | Flags: " << memoryProperties.memoryProperties.memoryHeaps[i].flags
-                  << std::endl;
-    }
-
-    outStream << "* Available memory types:" << std::endl;
-    for (uint32_t i = 0; i < memoryProperties.memoryProperties.memoryTypeCount; i++)
-    {
-        outStream << i
-                  << " | Heap index: " << memoryProperties.memoryProperties.memoryTypes[i].heapIndex
-                  << " | Property flags: "
-                  << memoryProperties.memoryProperties.memoryTypes[i].propertyFlags << std::endl;
+        outStream << std::dec << i
+                  << " | Heap size: " << memoryProperties.memoryProperties.memoryHeaps[i].size
+                  << " | Flags: 0x" << std::hex
+                  << memoryProperties.memoryProperties.memoryHeaps[i].flags << std::endl;
     }
 
     if (renderer->getFeatures().supportsMemoryBudget.enabled)
     {
-        outStream << "* Available memory budget and usage:" << std::endl;
-        for (uint32_t i = 0; i < VK_MAX_MEMORY_HEAPS; i++)
+        outStream << std::endl << "* Available memory budget and usage per heap:" << std::endl;
+        for (uint32_t i = 0; i < memoryProperties.memoryProperties.memoryHeapCount; i++)
         {
-            outStream << i << " | Heap budget: " << memoryBudgetProperties.heapBudget[i]
+            outStream << std::dec << i << " | Heap budget: " << memoryBudgetProperties.heapBudget[i]
                       << " | Heap usage: " << memoryBudgetProperties.heapUsage[i] << std::endl;
         }
+    }
+
+    outStream << std::endl << "* Available memory types:" << std::endl;
+    for (uint32_t i = 0; i < memoryProperties.memoryProperties.memoryTypeCount; i++)
+    {
+        outStream << std::dec << i
+                  << " | Heap index: " << memoryProperties.memoryProperties.memoryTypes[i].heapIndex
+                  << " | Property flags: 0x" << std::hex
+                  << memoryProperties.memoryProperties.memoryTypes[i].propertyFlags << std::endl;
     }
 
     // Output the log stream based on the level of severity.

@@ -38,22 +38,29 @@ TEST_P(ClipDistanceAPPLETest, StateQuery)
     EXPECT_EQ(maxClipDistances, 0);
     EXPECT_GL_ERROR(GL_INVALID_ENUM);
 
+    auto assertState = [](GLenum pname, bool valid, bool expectedState) {
+        EXPECT_EQ(glIsEnabled(pname), valid ? expectedState : false);
+        EXPECT_GL_ERROR(valid ? GL_NO_ERROR : GL_INVALID_ENUM);
+
+        GLboolean result = false;
+        glGetBooleanv(pname, &result);
+        EXPECT_EQ(result, valid ? expectedState : false);
+        EXPECT_GL_ERROR(valid ? GL_NO_ERROR : GL_INVALID_ENUM);
+    };
+
     for (size_t i = 0; i < 8; i++)
     {
-        EXPECT_FALSE(glIsEnabled(GL_CLIP_DISTANCE0_APPLE + i));
-        EXPECT_GL_ERROR(GL_INVALID_ENUM);
+        assertState(GL_CLIP_DISTANCE0_APPLE + i, false, false);
 
         glEnable(GL_CLIP_DISTANCE0_APPLE + i);
         EXPECT_GL_ERROR(GL_INVALID_ENUM);
 
-        EXPECT_FALSE(glIsEnabled(GL_CLIP_DISTANCE0_APPLE + i));
-        EXPECT_GL_ERROR(GL_INVALID_ENUM);
+        assertState(GL_CLIP_DISTANCE0_APPLE + i, false, false);
 
         glDisable(GL_CLIP_DISTANCE0_APPLE + i);
         EXPECT_GL_ERROR(GL_INVALID_ENUM);
 
-        EXPECT_FALSE(glIsEnabled(GL_CLIP_DISTANCE0_APPLE + i));
-        EXPECT_GL_ERROR(GL_INVALID_ENUM);
+        assertState(GL_CLIP_DISTANCE0_APPLE + i, false, false);
     }
 
     ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_APPLE_clip_distance"));
@@ -66,20 +73,17 @@ TEST_P(ClipDistanceAPPLETest, StateQuery)
 
     for (size_t i = 0; i < 8; i++)
     {
-        EXPECT_FALSE(glIsEnabled(GL_CLIP_DISTANCE0_APPLE + i));
-        EXPECT_GL_NO_ERROR();
+        assertState(GL_CLIP_DISTANCE0_APPLE + i, true, false);
 
         glEnable(GL_CLIP_DISTANCE0_APPLE + i);
         EXPECT_GL_NO_ERROR();
 
-        EXPECT_TRUE(glIsEnabled(GL_CLIP_DISTANCE0_APPLE + i));
-        EXPECT_GL_NO_ERROR();
+        assertState(GL_CLIP_DISTANCE0_APPLE + i, true, true);
 
         glDisable(GL_CLIP_DISTANCE0_APPLE + i);
         EXPECT_GL_NO_ERROR();
 
-        EXPECT_FALSE(glIsEnabled(GL_CLIP_DISTANCE0_APPLE + i));
-        EXPECT_GL_NO_ERROR();
+        assertState(GL_CLIP_DISTANCE0_APPLE + i, true, false);
     }
 }
 
@@ -108,6 +112,28 @@ void main()
 
     GLProgram prg;
     prg.makeRaster(kVS, kFS);
+    EXPECT_FALSE(prg.valid());
+}
+
+// Check that gl_ClipDistance cannot be redeclared as a global
+TEST_P(ClipDistanceAPPLETest, NotVarying)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_APPLE_clip_distance"));
+
+    constexpr char kVS[] = R"(
+#extension GL_APPLE_clip_distance : require
+
+highp float gl_ClipDistance[1];
+
+void main()
+{
+    gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+
+    gl_ClipDistance[0] = gl_Position.w;
+})";
+
+    GLProgram prg;
+    prg.makeRaster(kVS, essl1_shaders::fs::Red());
     EXPECT_FALSE(prg.valid());
 }
 
@@ -724,22 +750,29 @@ TEST_P(ClipCullDistanceTest, StateQuery)
     EXPECT_EQ(maxCombinedClipAndCullDistances, 0);
     EXPECT_GL_ERROR(GL_INVALID_ENUM);
 
+    auto assertState = [](GLenum pname, bool valid, bool expectedState) {
+        EXPECT_EQ(glIsEnabled(pname), valid ? expectedState : false);
+        EXPECT_GL_ERROR(valid ? GL_NO_ERROR : GL_INVALID_ENUM);
+
+        GLboolean result = false;
+        glGetBooleanv(pname, &result);
+        EXPECT_EQ(result, valid ? expectedState : false);
+        EXPECT_GL_ERROR(valid ? GL_NO_ERROR : GL_INVALID_ENUM);
+    };
+
     for (size_t i = 0; i < 8; i++)
     {
-        EXPECT_FALSE(glIsEnabled(GL_CLIP_DISTANCE0_EXT + i));
-        EXPECT_GL_ERROR(GL_INVALID_ENUM);
+        assertState(GL_CLIP_DISTANCE0_EXT + i, false, false);
 
         glEnable(GL_CLIP_DISTANCE0_EXT + i);
         EXPECT_GL_ERROR(GL_INVALID_ENUM);
 
-        EXPECT_FALSE(glIsEnabled(GL_CLIP_DISTANCE0_EXT + i));
-        EXPECT_GL_ERROR(GL_INVALID_ENUM);
+        assertState(GL_CLIP_DISTANCE0_EXT + i, false, false);
 
         glDisable(GL_CLIP_DISTANCE0_EXT + i);
         EXPECT_GL_ERROR(GL_INVALID_ENUM);
 
-        EXPECT_FALSE(glIsEnabled(GL_CLIP_DISTANCE0_EXT + i));
-        EXPECT_GL_ERROR(GL_INVALID_ENUM);
+        assertState(GL_CLIP_DISTANCE0_EXT + i, false, false);
     }
 
     ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled(kExtensionName));
@@ -774,20 +807,17 @@ TEST_P(ClipCullDistanceTest, StateQuery)
 
     for (size_t i = 0; i < 8; i++)
     {
-        EXPECT_FALSE(glIsEnabled(GL_CLIP_DISTANCE0_EXT + i));
-        EXPECT_GL_NO_ERROR();
+        assertState(GL_CLIP_DISTANCE0_EXT + i, true, false);
 
         glEnable(GL_CLIP_DISTANCE0_EXT + i);
         EXPECT_GL_NO_ERROR();
 
-        EXPECT_TRUE(glIsEnabled(GL_CLIP_DISTANCE0_EXT + i));
-        EXPECT_GL_NO_ERROR();
+        assertState(GL_CLIP_DISTANCE0_EXT + i, true, true);
 
         glDisable(GL_CLIP_DISTANCE0_EXT + i);
         EXPECT_GL_NO_ERROR();
 
-        EXPECT_FALSE(glIsEnabled(GL_CLIP_DISTANCE0_EXT + i));
-        EXPECT_GL_NO_ERROR();
+        assertState(GL_CLIP_DISTANCE0_EXT + i, true, false);
     }
 }
 
@@ -827,6 +857,84 @@ void main()
         GLProgram prg;
         prg.makeRaster(vs.c_str(), essl1_shaders::fs::Red());
         EXPECT_FALSE(prg.valid());
+    }
+}
+
+// Check that shaders with invalid or missing storage qualifiers are rejected
+TEST_P(ClipCullDistanceTest, StorageQualifiers)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled(kExtensionName));
+
+    std::stringstream vertexSource;
+    auto vs = [=, &vertexSource](std::string name, std::string qualifier) {
+        vertexSource.str(std::string());
+        vertexSource.clear();
+        vertexSource << "#version 300 es\n"
+                     << "#extension " << kExtensionName << " : require\n"
+                     << qualifier << " highp float " << name << "[1];\n"
+                     << "void main()\n"
+                     << "{\n"
+                     << "    gl_Position = vec4(0.0, 0.0, 0.0, 1.0);\n"
+                     << "    " << name << "[0] = 1.0;\n"
+                     << "}";
+    };
+
+    std::stringstream fragmentSource;
+    auto fs = [=, &fragmentSource](std::string name, std::string qualifier) {
+        fragmentSource.str(std::string());
+        fragmentSource.clear();
+        fragmentSource << "#version 300 es\n"
+                       << "#extension " << kExtensionName << " : require\n"
+                       << qualifier << " highp float " << name << "[1];\n"
+                       << "out highp vec4 my_FragColor;\n"
+                       << "void main()\n"
+                       << "{\n"
+                       << "    my_FragColor = vec4(" << name << "[0], 0.0, 0.0, 1.0);\n"
+                       << "}";
+    };
+
+    auto checkProgram = [=, &vertexSource, &fragmentSource](std::string name,
+                                                            std::string qualifierVertex,
+                                                            std::string qualifierFragment) {
+        GLProgram program;
+        vs(name, qualifierVertex);
+        fs(name, qualifierFragment);
+        program.makeRaster(vertexSource.str().c_str(), fragmentSource.str().c_str());
+        return program.valid();
+    };
+
+    GLint maxClipDistances = 0;
+    glGetIntegerv(GL_MAX_CLIP_DISTANCES_EXT, &maxClipDistances);
+    ASSERT_GT(maxClipDistances, 0);
+
+    GLint maxCullDistances = 0;
+    glGetIntegerv(GL_MAX_CULL_DISTANCES_EXT, &maxCullDistances);
+    if (mCullDistanceSupportRequired)
+    {
+        ASSERT_GT(maxCullDistances, 0);
+    }
+    else
+    {
+        ASSERT_GE(maxCullDistances, 0);
+    }
+
+    std::pair<std::string, int> entries[2] = {{"gl_ClipDistance", maxClipDistances},
+                                              {"gl_CullDistance", maxCullDistances}};
+    for (auto entry : entries)
+    {
+        if (entry.second == 0)
+            continue;
+
+        EXPECT_TRUE(checkProgram(entry.first, "out", "in"));
+
+        EXPECT_FALSE(checkProgram(entry.first, "", ""));
+        EXPECT_FALSE(checkProgram(entry.first, "", "in"));
+        EXPECT_FALSE(checkProgram(entry.first, "", "out"));
+        EXPECT_FALSE(checkProgram(entry.first, "in", ""));
+        EXPECT_FALSE(checkProgram(entry.first, "in", "in"));
+        EXPECT_FALSE(checkProgram(entry.first, "in", "out"));
+        EXPECT_FALSE(checkProgram(entry.first, "out", ""));
+        EXPECT_FALSE(checkProgram(entry.first, "out", "out"));
     }
 }
 
