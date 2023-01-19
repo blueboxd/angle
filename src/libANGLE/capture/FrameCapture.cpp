@@ -670,17 +670,34 @@ void WriteStringPointerParamReplay(ReplayWriter &replayWriter,
     out << varName;
 }
 
+enum class Indent
+{
+    Indent,
+    NoIdent,
+};
+
+void UpdateResourceIDBuffer(std::ostream &out,
+                            Indent indent,
+                            size_t bufferIndex,
+                            const char *mapName,
+                            GLuint resourceID)
+{
+    if (indent == Indent::Indent)
+    {
+        out << "    ";
+    }
+    out << "UpdateResourceIDBuffer(" << bufferIndex << ", g" << mapName << "Map[" << resourceID
+        << "]);\n";
+}
+
 template <typename ParamT>
 void WriteResourceIDPointerParamReplay(ReplayWriter &replayWriter,
                                        std::ostream &out,
                                        std::ostream &header,
                                        const CallCapture &call,
-                                       const ParamCapture &param)
+                                       const ParamCapture &param,
+                                       size_t *maxResourceIDBufferSize)
 {
-    std::string varName = replayWriter.getInlineVariableName(call.entryPoint, param.name);
-
-    header << "const GLuint " << varName << "[] = { ";
-
     const ResourceIDType resourceIDType = GetResourceIDTypeFromParamType(param.type);
     ASSERT(resourceIDType != ResourceIDType::InvalidEnum);
     const char *name = GetResourceIDTypeName(resourceIDType);
@@ -693,20 +710,13 @@ void WriteResourceIDPointerParamReplay(ReplayWriter &replayWriter,
         for (GLsizei resIndex = 0; resIndex < param.dataNElements; ++resIndex)
         {
             ParamT id = returnedIDs[resIndex];
-            if (resIndex > 0)
-            {
-                header << ", ";
-            }
-            header << "g" << name << "Map[" << id.value << "]";
+            UpdateResourceIDBuffer(header, Indent::NoIdent, resIndex, name, id.value);
         }
-    }
-    else
-    {
-        header << "0";
-    }
-    header << " };\n    ";
 
-    out << varName;
+        *maxResourceIDBufferSize = std::max<size_t>(*maxResourceIDBufferSize, param.dataNElements);
+    }
+
+    out << "gResourceIDBuffer";
 }
 
 void WriteBinaryParamReplay(ReplayWriter &replayWriter,
@@ -751,7 +761,8 @@ void WriteCppReplayForCall(const CallCapture &call,
                            ReplayWriter &replayWriter,
                            std::ostream &out,
                            std::ostream &header,
-                           std::vector<uint8_t> *binaryData)
+                           std::vector<uint8_t> *binaryData,
+                           size_t *maxResourceIDBufferSize)
 {
     std::ostringstream callOut;
 
@@ -818,52 +829,52 @@ void WriteCppReplayForCall(const CallCapture &call,
                     WriteStringPointerParamReplay(replayWriter, callOut, header, call, param);
                     break;
                 case ParamType::TBufferIDConstPointer:
-                    WriteResourceIDPointerParamReplay<gl::BufferID>(replayWriter, callOut, out,
-                                                                    call, param);
+                    WriteResourceIDPointerParamReplay<gl::BufferID>(
+                        replayWriter, callOut, out, call, param, maxResourceIDBufferSize);
                     break;
                 case ParamType::TFenceNVIDConstPointer:
-                    WriteResourceIDPointerParamReplay<gl::FenceNVID>(replayWriter, callOut, out,
-                                                                     call, param);
+                    WriteResourceIDPointerParamReplay<gl::FenceNVID>(
+                        replayWriter, callOut, out, call, param, maxResourceIDBufferSize);
                     break;
                 case ParamType::TFramebufferIDConstPointer:
-                    WriteResourceIDPointerParamReplay<gl::FramebufferID>(replayWriter, callOut, out,
-                                                                         call, param);
+                    WriteResourceIDPointerParamReplay<gl::FramebufferID>(
+                        replayWriter, callOut, out, call, param, maxResourceIDBufferSize);
                     break;
                 case ParamType::TMemoryObjectIDConstPointer:
-                    WriteResourceIDPointerParamReplay<gl::MemoryObjectID>(replayWriter, callOut,
-                                                                          out, call, param);
+                    WriteResourceIDPointerParamReplay<gl::MemoryObjectID>(
+                        replayWriter, callOut, out, call, param, maxResourceIDBufferSize);
                     break;
                 case ParamType::TProgramPipelineIDConstPointer:
-                    WriteResourceIDPointerParamReplay<gl::ProgramPipelineID>(replayWriter, callOut,
-                                                                             out, call, param);
+                    WriteResourceIDPointerParamReplay<gl::ProgramPipelineID>(
+                        replayWriter, callOut, out, call, param, maxResourceIDBufferSize);
                     break;
                 case ParamType::TQueryIDConstPointer:
                     WriteResourceIDPointerParamReplay<gl::QueryID>(replayWriter, callOut, out, call,
-                                                                   param);
+                                                                   param, maxResourceIDBufferSize);
                     break;
                 case ParamType::TRenderbufferIDConstPointer:
-                    WriteResourceIDPointerParamReplay<gl::RenderbufferID>(replayWriter, callOut,
-                                                                          out, call, param);
+                    WriteResourceIDPointerParamReplay<gl::RenderbufferID>(
+                        replayWriter, callOut, out, call, param, maxResourceIDBufferSize);
                     break;
                 case ParamType::TSamplerIDConstPointer:
-                    WriteResourceIDPointerParamReplay<gl::SamplerID>(replayWriter, callOut, out,
-                                                                     call, param);
+                    WriteResourceIDPointerParamReplay<gl::SamplerID>(
+                        replayWriter, callOut, out, call, param, maxResourceIDBufferSize);
                     break;
                 case ParamType::TSemaphoreIDConstPointer:
-                    WriteResourceIDPointerParamReplay<gl::SemaphoreID>(replayWriter, callOut, out,
-                                                                       call, param);
+                    WriteResourceIDPointerParamReplay<gl::SemaphoreID>(
+                        replayWriter, callOut, out, call, param, maxResourceIDBufferSize);
                     break;
                 case ParamType::TTextureIDConstPointer:
-                    WriteResourceIDPointerParamReplay<gl::TextureID>(replayWriter, callOut, out,
-                                                                     call, param);
+                    WriteResourceIDPointerParamReplay<gl::TextureID>(
+                        replayWriter, callOut, out, call, param, maxResourceIDBufferSize);
                     break;
                 case ParamType::TTransformFeedbackIDConstPointer:
                     WriteResourceIDPointerParamReplay<gl::TransformFeedbackID>(
-                        replayWriter, callOut, out, call, param);
+                        replayWriter, callOut, out, call, param, maxResourceIDBufferSize);
                     break;
                 case ParamType::TVertexArrayIDConstPointer:
-                    WriteResourceIDPointerParamReplay<gl::VertexArrayID>(replayWriter, callOut, out,
-                                                                         call, param);
+                    WriteResourceIDPointerParamReplay<gl::VertexArrayID>(
+                        replayWriter, callOut, out, call, param, maxResourceIDBufferSize);
                     break;
                 default:
                     WriteBinaryParamReplay(replayWriter, callOut, header, call, param, binaryData);
@@ -947,17 +958,26 @@ void WriteInitReplayCall(bool compression,
                          const std::string &captureLabel,
                          size_t maxClientArraySize,
                          size_t readBufferSize,
+                         size_t resourceIDBufferSize,
                          const PackedEnumMap<ResourceIDType, uint32_t> &maxIDs)
 {
+    std::string binaryDataFileName = GetBinaryDataFilePath(compression, captureLabel);
+
+    out << "    // binaryDataFileName = " << binaryDataFileName << "\n";
+    out << "    // maxClientArraySize = " << maxClientArraySize << "\n";
+    out << "    // maxClientArraySize = " << maxClientArraySize << "\n";
+    out << "    // readBufferSize = " << readBufferSize << "\n";
+    out << "    // resourceIDBufferSize = " << resourceIDBufferSize << "\n";
+    out << "    // contextID = " << contextID << "\n";
+
     for (ResourceIDType resourceID : AllEnums<ResourceIDType>())
     {
         const char *name = GetResourceIDTypeName(resourceID);
         out << "    // max" << name << " = " << maxIDs[resourceID] << "\n";
     }
 
-    std::string binaryDataFileName = GetBinaryDataFilePath(compression, captureLabel);
-    out << "    InitializeReplay2(\"" << binaryDataFileName << "\", " << maxClientArraySize << ", "
-        << readBufferSize << ", " << contextID;
+    out << "    InitializeReplay3(\"" << binaryDataFileName << "\", " << maxClientArraySize << ", "
+        << readBufferSize << ", " << resourceIDBufferSize << ", " << contextID;
 
     for (ResourceIDType resourceID : AllEnums<ResourceIDType>())
     {
@@ -965,6 +985,33 @@ void WriteInitReplayCall(bool compression,
     }
 
     out << ");\n";
+}
+
+void DeleteResourcesInReset(std::stringstream &out,
+                            const ResourceSet &newResources,
+                            const ResourceSet &resourcesToDelete,
+                            const char *resourceName,
+                            size_t *maxResourceIDBufferSize)
+{
+    if (!newResources.empty() || !resourcesToDelete.empty())
+    {
+        size_t count = 0;
+
+        for (GLuint oldResource : resourcesToDelete)
+        {
+            UpdateResourceIDBuffer(out, Indent::Indent, count++, resourceName, oldResource);
+        }
+
+        for (GLuint newResource : newResources)
+        {
+            UpdateResourceIDBuffer(out, Indent::Indent, count++, resourceName, newResource);
+        }
+
+        // Delete all the new and old buffers at once
+        out << "    glDelete" << resourceName << "s(" << count << ", gResourceIDBuffer);\n";
+
+        *maxResourceIDBufferSize = std::max(*maxResourceIDBufferSize, count);
+    }
 }
 
 // TODO (http://anglebug.com/4599): Reset more state on frame loop
@@ -975,23 +1022,9 @@ void MaybeResetResources(gl::ContextID contextID,
                          std::stringstream &header,
                          ResourceTracker *resourceTracker,
                          std::vector<uint8_t> *binaryData,
-                         bool &anyResourceReset)
+                         bool &anyResourceReset,
+                         size_t *maxResourceIDBufferSize)
 {
-    // Local helper to get well structured blocks in Delete calls, i.e.
-    // const GLuint deleteTextures[] = {
-    //    gTextureMap[1], gTextureMap[2], gTextureMap[3], gTextureMap[4],
-    //    gTextureMap[5], gTextureMap[6], gTextureMap[7], gTextureMap[8]};
-    auto formatResourceIndex = [](std::stringstream &out, size_t i) {
-        if (i > 0)
-        {
-            out << ", ";
-        }
-        if ((i % 4) == 0)
-        {
-            out << "\n        ";
-        }
-    };
-
     // Track the initial output position so we can detect if it has moved
     std::streampos initialOutPos = out.tellp();
 
@@ -1010,32 +1043,8 @@ void MaybeResetResources(gl::ContextID contextID,
             BufferCalls &bufferMapCalls   = resourceTracker->getBufferMapCalls();
             BufferCalls &bufferUnmapCalls = resourceTracker->getBufferUnmapCalls();
 
-            // If we have any new buffers generated and not deleted during the run, or any buffers
-            // that we need to regen, delete them now
-            if (!newBuffers.empty() || !buffersToDelete.empty())
-            {
-                size_t count = 0;
-
-                out << "    const GLuint deleteBuffers[] = {";
-
-                for (auto &oldBuffer : buffersToDelete)
-                {
-                    formatResourceIndex(out, count);
-                    out << "gBufferMap[" << oldBuffer << "]";
-                    ++count;
-                }
-
-                for (auto &newBuffer : newBuffers)
-                {
-                    formatResourceIndex(out, count);
-                    out << "gBufferMap[" << newBuffer << "]";
-                    ++count;
-                }
-
-                // Delete all the new and old buffers at once
-                out << "};\n";
-                out << "    glDeleteBuffers(" << count << ", deleteBuffers);\n";
-            }
+            DeleteResourcesInReset(out, newBuffers, buffersToDelete, "Buffer",
+                                   maxResourceIDBufferSize);
 
             // If any of our starting buffers were deleted during the run, recreate them
             for (GLuint id : buffersToRegen)
@@ -1044,7 +1053,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : bufferRegenCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
                 }
             }
@@ -1060,7 +1070,8 @@ void MaybeResetResources(gl::ContextID contextID,
                     for (CallCapture &call : bufferUnmapCalls[id])
                     {
                         out << "    ";
-                        WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                        WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                              maxResourceIDBufferSize);
                         out << ";\n";
                     }
                 }
@@ -1069,7 +1080,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : bufferRestoreCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
 
                     // Also note that this buffer has been implicitly unmapped by this call
@@ -1089,7 +1101,8 @@ void MaybeResetResources(gl::ContextID contextID,
                     for (CallCapture &call : bufferMapCalls[id])
                     {
                         out << "    ";
-                        WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                        WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                              maxResourceIDBufferSize);
                         out << ";\n";
                     }
                 }
@@ -1101,7 +1114,8 @@ void MaybeResetResources(gl::ContextID contextID,
                     for (CallCapture &call : bufferUnmapCalls[id])
                     {
                         out << "    ";
-                        WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                        WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                              maxResourceIDBufferSize);
                         out << ";\n";
                     }
                 }
@@ -1112,7 +1126,8 @@ void MaybeResetResources(gl::ContextID contextID,
             for (CallCapture &call : bufferBindingCalls)
             {
                 out << "    ";
-                WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                      maxResourceIDBufferSize);
                 out << ";\n";
             }
 
@@ -1128,32 +1143,8 @@ void MaybeResetResources(gl::ContextID contextID,
             ResourceCalls &framebufferRegenCalls   = trackedFramebuffers.getResourceRegenCalls();
             ResourceCalls &framebufferRestoreCalls = trackedFramebuffers.getResourceRestoreCalls();
 
-            // If we have any new framebuffers generated and not deleted during the run, or any
-            // framebuffers that we need to regen, delete them now
-            if (!newFramebuffers.empty() || !framebuffersToDelete.empty())
-            {
-                size_t count = 0;
-
-                out << "    const GLuint deleteFramebuffers[] = {";
-
-                for (auto &oldFb : framebuffersToDelete)
-                {
-                    formatResourceIndex(out, count);
-                    out << "gFramebufferMap[" << oldFb << "]";
-                    ++count;
-                }
-
-                for (auto &newFb : newFramebuffers)
-                {
-                    formatResourceIndex(out, count);
-                    out << "gFramebufferMap[" << newFb << "]";
-                    ++count;
-                }
-
-                // Delete all the new and old framebuffers at once
-                out << "};\n";
-                out << "    glDeleteFramebuffers(" << count << ", deleteFramebuffers);\n";
-            }
+            DeleteResourcesInReset(out, newFramebuffers, framebuffersToDelete, "Framebuffer",
+                                   maxResourceIDBufferSize);
 
             for (GLuint id : framebuffersToRegen)
             {
@@ -1161,7 +1152,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : framebufferRegenCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
                 }
             }
@@ -1175,7 +1167,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : framebufferRestoreCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
                 }
             }
@@ -1192,31 +1185,8 @@ void MaybeResetResources(gl::ContextID contextID,
             ResourceCalls &renderbufferRestoreCalls =
                 trackedRenderbuffers.getResourceRestoreCalls();
 
-            // If we have any new renderbuffers generated and not deleted during the run, or any
-            // renderbuffers that we need to regen, delete them now
-            if (!newRenderbuffers.empty() || !renderbuffersToDelete.empty())
-            {
-                size_t count = 0;
-
-                out << "    const GLuint deleteRenderbuffers[] = {";
-
-                for (auto &oldRb : renderbuffersToDelete)
-                {
-                    formatResourceIndex(out, count);
-                    out << "gRenderbufferMap[" << oldRb << "]";
-                    ++count;
-                }
-
-                for (auto &newRb : newRenderbuffers)
-                {
-                    formatResourceIndex(out, count);
-                    out << "gRenderbufferMap[" << newRb << "]";
-                    ++count;
-                }
-
-                out << "};\n";
-                out << "    glDeleteRenderbuffers(" << count << ", deleteRenderbuffers);\n";
-            }
+            DeleteResourcesInReset(out, newRenderbuffers, renderbuffersToDelete, "Renderbuffer",
+                                   maxResourceIDBufferSize);
 
             for (GLuint id : renderbuffersToRegen)
             {
@@ -1224,7 +1194,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : renderbufferRegenCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
                 }
             }
@@ -1238,7 +1209,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : renderbufferRestoreCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
                 }
             }
@@ -1297,7 +1269,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : shaderProgramRegenCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
                 }
             }
@@ -1308,7 +1281,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : shaderProgramRestoreCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
                 }
             }
@@ -1325,31 +1299,8 @@ void MaybeResetResources(gl::ContextID contextID,
             ResourceCalls &textureRegenCalls   = trackedTextures.getResourceRegenCalls();
             ResourceCalls &textureRestoreCalls = trackedTextures.getResourceRestoreCalls();
 
-            // If we have any new textures generated and not deleted during the run, or any textures
-            // modified during the run that we need to regen, delete them now
-            if (!newTextures.empty() || !texturesToDelete.empty())
-            {
-                size_t count = 0;
-
-                out << "    const GLuint deleteTextures[] = {";
-
-                for (auto &oldTex : texturesToDelete)
-                {
-                    formatResourceIndex(out, count);
-                    out << "gTextureMap[" << oldTex << "]";
-                    ++count;
-                }
-
-                for (auto &newTex : newTextures)
-                {
-                    formatResourceIndex(out, count);
-                    out << "gTextureMap[" << newTex << "]";
-                    ++count;
-                }
-
-                out << "};\n";
-                out << "    glDeleteTextures(" << count << ", deleteTextures);\n";
-            }
+            DeleteResourcesInReset(out, newTextures, texturesToDelete, "Texture",
+                                   maxResourceIDBufferSize);
 
             // If any of our starting textures were deleted, regen them
             for (GLuint id : texturesToRegen)
@@ -1358,7 +1309,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : textureRegenCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
                 }
             }
@@ -1371,7 +1323,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : textureRestoreCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
                 }
             }
@@ -1388,32 +1341,8 @@ void MaybeResetResources(gl::ContextID contextID,
             ResourceCalls &vertexArrayRegenCalls   = trackedVertexArrays.getResourceRegenCalls();
             ResourceCalls &vertexArrayRestoreCalls = trackedVertexArrays.getResourceRestoreCalls();
 
-            // If we have any new vertex arrays generated and not deleted during the run, or any
-            // vertex arrays we need to regen, delete them now
-            if (!newVertexArrays.empty() || !vertexArraysToDelete.empty())
-            {
-                size_t count = 0;
-
-                out << "    const GLuint deleteVertexArrays[] = {";
-
-                for (auto &oldVA : vertexArraysToDelete)
-                {
-                    formatResourceIndex(out, count);
-                    out << "gVertexArrayMap[" << oldVA << "]";
-                    ++count;
-                }
-
-                for (auto &newVA : newVertexArrays)
-                {
-                    formatResourceIndex(out, count);
-                    out << "gVertexArrayMap[" << newVA << "]";
-                    ++count;
-                }
-
-                // Delete all the new and old vertex arrays at once
-                out << "};\n";
-                out << "    glDeleteVertexArrays(" << count << ", deleteVertexArrays);\n";
-            }
+            DeleteResourcesInReset(out, newVertexArrays, vertexArraysToDelete, "VertexArray",
+                                   maxResourceIDBufferSize);
 
             // If any of our starting vertex arrays were deleted during the run, recreate them
             for (GLuint id : vertexArraysToRegen)
@@ -1422,7 +1351,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : vertexArrayRegenCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
                 }
             }
@@ -1435,7 +1365,8 @@ void MaybeResetResources(gl::ContextID contextID,
                 for (CallCapture &call : vertexArrayRestoreCalls[id])
                 {
                     out << "    ";
-                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                    WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                          maxResourceIDBufferSize);
                     out << ";\n";
                 }
             }
@@ -1454,19 +1385,21 @@ void MaybeResetFenceSyncObjects(std::stringstream &out,
                                 ReplayWriter &replayWriter,
                                 std::stringstream &header,
                                 ResourceTracker *resourceTracker,
-                                std::vector<uint8_t> *binaryData)
+                                std::vector<uint8_t> *binaryData,
+                                size_t *maxResourceIDBufferSize)
 {
     FenceSyncCalls &fenceSyncRegenCalls = resourceTracker->getFenceSyncRegenCalls();
 
     // If any of our starting fence sync objects were deleted during the run, recreate them
     FenceSyncSet &fenceSyncsToRegen = resourceTracker->getFenceSyncsToRegen();
-    for (const GLsync sync : fenceSyncsToRegen)
+    for (const gl::SyncID syncID : fenceSyncsToRegen)
     {
         // Emit their regen calls
-        for (CallCapture &call : fenceSyncRegenCalls[sync])
+        for (CallCapture &call : fenceSyncRegenCalls[syncID])
         {
             out << "    ";
-            WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+            WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                  maxResourceIDBufferSize);
             out << ";\n";
         }
     }
@@ -1519,7 +1452,8 @@ void MaybeResetDefaultUniforms(std::stringstream &out,
                                std::stringstream &header,
                                const gl::Context *context,
                                ResourceTracker *resourceTracker,
-                               std::vector<uint8_t> *binaryData)
+                               std::vector<uint8_t> *binaryData,
+                               size_t *maxResourceIDBufferSize)
 {
     DefaultUniformLocationsPerProgramMap &defaultUniformsToReset =
         resourceTracker->getDefaultUniformsToReset();
@@ -1542,7 +1476,8 @@ void MaybeResetDefaultUniforms(std::stringstream &out,
         for (CallCapture &call : bindCalls)
         {
             out << "    ";
-            WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+            WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                  maxResourceIDBufferSize);
             out << ";\n";
         }
 
@@ -1571,7 +1506,8 @@ void MaybeResetDefaultUniforms(std::stringstream &out,
             for (CallCapture &call : callsPerLocation)
             {
                 out << "    ";
-                WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+                WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                      maxResourceIDBufferSize);
                 out << ";\n";
             }
         }
@@ -1583,11 +1519,14 @@ void MaybeResetOpaqueTypeObjects(ReplayWriter &replayWriter,
                                  std::stringstream &header,
                                  const gl::Context *context,
                                  ResourceTracker *resourceTracker,
-                                 std::vector<uint8_t> *binaryData)
+                                 std::vector<uint8_t> *binaryData,
+                                 size_t *maxResourceIDBufferSize)
 {
-    MaybeResetFenceSyncObjects(out, replayWriter, header, resourceTracker, binaryData);
+    MaybeResetFenceSyncObjects(out, replayWriter, header, resourceTracker, binaryData,
+                               maxResourceIDBufferSize);
 
-    MaybeResetDefaultUniforms(out, replayWriter, header, context, resourceTracker, binaryData);
+    MaybeResetDefaultUniforms(out, replayWriter, header, context, resourceTracker, binaryData,
+                              maxResourceIDBufferSize);
 }
 
 void MaybeResetContextState(ReplayWriter &replayWriter,
@@ -1596,7 +1535,8 @@ void MaybeResetContextState(ReplayWriter &replayWriter,
                             ResourceTracker *resourceTracker,
                             const gl::Context *context,
                             std::vector<uint8_t> *binaryData,
-                            StateResetHelper &stateResetHelper)
+                            StateResetHelper &stateResetHelper,
+                            size_t *maxResourceIDBufferSize)
 {
     // Check dirty states per entrypoint
     for (const EntryPoint &entryPoint : stateResetHelper.getDirtyEntryPoints())
@@ -1615,7 +1555,8 @@ void MaybeResetContextState(ReplayWriter &replayWriter,
         for (const auto &call : resetCalls->at(entryPoint))
         {
             out << "    ";
-            WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+            WriteCppReplayForCall(call, replayWriter, out, header, binaryData,
+                                  maxResourceIDBufferSize);
             out << ";\n";
         }
     }
@@ -1651,7 +1592,8 @@ void WriteCppReplayFunctionWithParts(const gl::ContextID contextID,
                                      std::vector<uint8_t> *binaryData,
                                      const std::vector<CallCapture> &calls,
                                      std::stringstream &header,
-                                     std::stringstream &out)
+                                     std::stringstream &out,
+                                     size_t *maxResourceIDBufferSize)
 {
     int callCount = 0;
     int partCount = 0;
@@ -1680,7 +1622,7 @@ void WriteCppReplayFunctionWithParts(const gl::ContextID contextID,
         }
 
         out << "    ";
-        WriteCppReplayForCall(call, replayWriter, out, header, binaryData);
+        WriteCppReplayForCall(call, replayWriter, out, header, binaryData, maxResourceIDBufferSize);
         out << ";\n";
 
         if (partCount > 0 && ++callCount % kFunctionSizeLimit == 0)
@@ -1726,7 +1668,8 @@ void WriteAuxiliaryContextCppSetupReplay(ReplayWriter &replayWriter,
                                          const std::vector<CallCapture> &setupCalls,
                                          std::vector<uint8_t> *binaryData,
                                          bool serializeStateEnabled,
-                                         const FrameCaptureShared &frameCaptureShared)
+                                         const FrameCaptureShared &frameCaptureShared,
+                                         size_t *maxResourceIDBufferSize)
 {
     ASSERT(frameCaptureShared.getWindowSurfaceContextID() != context->id());
 
@@ -1758,7 +1701,8 @@ void WriteAuxiliaryContextCppSetupReplay(ReplayWriter &replayWriter,
         std::string proto = protoStream.str();
 
         WriteCppReplayFunctionWithParts(context->id(), ReplayFunc::Setup, replayWriter, frameIndex,
-                                        binaryData, setupCalls, headerStream, bodyStream);
+                                        binaryData, setupCalls, headerStream, bodyStream,
+                                        maxResourceIDBufferSize);
 
         replayWriter.addPrivateFunction(proto, headerStream, bodyStream);
     }
@@ -1776,7 +1720,8 @@ void WriteShareGroupCppSetupReplay(ReplayWriter &replayWriter,
                                    ResourceTracker *resourceTracker,
                                    std::vector<uint8_t> *binaryData,
                                    bool serializeStateEnabled,
-                                   gl::ContextID windowSurfaceContextID)
+                                   gl::ContextID windowSurfaceContextID,
+                                   size_t *maxResourceIDBufferSize)
 {
     {
         std::stringstream include;
@@ -1801,7 +1746,7 @@ void WriteShareGroupCppSetupReplay(ReplayWriter &replayWriter,
 
         WriteCppReplayFunctionWithParts(kSharedContextId, ReplayFunc::Setup, replayWriter,
                                         frameIndex, binaryData, setupCalls, headerStream,
-                                        bodyStream);
+                                        bodyStream, maxResourceIDBufferSize);
 
         replayWriter.addPrivateFunction(proto, headerStream, bodyStream);
     }
@@ -2274,6 +2219,10 @@ bool IsSharedObjectResource(ResourceIDType type)
             // 2.6.7 Sampler Objects: Sampler objects may be shared
             return true;
 
+        case ResourceIDType::Sync:
+            // 2.6.13 Sync Objects: Sync objects may be shared.
+            return true;
+
         case ResourceIDType::Texture:
             // 2.6.6 Texture Objects: Texture objects may be shared
             return true;
@@ -2298,7 +2247,7 @@ bool IsSharedObjectResource(ResourceIDType type)
             // Return false for all EGL object types.
             return false;
 
-        case ResourceIDType::InvalidEnum:
+        case ResourceIDType::EnumCount:
         default:
             ERR() << "Unhandled ResourceIDType= " << static_cast<int>(type);
             UNREACHABLE();
@@ -3299,7 +3248,7 @@ void CaptureCustomFenceSync(CallCapture &call, std::vector<CallCapture> &callsOu
     ParamBuffer &&params = std::move(call.params);
     params.addValueParam("fenceSync", ParamType::TGLuint64,
                          params.getReturnValue().value.GLuint64Val);
-    call.customFunctionName = "FenceSync";
+    call.customFunctionName = "FenceSync2";
     callsOut.emplace_back(std::move(call));
 }
 
@@ -3411,12 +3360,21 @@ void GenerateLinkedProgram(const gl::Context *context,
 
     // Force the attributes to be bound the same way as in the existing program.
     // This can affect attributes that are optimized out in some implementations.
-    if (program->getExecutable().hasLinkedShaderStage(gl::ShaderType::Vertex))
+    for (const sh::ShaderVariable &attrib : program->getState().getProgramInputs())
     {
-        for (const auto &[attrib_name, location] : program->getAttributeBindings())
+        if (gl::IsBuiltInName(attrib.name))
         {
-            Capture(setupCalls, CaptureBindAttribLocation(replayState, true, id, location,
-                                                          attrib_name.c_str()));
+            // Don't try to bind built-in attributes
+            continue;
+        }
+
+        // Separable programs may not have a VS, meaning it may not have attributes.
+        if (program->getExecutable().hasLinkedShaderStage(gl::ShaderType::Vertex))
+        {
+            ASSERT(attrib.location != -1);
+            Capture(setupCalls, CaptureBindAttribLocation(replayState, true, id,
+                                                          static_cast<GLuint>(attrib.location),
+                                                          attrib.name.c_str()));
         }
     }
 
@@ -3553,13 +3511,14 @@ void CaptureBufferResetCalls(const gl::Context *context,
 void CaptureFenceSyncResetCalls(const gl::Context *context,
                                 const gl::State &replayState,
                                 ResourceTracker *resourceTracker,
-                                GLsync syncID,
+                                gl::SyncID syncID,
+                                GLsync syncObject,
                                 const gl::Sync *sync)
 {
     // Track calls to regenerate a given fence sync
     FenceSyncCalls &fenceSyncRegenCalls = resourceTracker->getFenceSyncRegenCalls();
     CallCapture fenceSync =
-        CaptureFenceSync(replayState, true, sync->getCondition(), sync->getFlags(), syncID);
+        CaptureFenceSync(replayState, true, sync->getCondition(), sync->getFlags(), syncObject);
     CaptureCustomFenceSync(fenceSync, fenceSyncRegenCalls[syncID]);
     MaybeCaptureUpdateResourceIDs(context, resourceTracker, &fenceSyncRegenCalls[syncID]);
 }
@@ -4347,17 +4306,18 @@ void CaptureShareGroupMidExecutionSetup(
     const gl::SyncManager &syncs = apiState.getSyncManagerForCapture();
     for (const auto &syncIter : syncs)
     {
-        GLsync syncID        = gl::bitCast<GLsync>(static_cast<size_t>(syncIter.first));
+        gl::SyncID syncID    = {syncIter.first};
         const gl::Sync *sync = syncIter.second;
+        GLsync syncObject    = gl::unsafe_int_to_pointer_cast<GLsync>(syncID.value);
 
         if (!sync)
         {
             continue;
         }
         CallCapture fenceSync =
-            CaptureFenceSync(replayState, true, sync->getCondition(), sync->getFlags(), syncID);
+            CaptureFenceSync(replayState, true, sync->getCondition(), sync->getFlags(), syncObject);
         CaptureCustomFenceSync(fenceSync, *setupCalls);
-        CaptureFenceSyncResetCalls(context, replayState, resourceTracker, syncID, sync);
+        CaptureFenceSyncResetCalls(context, replayState, resourceTracker, syncID, syncObject, sync);
         resourceTracker->getStartingFenceSyncs().insert(syncID);
     }
 
@@ -5423,6 +5383,7 @@ FrameCaptureShared::FrameCaptureShared()
       mCaptureEndFrame(0),
       mClientArraySizes{},
       mReadBufferSize(0),
+      mResourceIDBufferSize(0),
       mHasResourceType{},
       mResourceIDToSetupCalls{},
       mMaxAccessedResourceIDs{},
@@ -6950,7 +6911,8 @@ void FrameCaptureShared::maybeCapturePreCallUpdates(
 
         case EntryPoint::GLDeleteSync:
         {
-            GLsync sync = call.params.getParam("sync", ParamType::TGLsync, 0).value.GLsyncVal;
+            gl::SyncID sync =
+                call.params.getParam("syncPacked", ParamType::TSyncID, 0).value.SyncIDVal;
             FrameCaptureShared *frameCaptureShared =
                 context->getShareGroup()->getFrameCaptureShared();
             // If we're capturing, track which fence sync has been deleted
@@ -7367,8 +7329,6 @@ void FrameCaptureShared::maybeCapturePreCallUpdates(
             }
         }
     }
-
-    updateResourceCountsFromCallCapture(call);
 }
 
 template <typename ParamValueType>
@@ -7425,6 +7385,11 @@ void FrameCaptureShared::updateResourceCountsFromParamCapture(const ParamCapture
                 }
             }
         }
+        if (idType == ResourceIDType::Sync)
+        {
+            mMaxAccessedResourceIDs[idType] =
+                std::max(mMaxAccessedResourceIDs[idType], param.value.GLuintVal);
+        }
     }
 }
 
@@ -7445,6 +7410,11 @@ void FrameCaptureShared::updateResourceCountsFromCallCapture(const CallCapture &
         case EntryPoint::GLCreateProgram:
             updateResourceCountsFromParamCapture(call.params.getReturnValue(),
                                                  ResourceIDType::ShaderProgram);
+            break;
+
+        case EntryPoint::GLFenceSync:
+            updateResourceCountsFromParamCapture(call.params.getReturnValue(),
+                                                 ResourceIDType::Sync);
             break;
 
         default:
@@ -7473,6 +7443,9 @@ void FrameCaptureShared::captureCall(gl::Context *context, CallCapture &&inCall,
             mFrameCalls.emplace_back(std::move(makeCurrentCall));
             mLastContextId = context->id();
         }
+
+        // Update resource counts before we override entry points with custom calls.
+        updateResourceCountsFromCallCapture(inCall);
 
         std::vector<CallCapture> outCalls;
         maybeOverrideEntryPoint(context, inCall, outCalls);
@@ -7937,7 +7910,8 @@ void FrameCaptureShared::runMidExecutionCapture(gl::Context *mainContext)
 
             WriteAuxiliaryContextCppSetupReplay(
                 mReplayWriter, mCompression, mOutDirectory, shareContext, mCaptureLabel, 1,
-                frameCapture->getSetupCalls(), &mBinaryData, mSerializeStateEnabled, *this);
+                frameCapture->getSetupCalls(), &mBinaryData, mSerializeStateEnabled, *this,
+                &mResourceIDBufferSize);
         }
     }
 
@@ -8019,7 +7993,8 @@ void FrameCaptureShared::onEndFrame(gl::Context *context)
         // Write shared MEC after frame sequence so we can eliminate unused assets like programs
         WriteShareGroupCppSetupReplay(mReplayWriter, mCompression, mOutDirectory, mCaptureLabel, 1,
                                       1, mShareGroupSetupCalls, &mResourceTracker, &mBinaryData,
-                                      mSerializeStateEnabled, mWindowSurfaceContextID);
+                                      mSerializeStateEnabled, mWindowSurfaceContextID,
+                                      &mResourceIDBufferSize);
 
         // Save the index files after the last frame.
         writeCppReplayIndexFiles(context, false);
@@ -8147,9 +8122,9 @@ void StateResetHelper::setDefaultResetCalls(const gl::Context *context,
     }
 }
 
-void ResourceTracker::setDeletedFenceSync(GLsync sync)
+void ResourceTracker::setDeletedFenceSync(gl::SyncID sync)
 {
-    ASSERT(sync != nullptr);
+    ASSERT(sync.value != 0);
     if (mStartingFenceSyncs.find(sync) == mStartingFenceSyncs.end())
     {
         // This is a fence sync created after MEC was initialized. Ignore it.
@@ -8445,7 +8420,7 @@ void FrameCaptureShared::writeCppReplayIndexFiles(const gl::Context *context,
         source << "{\n";
         WriteInitReplayCall(mCompression, source, context->id(), mCaptureLabel,
                             MaxClientArraySize(mClientArraySizes), mReadBufferSize,
-                            mMaxAccessedResourceIDs);
+                            mResourceIDBufferSize, mMaxAccessedResourceIDs);
         source << "}\n";
 
         mReplayWriter.addPrivateFunction(proto, std::stringstream(), source);
@@ -8560,7 +8535,7 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
 
             WriteCppReplayFunctionWithParts(context->id(), ReplayFunc::Setup, mReplayWriter,
                                             frameIndex, &mBinaryData, setupCalls, headerStream,
-                                            bodyStream);
+                                            bodyStream, &mResourceIDBufferSize);
 
             mReplayWriter.addPrivateFunction(proto, headerStream, bodyStream);
         }
@@ -8680,13 +8655,13 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
                 }
                 // Use current context for shared reset
                 MaybeResetResources(context->id(), resourceType, mReplayWriter, bodyStream,
-                                    headerStream, &mResourceTracker, &mBinaryData,
-                                    anyResourceReset);
+                                    headerStream, &mResourceTracker, &mBinaryData, anyResourceReset,
+                                    &mResourceIDBufferSize);
             }
 
             // Reset opaque type objects that don't have IDs, so are not ResourceIDTypes.
             MaybeResetOpaqueTypeObjects(mReplayWriter, bodyStream, headerStream, context,
-                                        &mResourceTracker, &mBinaryData);
+                                        &mResourceTracker, &mBinaryData, &mResourceIDBufferSize);
 
             bodyStream << "}\n";
 
@@ -8725,7 +8700,7 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
                     }
                     MaybeResetResources(contextID, resourceType, mReplayWriter, resetStream,
                                         headerStream, &mResourceTracker, &mBinaryData,
-                                        anyResourceReset);
+                                        anyResourceReset, &mResourceIDBufferSize);
                 }
 
                 // Only call eglMakeCurrent if anything was actually reset in the function and the
@@ -8759,7 +8734,7 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
         // Now that we're back on the main context, reset any additional state
         resetBodyStream << "\n    // Reset main context state\n";
         MaybeResetContextState(mReplayWriter, resetBodyStream, resetHeaderStream, &mResourceTracker,
-                               context, &mBinaryData, stateResetHelper);
+                               context, &mBinaryData, stateResetHelper, &mResourceIDBufferSize);
 
         resetBodyStream << "}\n";
 
@@ -8778,7 +8753,7 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
 
         WriteCppReplayFunctionWithParts(context->id(), ReplayFunc::Replay, mReplayWriter,
                                         frameIndex, &mBinaryData, mFrameCalls, headerStream,
-                                        bodyStream);
+                                        bodyStream, &mResourceIDBufferSize);
 
         mReplayWriter.addPrivateFunction(proto, headerStream, bodyStream);
     }
