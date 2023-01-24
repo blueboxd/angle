@@ -448,6 +448,12 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessagesWithoutStoreOpNone[] 
         "imageLayout: VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL",
         "usage: SYNC_FRAGMENT_SHADER_SHADER_",
     },
+    // From: TraceTest.antutu_refinery http://anglebug.com/6663
+    {
+        "SYNC-HAZARD-READ-AFTER-WRITE",
+        "imageLayout: VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL",
+        "usage: SYNC_COMPUTE_SHADER_SHADER_SAMPLED_READ",
+    },
 };
 
 // Messages that shouldn't be generated if both loadOp=NONE and storeOp=NONE are supported,
@@ -1051,27 +1057,32 @@ void checkForCurrentMemoryAllocations(RendererVk *renderer)
     {
         for (uint32_t i = 0; i < vk::kMemoryAllocationTypeCount; i++)
         {
-            if (renderer->getActiveMemoryAllocationsSize(i) == 0)
+            if (renderer->getMemoryAllocationTracker()->getActiveMemoryAllocationsSize(i) == 0)
             {
                 continue;
             }
 
             std::stringstream outStream;
-            outStream.imbue(std::locale(""));
+            outStream.imbue(std::locale(renderer->getMemoryAllocationTracker()->getLocale()));
 
             outStream << "Currently allocated size for memory allocation type ("
-                      << vk::kMemoryAllocationTypeMessage[i]
-                      << "): " << renderer->getActiveMemoryAllocationsSize(i)
-                      << " | Count: " << renderer->getActiveMemoryAllocationsCount(i) << std::endl;
+                      << vk::kMemoryAllocationTypeMessage[i] << "): "
+                      << renderer->getMemoryAllocationTracker()->getActiveMemoryAllocationsSize(i)
+                      << " | Count: "
+                      << renderer->getMemoryAllocationTracker()->getActiveMemoryAllocationsCount(i)
+                      << std::endl;
 
             for (uint32_t heapIndex = 0;
                  heapIndex < renderer->getMemoryProperties().getMemoryHeapCount(); heapIndex++)
             {
-                outStream << "--> Heap index " << heapIndex << ": "
-                          << renderer->getActiveHeapMemoryAllocationsSize(i, heapIndex)
-                          << " | Count: "
-                          << renderer->getActiveHeapMemoryAllocationsCount(i, heapIndex)
-                          << std::endl;
+                outStream
+                    << "--> Heap index " << heapIndex << ": "
+                    << renderer->getMemoryAllocationTracker()->getActiveHeapMemoryAllocationsSize(
+                           i, heapIndex)
+                    << " | Count: "
+                    << renderer->getMemoryAllocationTracker()->getActiveHeapMemoryAllocationsCount(
+                           i, heapIndex)
+                    << std::endl;
             }
 
             INFO() << outStream.str();
@@ -1081,23 +1092,25 @@ void checkForCurrentMemoryAllocations(RendererVk *renderer)
     {
         for (uint32_t i = 0; i < vk::kMemoryAllocationTypeCount; i++)
         {
-            if (renderer->getActiveMemoryAllocationsSize(i) == 0)
+            if (renderer->getMemoryAllocationTracker()->getActiveMemoryAllocationsSize(i) == 0)
             {
                 continue;
             }
 
             std::stringstream outStream;
-            outStream.imbue(std::locale(""));
+            outStream.imbue(std::locale(renderer->getMemoryAllocationTracker()->getLocale()));
 
             outStream << "Currently allocated size for memory allocation type ("
-                      << vk::kMemoryAllocationTypeMessage[i]
-                      << "): " << renderer->getActiveMemoryAllocationsSize(i) << std::endl;
+                      << vk::kMemoryAllocationTypeMessage[i] << "): "
+                      << renderer->getMemoryAllocationTracker()->getActiveMemoryAllocationsSize(i)
+                      << std::endl;
 
             for (uint32_t heapIndex = 0;
                  heapIndex < renderer->getMemoryProperties().getMemoryHeapCount(); heapIndex++)
             {
                 outStream << "--> Heap index " << heapIndex << ": "
-                          << renderer->getActiveHeapMemoryAllocationsSize(i, heapIndex)
+                          << renderer->getMemoryAllocationTracker()
+                                 ->getActiveHeapMemoryAllocationsSize(i, heapIndex)
                           << std::endl;
             }
 
@@ -1107,19 +1120,24 @@ void checkForCurrentMemoryAllocations(RendererVk *renderer)
 }
 
 // In case of an allocation error, log pending memory allocation if the size in non-zero.
-void logPendingMemoryAllocation(vk::MemoryAllocationType allocInfo,
-                                VkDeviceSize allocSize,
-                                uint32_t memoryHeapIndex)
+void logPendingMemoryAllocation(RendererVk *renderer)
 {
     if (!kTrackMemoryAllocationSizes)
     {
         return;
     }
 
+    vk::MemoryAllocationType allocInfo =
+        renderer->getMemoryAllocationTracker()->getPendingMemoryAllocationType();
+    VkDeviceSize allocSize =
+        renderer->getMemoryAllocationTracker()->getPendingMemoryAllocationSize();
+    uint32_t memoryHeapIndex = renderer->getMemoryProperties().getHeapIndexForMemoryType(
+        renderer->getMemoryAllocationTracker()->getPendingMemoryTypeIndex());
+
     if (allocSize != 0)
     {
         std::stringstream outStream;
-        outStream.imbue(std::locale(""));
+        outStream.imbue(std::locale(renderer->getMemoryAllocationTracker()->getLocale()));
 
         outStream << "Pending allocation size for memory allocation type ("
                   << vk::kMemoryAllocationTypeMessage[ToUnderlying(allocInfo)]
@@ -1150,7 +1168,6 @@ void outputMemoryLogStream(std::stringstream &outStream, vk::MemoryLogSeverity s
     }
 }
 
-// Log memory heap stats, including budget and usage.
 void logMemoryHeapStats(RendererVk *renderer, vk::MemoryLogSeverity severity)
 {
     if (!kTrackMemoryAllocationSizes)
@@ -1160,7 +1177,7 @@ void logMemoryHeapStats(RendererVk *renderer, vk::MemoryLogSeverity severity)
 
     // Log stream for the heap information.
     std::stringstream outStream;
-    outStream.imbue(std::locale(""));
+    outStream.imbue(std::locale(renderer->getMemoryAllocationTracker()->getLocale()));
 
     // VkPhysicalDeviceMemoryProperties2 enables the use of memory budget properties if supported.
     VkPhysicalDeviceMemoryProperties2KHR memoryProperties;
@@ -1214,6 +1231,66 @@ void logMemoryHeapStats(RendererVk *renderer, vk::MemoryLogSeverity severity)
 }
 }  // namespace
 
+// OneOffCommandPool implementation.
+void OneOffCommandPool::destroy(VkDevice device)
+{
+    std::unique_lock<std::mutex> lock(mMutex);
+    for (PendingOneOffCommands &pending : mPendingCommands)
+    {
+        pending.commandBuffer.releaseHandle();
+    }
+    mCommandPool.destroy(device);
+}
+
+angle::Result OneOffCommandPool::getCommandBuffer(vk::Context *context,
+                                                  bool hasProtectedContent,
+                                                  vk::PrimaryCommandBuffer *commandBufferOut)
+{
+    std::unique_lock<std::mutex> lock(mMutex);
+
+    if (!mPendingCommands.empty() &&
+        !context->getRenderer()->hasUnfinishedUse(mPendingCommands.front().use))
+    {
+        *commandBufferOut = std::move(mPendingCommands.front().commandBuffer);
+        mPendingCommands.pop_front();
+        ANGLE_VK_TRY(context, commandBufferOut->reset());
+    }
+    else
+    {
+        if (!mCommandPool.valid())
+        {
+            VkCommandPoolCreateInfo createInfo = {};
+            createInfo.sType                   = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            createInfo.flags                   = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
+                               (hasProtectedContent ? VK_COMMAND_POOL_CREATE_PROTECTED_BIT : 0);
+            ANGLE_VK_TRY(context, mCommandPool.init(context->getDevice(), createInfo));
+        }
+
+        VkCommandBufferAllocateInfo allocInfo = {};
+        allocInfo.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.level                       = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount          = 1;
+        allocInfo.commandPool                 = mCommandPool.getHandle();
+
+        ANGLE_VK_TRY(context, commandBufferOut->init(context->getDevice(), allocInfo));
+    }
+
+    VkCommandBufferBeginInfo beginInfo = {};
+    beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    beginInfo.pInheritanceInfo         = nullptr;
+    ANGLE_VK_TRY(context, commandBufferOut->begin(beginInfo));
+
+    return angle::Result::Continue;
+}
+
+void OneOffCommandPool::releaseCommandBuffer(const QueueSerial &submitQueueSerial,
+                                             vk::PrimaryCommandBuffer &&primary)
+{
+    std::unique_lock<std::mutex> lock(mMutex);
+    mPendingCommands.push_back({vk::ResourceUse(submitQueueSerial), std::move(primary)});
+}
+
 // RendererVk implementation.
 RendererVk::RendererVk()
     : mDisplay(nullptr),
@@ -1250,7 +1327,7 @@ RendererVk::RendererVk()
       mCommandProcessor(this),
       mSupportedVulkanPipelineStageMask(0),
       mSupportedVulkanShaderStageMask(0),
-      mMemoryAllocationID(0)
+      mMemoryAllocationTracker(MemoryAllocationTracker(this))
 {
     VkFormatProperties invalid = {0, 0, kInvalidFormatFeatureFlags};
     mFormatProperties.fill(invalid);
@@ -1259,15 +1336,6 @@ RendererVk::RendererVk()
     // a number of places in the Vulkan backend that make this assumption.  This assertion is made
     // early to fail immediately on big-endian platforms.
     ASSERT(IsLittleEndian());
-
-    // Allocation counters are initialized here to keep track of the size of the memory allocations.
-    for (uint32_t i = 0; i < mActiveMemoryAllocationsSize.size(); i++)
-    {
-        mActiveMemoryAllocationsSize[i]  = 0;
-        mActiveMemoryAllocationsCount[i] = 0;
-    }
-
-    resetPendingMemoryAlloc();
 }
 
 RendererVk::~RendererVk()
@@ -1303,26 +1371,18 @@ void RendererVk::onDestroy(vk::Context *context)
     }
     mOrphanedBufferBlocks.clear();
 
+    if (isAsyncCommandQueueEnabled())
     {
-        std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-        if (isAsyncCommandQueueEnabled())
-        {
-            mCommandProcessor.destroy(context);
-        }
-        else
-        {
-            mCommandQueue.destroy(context);
-        }
+        mCommandProcessor.destroy(context);
+    }
+    else
+    {
+        mCommandQueue.destroy(context);
     }
 
     // mCommandQueue.destroy should already set "last completed" serials to infinite.
     cleanupGarbage();
     ASSERT(!hasSharedGarbage());
-
-    for (PendingOneOffCommands &pending : mPendingOneOffCommands)
-    {
-        pending.commandBuffer.releaseHandle();
-    }
 
     mOneOffCommandPool.destroy(mDevice);
 
@@ -1746,14 +1806,11 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
     ANGLE_VK_CHECK(displayVk, mMemoryProperties.getMemoryTypeCount() > 0,
                    VK_ERROR_INITIALIZATION_FAILED);
 
+    // The counters for the memory allocation tracker should be initialized.
     // Each memory allocation could be made in one of the available memory heaps. We initialize the
     // per-heap memory allocation trackers for MemoryAllocationType objects here, after
     // mMemoryProperties has been set up.
-    for (size_t i = 0; i < vk::kMemoryAllocationTypeCount; i++)
-    {
-        mActivePerHeapMemoryAllocationsSize[i].resize(mMemoryProperties.getMemoryHeapCount());
-        mActivePerHeapMemoryAllocationsCount[i].resize(mMemoryProperties.getMemoryHeapCount());
-    }
+    mMemoryAllocationTracker.initMemoryTrackers();
 
     // If only one queue family, go ahead and initialize the device. If there is more than one
     // queue, we'll have to wait until we see a WindowSurface to know which supports present.
@@ -4491,9 +4548,6 @@ angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
                                             QueueSerial *queueSerialOut)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::queueSubmitOneOff");
-
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
     // Allocate a oneoff submitQueueSerial and generate a serial and then use it and release the
     // index.
     SerialIndex queueIndex;
@@ -4520,7 +4574,7 @@ angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
     *queueSerialOut = submitQueueSerial;
     if (primary.valid())
     {
-        mPendingOneOffCommands.push_back({vk::ResourceUse(submitQueueSerial), std::move(primary)});
+        mOneOffCommandPool.releaseCommandBuffer(submitQueueSerial, std::move(primary));
     }
 
     return angle::Result::Continue;
@@ -4786,45 +4840,6 @@ void RendererVk::reloadVolkIfNeeded() const
 #endif  // defined(ANGLE_SHARED_LIBVULKAN)
 }
 
-angle::Result RendererVk::getCommandBufferOneOff(vk::Context *context,
-                                                 bool hasProtectedContent,
-                                                 vk::PrimaryCommandBuffer *commandBufferOut)
-{
-    if (!mOneOffCommandPool.valid())
-    {
-        VkCommandPoolCreateInfo createInfo = {};
-        createInfo.sType                   = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        createInfo.flags                   = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
-                           (hasProtectedContent ? VK_COMMAND_POOL_CREATE_PROTECTED_BIT : 0);
-        ANGLE_VK_TRY(context, mOneOffCommandPool.init(mDevice, createInfo));
-    }
-
-    if (!mPendingOneOffCommands.empty() && !hasUnfinishedUse(mPendingOneOffCommands.front().use))
-    {
-        *commandBufferOut = std::move(mPendingOneOffCommands.front().commandBuffer);
-        mPendingOneOffCommands.pop_front();
-        ANGLE_VK_TRY(context, commandBufferOut->reset());
-    }
-    else
-    {
-        VkCommandBufferAllocateInfo allocInfo = {};
-        allocInfo.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.level                       = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandBufferCount          = 1;
-        allocInfo.commandPool                 = mOneOffCommandPool.getHandle();
-
-        ANGLE_VK_TRY(context, commandBufferOut->init(context->getDevice(), allocInfo));
-    }
-
-    VkCommandBufferBeginInfo beginInfo = {};
-    beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    beginInfo.pInheritanceInfo         = nullptr;
-    ANGLE_VK_TRY(context, commandBufferOut->begin(beginInfo));
-
-    return angle::Result::Continue;
-}
-
 angle::Result RendererVk::submitCommands(
     vk::Context *context,
     bool hasProtectedContent,
@@ -4835,12 +4850,11 @@ angle::Result RendererVk::submitCommands(
     vk::SecondaryCommandPools *commandPools,
     const QueueSerial &submitQueueSerial)
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
-    vk::SecondaryCommandBufferList commandBuffersToReset = {
-        std::move(mOutsideRenderPassCommandBufferRecycler.releaseCommandBuffersToReset()),
-        std::move(mRenderPassCommandBufferRecycler.releaseCommandBuffersToReset()),
-    };
+    vk::SecondaryCommandBufferList commandBuffersToReset;
+    mOutsideRenderPassCommandBufferRecycler.releaseCommandBuffersToReset(
+        &commandBuffersToReset.outsideRenderPassCommandBuffers);
+    mRenderPassCommandBufferRecycler.releaseCommandBuffersToReset(
+        &commandBuffersToReset.renderPassCommandBuffers);
 
     const VkSemaphore signalVkSemaphore =
         signalSemaphore ? signalSemaphore->getHandle() : VK_NULL_HANDLE;
@@ -4866,7 +4880,6 @@ angle::Result RendererVk::submitCommands(
 
 void RendererVk::handleDeviceLost()
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
     if (isAsyncCommandQueueEnabled())
     {
         mCommandProcessor.handleDeviceLost(this);
@@ -4879,8 +4892,6 @@ void RendererVk::handleDeviceLost()
 
 angle::Result RendererVk::finishResourceUse(vk::Context *context, const vk::ResourceUse &use)
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.finishResourceUse(context, use, getMaxFenceWaitTimeNs()));
@@ -4896,7 +4907,6 @@ angle::Result RendererVk::finishResourceUse(vk::Context *context, const vk::Reso
 angle::Result RendererVk::finishQueueSerial(vk::Context *context, const QueueSerial &queueSerial)
 {
     ASSERT(queueSerial.valid());
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(
@@ -4916,9 +4926,6 @@ angle::Result RendererVk::waitForResourceUseToFinishWithUserTimeout(vk::Context 
                                                                     VkResult *result)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::waitForResourceUseToFinishWithUserTimeout");
-
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.waitForResourceUseToFinishWithUserTimeout(context, use, timeout,
@@ -4935,8 +4942,6 @@ angle::Result RendererVk::waitForResourceUseToFinishWithUserTimeout(vk::Context 
 
 angle::Result RendererVk::finish(vk::Context *context, bool hasProtectedContent)
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.waitIdle(context, getMaxFenceWaitTimeNs()));
@@ -4951,7 +4956,6 @@ angle::Result RendererVk::finish(vk::Context *context, bool hasProtectedContent)
 
 angle::Result RendererVk::checkCompletedCommands(vk::Context *context)
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
     // TODO: https://issuetracker.google.com/169788986 - would be better if we could just wait
     // for the work we need but that requires QueryHelper to use the actual serial for the
     // query.
@@ -4974,8 +4978,6 @@ angle::Result RendererVk::flushRenderPassCommands(
     vk::RenderPassCommandBufferHelper **renderPassCommands)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::flushRenderPassCommands");
-
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.flushRenderPassCommands(context, hasProtectedContent,
@@ -4996,8 +4998,6 @@ angle::Result RendererVk::flushOutsideRPCommands(
     vk::OutsideRenderPassCommandBufferHelper **outsideRPCommands)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::flushOutsideRPCommands");
-
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.flushOutsideRPCommands(context, hasProtectedContent,
@@ -5016,8 +5016,6 @@ VkResult RendererVk::queuePresent(vk::Context *context,
                                   egl::ContextPriority priority,
                                   const VkPresentInfoKHR &presentInfo)
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
     VkResult result = VK_SUCCESS;
     if (isAsyncCommandQueueEnabled())
     {
@@ -5044,7 +5042,6 @@ angle::Result RendererVk::getCommandBufferImpl(
     RecyclerT *recycler,
     CommandBufferHelperT **commandBufferHelperOut)
 {
-    std::unique_lock<std::mutex> lock(mCommandBufferRecyclerMutex);
     return recycler->getCommandBufferHelper(context, commandPool, commandsAllocator,
                                             commandBufferHelperOut);
 }
@@ -5076,7 +5073,6 @@ void RendererVk::recycleOutsideRenderPassCommandBufferHelper(
     vk::OutsideRenderPassCommandBufferHelper **commandBuffer)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::recycleOutsideRenderPassCommandBufferHelper");
-    std::unique_lock<std::mutex> lock(mCommandBufferRecyclerMutex);
     mOutsideRenderPassCommandBufferRecycler.recycleCommandBufferHelper(device, commandBuffer);
 }
 
@@ -5085,7 +5081,6 @@ void RendererVk::recycleRenderPassCommandBufferHelper(
     vk::RenderPassCommandBufferHelper **commandBuffer)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::recycleRenderPassCommandBufferHelper");
-    std::unique_lock<std::mutex> lock(mCommandBufferRecyclerMutex);
     mRenderPassCommandBufferRecycler.recycleCommandBufferHelper(device, commandBuffer);
 }
 
@@ -5106,199 +5101,11 @@ void RendererVk::logCacheStats() const
     }
 }
 
-void RendererVk::onMemoryAllocImpl(vk::MemoryAllocationType allocType,
-                                   VkDeviceSize size,
-                                   uint32_t memoryTypeIndex,
-                                   void *handle)
-{
-    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
-
-    if (kTrackMemoryAllocationDebug)
-    {
-        // If enabled (debug layers), we keep more details in the memory tracker, such as handle,
-        // and log the action to the output.
-        std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
-
-        uint32_t allocTypeIndex  = ToUnderlying(allocType);
-        uint32_t memoryHeapIndex = mMemoryProperties.getHeapIndexForMemoryType(memoryTypeIndex);
-        mActiveMemoryAllocationsCount[allocTypeIndex]++;
-        mActiveMemoryAllocationsSize[allocTypeIndex] += size;
-        mActivePerHeapMemoryAllocationsCount[allocTypeIndex][memoryHeapIndex]++;
-        mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] += size;
-
-        // Add the new allocation to the memory tracker.
-        vk::MemoryAllocationInfo memAllocLogInfo;
-        memAllocLogInfo.id              = ++mMemoryAllocationID;
-        memAllocLogInfo.allocType       = allocType;
-        memAllocLogInfo.memoryHeapIndex = memoryHeapIndex;
-        memAllocLogInfo.size            = size;
-        memAllocLogInfo.handle          = handle;
-
-        vk::MemoryAllocInfoMapKey memoryAllocInfoMapKey(memAllocLogInfo.handle);
-        mMemoryAllocationTracker[angle::getBacktraceInfo()].insert(
-            std::make_pair(memoryAllocInfoMapKey, memAllocLogInfo));
-
-        INFO() << "Memory allocation: (id " << memAllocLogInfo.id << ") for object "
-               << memAllocLogInfo.handle << " | Size: " << memAllocLogInfo.size
-               << " | Type: " << vk::kMemoryAllocationTypeMessage[allocTypeIndex]
-               << " | Heap index: " << memAllocLogInfo.memoryHeapIndex;
-
-        resetPendingMemoryAlloc();
-    }
-    else if (kTrackMemoryAllocationSizes)
-    {
-        // Add the new allocation size to the allocation counter.
-        uint32_t allocTypeIndex = ToUnderlying(allocType);
-        mActiveMemoryAllocationsSize[allocTypeIndex] += size;
-
-        {
-            std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
-            uint32_t memoryHeapIndex = mMemoryProperties.getHeapIndexForMemoryType(memoryTypeIndex);
-            mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] += size;
-        }
-
-        resetPendingMemoryAlloc();
-    }
-}
-
-void RendererVk::onMemoryDeallocImpl(vk::MemoryAllocationType allocType,
-                                     VkDeviceSize size,
-                                     uint32_t memoryTypeIndex,
-                                     void *handle)
-{
-    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
-
-    if (kTrackMemoryAllocationDebug)
-    {
-        // If enabled (debug layers), we keep more details in the memory tracker, such as handle,
-        // and log the action to the output. The memory allocation tracker uses the backtrace info
-        // as key, if available.
-        for (auto &memInfoPerBacktrace : mMemoryAllocationTracker)
-        {
-            vk::MemoryAllocInfoMapKey memoryAllocInfoMapKey(handle);
-            MemoryAllocInfoMap &memInfoMap = memInfoPerBacktrace.second;
-            std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
-
-            if (memInfoMap.find(memoryAllocInfoMapKey) != memInfoMap.end())
-            {
-                // Object found; remove it from the allocation tracker.
-                vk::MemoryAllocationInfo *memInfoEntry = &memInfoMap[memoryAllocInfoMapKey];
-                ASSERT(memInfoEntry->allocType == allocType && memInfoEntry->size == size);
-
-                uint32_t allocTypeIndex = ToUnderlying(memInfoEntry->allocType);
-                uint32_t memoryHeapIndex =
-                    mMemoryProperties.getHeapIndexForMemoryType(memoryTypeIndex);
-                ASSERT(mActiveMemoryAllocationsCount[allocTypeIndex] != 0 &&
-                       mActiveMemoryAllocationsSize[allocTypeIndex] >= size);
-                ASSERT(memoryHeapIndex == memInfoEntry->memoryHeapIndex &&
-                       mActivePerHeapMemoryAllocationsCount[allocTypeIndex][memoryHeapIndex] != 0 &&
-                       mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] >=
-                           size);
-                mActiveMemoryAllocationsCount[allocTypeIndex]--;
-                mActiveMemoryAllocationsSize[allocTypeIndex] -= size;
-                mActivePerHeapMemoryAllocationsCount[allocTypeIndex][memoryHeapIndex]--;
-                mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] -= size;
-
-                INFO() << "Memory deallocation: (id " << memInfoEntry->id << ") for object "
-                       << memInfoEntry->handle << " | Size: " << memInfoEntry->size
-                       << " | Type: " << vk::kMemoryAllocationTypeMessage[allocTypeIndex]
-                       << " | Heap index: " << memInfoEntry->memoryHeapIndex;
-
-                memInfoMap.erase(memoryAllocInfoMapKey);
-            }
-        }
-    }
-    else if (kTrackMemoryAllocationSizes)
-    {
-        // Remove the allocation size from the allocation counter.
-        uint32_t allocTypeIndex = ToUnderlying(allocType);
-        ASSERT(mActiveMemoryAllocationsSize[allocTypeIndex] >= size);
-        mActiveMemoryAllocationsSize[allocTypeIndex] -= size;
-
-        {
-            std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
-            uint32_t memoryHeapIndex = mMemoryProperties.getHeapIndexForMemoryType(memoryTypeIndex);
-            ASSERT(mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] >= size);
-            mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] -= size;
-        }
-    }
-}
-
 void RendererVk::logMemoryStatsOnError()
 {
     checkForCurrentMemoryAllocations(this);
-    logPendingMemoryAllocation(
-        mPendingMemoryAllocationType, mPendingMemoryAllocationSize,
-        mMemoryProperties.getHeapIndexForMemoryType(mPendingMemoryTypeIndex));
+    logPendingMemoryAllocation(this);
     logMemoryHeapStats(this, vk::MemoryLogSeverity::WARN);
-}
-
-void RendererVk::setPendingMemoryAlloc(vk::MemoryAllocationType allocType,
-                                       VkDeviceSize size,
-                                       uint32_t memoryTypeIndex)
-{
-    if (!kTrackMemoryAllocationSizes)
-    {
-        return;
-    }
-
-    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
-    mPendingMemoryAllocationType = allocType;
-    mPendingMemoryAllocationSize = size;
-    mPendingMemoryTypeIndex      = memoryTypeIndex;
-}
-void RendererVk::resetPendingMemoryAlloc()
-{
-    if (!kTrackMemoryAllocationSizes)
-    {
-        return;
-    }
-
-    mPendingMemoryAllocationType = vk::MemoryAllocationType::Unspecified;
-    mPendingMemoryAllocationSize = 0;
-    mPendingMemoryTypeIndex      = kInvalidMemoryTypeIndex;
-}
-
-VkDeviceSize RendererVk::getActiveMemoryAllocationsSize(uint32_t allocTypeIndex) const
-{
-    if (!kTrackMemoryAllocationSizes)
-    {
-        return 0;
-    }
-
-    return mActiveMemoryAllocationsSize[allocTypeIndex];
-}
-
-VkDeviceSize RendererVk::getActiveHeapMemoryAllocationsSize(uint32_t allocTypeIndex,
-                                                            uint32_t heapIndex) const
-{
-    if (!kTrackMemoryAllocationSizes)
-    {
-        return 0;
-    }
-
-    return mActivePerHeapMemoryAllocationsSize[allocTypeIndex][heapIndex];
-}
-
-uint64_t RendererVk::getActiveMemoryAllocationsCount(uint32_t allocTypeIndex) const
-{
-    if (!kTrackMemoryAllocationDebug)
-    {
-        return 0;
-    }
-
-    return mActiveMemoryAllocationsCount[allocTypeIndex];
-}
-
-uint64_t RendererVk::getActiveHeapMemoryAllocationsCount(uint32_t allocTypeIndex,
-                                                         uint32_t heapIndex) const
-{
-    if (!kTrackMemoryAllocationDebug)
-    {
-        return 0;
-    }
-
-    return mActivePerHeapMemoryAllocationsCount[allocTypeIndex][heapIndex];
 }
 
 angle::Result RendererVk::getFormatDescriptorCountForVkFormat(ContextVk *contextVk,
@@ -5391,6 +5198,254 @@ angle::Result RendererVk::allocateQueueSerialIndex(SerialIndex *indexOut, Serial
 void RendererVk::releaseQueueSerialIndex(SerialIndex index)
 {
     mQueueSerialIndexAllocator.release(index);
+}
+
+MemoryAllocationTracker::MemoryAllocationTracker(RendererVk *renderer)
+    : mRenderer(renderer),
+      mMemoryAllocationID(0),
+      mLocale(std::locale(std::locale(), new vk::MemoryAllocationLogNumberFormat()))
+{}
+
+void MemoryAllocationTracker::initMemoryTrackers()
+{
+    // Allocation counters are initialized here to keep track of the size and count of the memory
+    // allocations.
+    for (uint32_t i = 0; i < mActiveMemoryAllocationsSize.size(); i++)
+    {
+        mActiveMemoryAllocationsSize[i]  = 0;
+        mActiveMemoryAllocationsCount[i] = 0;
+    }
+
+    // Per-heap allocation counters are initialized here.
+    for (size_t i = 0; i < vk::kMemoryAllocationTypeCount; i++)
+    {
+        mActivePerHeapMemoryAllocationsSize[i].resize(
+            mRenderer->getMemoryProperties().getMemoryHeapCount());
+        mActivePerHeapMemoryAllocationsCount[i].resize(
+            mRenderer->getMemoryProperties().getMemoryHeapCount());
+    }
+
+    resetPendingMemoryAlloc();
+}
+
+void MemoryAllocationTracker::onMemoryAllocImpl(vk::MemoryAllocationType allocType,
+                                                VkDeviceSize size,
+                                                uint32_t memoryTypeIndex,
+                                                void *handle)
+{
+    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
+
+    if (kTrackMemoryAllocationDebug)
+    {
+        // If enabled (debug layers), we keep more details in the memory tracker, such as handle,
+        // and log the action to the output.
+        std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
+
+        uint32_t allocTypeIndex = ToUnderlying(allocType);
+        uint32_t memoryHeapIndex =
+            mRenderer->getMemoryProperties().getHeapIndexForMemoryType(memoryTypeIndex);
+        mActiveMemoryAllocationsCount[allocTypeIndex]++;
+        mActiveMemoryAllocationsSize[allocTypeIndex] += size;
+        mActivePerHeapMemoryAllocationsCount[allocTypeIndex][memoryHeapIndex]++;
+        mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] += size;
+
+        // Add the new allocation to the memory tracker.
+        vk::MemoryAllocationInfo memAllocLogInfo;
+        memAllocLogInfo.id              = ++mMemoryAllocationID;
+        memAllocLogInfo.allocType       = allocType;
+        memAllocLogInfo.memoryHeapIndex = memoryHeapIndex;
+        memAllocLogInfo.size            = size;
+        memAllocLogInfo.handle          = handle;
+
+        vk::MemoryAllocInfoMapKey memoryAllocInfoMapKey(memAllocLogInfo.handle);
+        mMemoryAllocationRecord[angle::getBacktraceInfo()].insert(
+            std::make_pair(memoryAllocInfoMapKey, memAllocLogInfo));
+
+        INFO() << "Memory allocation: (id " << memAllocLogInfo.id << ") for object "
+               << memAllocLogInfo.handle << " | Size: " << memAllocLogInfo.size
+               << " | Type: " << vk::kMemoryAllocationTypeMessage[allocTypeIndex]
+               << " | Heap index: " << memAllocLogInfo.memoryHeapIndex;
+
+        resetPendingMemoryAlloc();
+    }
+    else if (kTrackMemoryAllocationSizes)
+    {
+        // Add the new allocation size to the allocation counter.
+        uint32_t allocTypeIndex = ToUnderlying(allocType);
+        mActiveMemoryAllocationsSize[allocTypeIndex] += size;
+
+        {
+            std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
+            uint32_t memoryHeapIndex =
+                mRenderer->getMemoryProperties().getHeapIndexForMemoryType(memoryTypeIndex);
+            mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] += size;
+        }
+
+        resetPendingMemoryAlloc();
+    }
+}
+
+void MemoryAllocationTracker::onMemoryDeallocImpl(vk::MemoryAllocationType allocType,
+                                                  VkDeviceSize size,
+                                                  uint32_t memoryTypeIndex,
+                                                  void *handle)
+{
+    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
+
+    if (kTrackMemoryAllocationDebug)
+    {
+        // If enabled (debug layers), we keep more details in the memory tracker, such as handle,
+        // and log the action to the output. The memory allocation tracker uses the backtrace info
+        // as key, if available.
+        for (auto &memInfoPerBacktrace : mMemoryAllocationRecord)
+        {
+            vk::MemoryAllocInfoMapKey memoryAllocInfoMapKey(handle);
+            MemoryAllocInfoMap &memInfoMap = memInfoPerBacktrace.second;
+            std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
+
+            if (memInfoMap.find(memoryAllocInfoMapKey) != memInfoMap.end())
+            {
+                // Object found; remove it from the allocation tracker.
+                vk::MemoryAllocationInfo *memInfoEntry = &memInfoMap[memoryAllocInfoMapKey];
+                ASSERT(memInfoEntry->allocType == allocType && memInfoEntry->size == size);
+
+                uint32_t allocTypeIndex = ToUnderlying(memInfoEntry->allocType);
+                uint32_t memoryHeapIndex =
+                    mRenderer->getMemoryProperties().getHeapIndexForMemoryType(memoryTypeIndex);
+                ASSERT(mActiveMemoryAllocationsCount[allocTypeIndex] != 0 &&
+                       mActiveMemoryAllocationsSize[allocTypeIndex] >= size);
+                ASSERT(memoryHeapIndex == memInfoEntry->memoryHeapIndex &&
+                       mActivePerHeapMemoryAllocationsCount[allocTypeIndex][memoryHeapIndex] != 0 &&
+                       mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] >=
+                           size);
+                mActiveMemoryAllocationsCount[allocTypeIndex]--;
+                mActiveMemoryAllocationsSize[allocTypeIndex] -= size;
+                mActivePerHeapMemoryAllocationsCount[allocTypeIndex][memoryHeapIndex]--;
+                mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] -= size;
+
+                INFO() << "Memory deallocation: (id " << memInfoEntry->id << ") for object "
+                       << memInfoEntry->handle << " | Size: " << memInfoEntry->size
+                       << " | Type: " << vk::kMemoryAllocationTypeMessage[allocTypeIndex]
+                       << " | Heap index: " << memInfoEntry->memoryHeapIndex;
+
+                memInfoMap.erase(memoryAllocInfoMapKey);
+            }
+        }
+    }
+    else if (kTrackMemoryAllocationSizes)
+    {
+        // Remove the allocation size from the allocation counter.
+        uint32_t allocTypeIndex = ToUnderlying(allocType);
+        ASSERT(mActiveMemoryAllocationsSize[allocTypeIndex] >= size);
+        mActiveMemoryAllocationsSize[allocTypeIndex] -= size;
+
+        {
+            std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
+            uint32_t memoryHeapIndex =
+                mRenderer->getMemoryProperties().getHeapIndexForMemoryType(memoryTypeIndex);
+            ASSERT(mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] >= size);
+            mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] -= size;
+        }
+    }
+}
+
+VkDeviceSize MemoryAllocationTracker::getActiveMemoryAllocationsSize(uint32_t allocTypeIndex) const
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return 0;
+    }
+
+    return mActiveMemoryAllocationsSize[allocTypeIndex];
+}
+
+VkDeviceSize MemoryAllocationTracker::getActiveHeapMemoryAllocationsSize(uint32_t allocTypeIndex,
+                                                                         uint32_t heapIndex) const
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return 0;
+    }
+
+    return mActivePerHeapMemoryAllocationsSize[allocTypeIndex][heapIndex];
+}
+
+uint64_t MemoryAllocationTracker::getActiveMemoryAllocationsCount(uint32_t allocTypeIndex) const
+{
+    if (!kTrackMemoryAllocationDebug)
+    {
+        return 0;
+    }
+
+    return mActiveMemoryAllocationsCount[allocTypeIndex];
+}
+
+uint64_t MemoryAllocationTracker::getActiveHeapMemoryAllocationsCount(uint32_t allocTypeIndex,
+                                                                      uint32_t heapIndex) const
+{
+    if (!kTrackMemoryAllocationDebug)
+    {
+        return 0;
+    }
+
+    return mActivePerHeapMemoryAllocationsCount[allocTypeIndex][heapIndex];
+}
+
+VkDeviceSize MemoryAllocationTracker::getPendingMemoryAllocationSize() const
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return 0;
+    }
+
+    return mPendingMemoryAllocationSize;
+}
+
+vk::MemoryAllocationType MemoryAllocationTracker::getPendingMemoryAllocationType() const
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return vk::MemoryAllocationType::Unspecified;
+    }
+
+    return mPendingMemoryAllocationType;
+}
+
+uint32_t MemoryAllocationTracker::getPendingMemoryTypeIndex() const
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return 0;
+    }
+
+    return mPendingMemoryTypeIndex;
+}
+
+void MemoryAllocationTracker::setPendingMemoryAlloc(vk::MemoryAllocationType allocType,
+                                                    VkDeviceSize size,
+                                                    uint32_t memoryTypeIndex)
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return;
+    }
+
+    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
+    mPendingMemoryAllocationType = allocType;
+    mPendingMemoryAllocationSize = size;
+    mPendingMemoryTypeIndex      = memoryTypeIndex;
+}
+
+void MemoryAllocationTracker::resetPendingMemoryAlloc()
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return;
+    }
+
+    mPendingMemoryAllocationType = vk::MemoryAllocationType::Unspecified;
+    mPendingMemoryAllocationSize = 0;
+    mPendingMemoryTypeIndex      = kInvalidMemoryTypeIndex;
 }
 
 namespace vk
