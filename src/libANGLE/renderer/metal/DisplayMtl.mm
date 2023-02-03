@@ -933,6 +933,7 @@ void DisplayMtl::initializeExtensions() const
     mNativeExtensions.framebufferBlitANGLE          = true;
     mNativeExtensions.framebufferBlitNV             = true;
     mNativeExtensions.framebufferMultisampleANGLE   = true;
+    mNativeExtensions.polygonOffsetClampEXT         = true;
     mNativeExtensions.copyTextureCHROMIUM           = true;
     mNativeExtensions.copyCompressedTextureCHROMIUM = false;
 
@@ -1253,6 +1254,8 @@ void DisplayMtl::initializeFeatures()
     // Render passes can be rendered without attachments on Apple4 , mac2 hardware.
     ANGLE_FEATURE_CONDITION(&(mFeatures), allowRenderpassWithoutAttachment,
                             supportsEitherGPUFamily(4, 2));
+
+    ANGLE_FEATURE_CONDITION((&mFeatures), enableInMemoryMtlLibraryCache, true);
 
     ApplyFeatureOverrides(&mFeatures, getState());
 }
