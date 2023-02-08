@@ -205,6 +205,8 @@ constexpr const char *kSkippedMessages[] = {
     "VUID-VkDescriptorImageInfo-imageView-06711",
     // http://crbug.com/1412096
     "VUID-VkImageCreateInfo-pNext-00990",
+    "VUID-VkAttachmentDescription2-stencilStoreOp-parameter",
+    "VUID-VkAttachmentDescription2-storeOp-parameter",
 };
 
 // Validation messages that should be ignored only when VK_EXT_primitive_topology_list_restart is
@@ -1051,9 +1053,31 @@ ANGLE_INLINE gl::ShadingRate GetShadingRateFromVkExtent(const VkExtent2D &extent
     return gl::ShadingRate::_1x1;
 }
 
+// Output memory log stream based on level of severity.
+void outputMemoryLogStream(std::stringstream &outStream, vk::MemoryLogSeverity severity)
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return;
+    }
+
+    switch (severity)
+    {
+        case vk::MemoryLogSeverity::INFO:
+            INFO() << outStream.str();
+            break;
+        case vk::MemoryLogSeverity::WARN:
+            WARN() << outStream.str();
+            break;
+        default:
+            UNREACHABLE();
+            break;
+    }
+}
+
 // Check for currently allocated memory. It is used at the end of the renderer object and when there
 // is an allocation error (from ANGLE_VK_TRY()).
-void checkForCurrentMemoryAllocations(RendererVk *renderer)
+void checkForCurrentMemoryAllocations(RendererVk *renderer, vk::MemoryLogSeverity severity)
 {
     if (kTrackMemoryAllocationDebug)
     {
@@ -1086,7 +1110,7 @@ void checkForCurrentMemoryAllocations(RendererVk *renderer)
                     << std::endl;
             }
 
-            INFO() << outStream.str();
+            outputMemoryLogStream(outStream, severity);
         }
     }
     else if (kTrackMemoryAllocationSizes)
@@ -1114,13 +1138,13 @@ void checkForCurrentMemoryAllocations(RendererVk *renderer)
                           << std::endl;
             }
 
-            INFO() << outStream.str();
+            outputMemoryLogStream(outStream, severity);
         }
     }
 }
 
 // In case of an allocation error, log pending memory allocation if the size in non-zero.
-void logPendingMemoryAllocation(RendererVk *renderer)
+void logPendingMemoryAllocation(RendererVk *renderer, vk::MemoryLogSeverity severity)
 {
     if (!kTrackMemoryAllocationSizes)
     {
@@ -1141,29 +1165,7 @@ void logPendingMemoryAllocation(RendererVk *renderer)
         outStream << "Pending allocation size for memory allocation type ("
                   << vk::kMemoryAllocationTypeMessage[ToUnderlying(allocInfo)]
                   << ") for heap index " << memoryHeapIndex << ": " << allocSize;
-        WARN() << outStream.str();
-    }
-}
-
-// Output memory log stream based on level of severity.
-void outputMemoryLogStream(std::stringstream &outStream, vk::MemoryLogSeverity severity)
-{
-    if (!kTrackMemoryAllocationSizes)
-    {
-        return;
-    }
-
-    switch (severity)
-    {
-        case vk::MemoryLogSeverity::INFO:
-            INFO() << outStream.str();
-            break;
-        case vk::MemoryLogSeverity::WARN:
-            WARN() << outStream.str();
-            break;
-        default:
-            UNREACHABLE();
-            break;
+        outputMemoryLogStream(outStream, severity);
     }
 }
 
@@ -1396,7 +1398,7 @@ void RendererVk::onDestroy(vk::Context *context)
     // throughout the execution has been freed.
     if (kTrackMemoryAllocationDebug)
     {
-        checkForCurrentMemoryAllocations(this);
+        checkForCurrentMemoryAllocations(this, vk::MemoryLogSeverity::INFO);
     }
 
     if (mDevice)
@@ -4552,10 +4554,10 @@ angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::queueSubmitOneOff");
     // Allocate a oneoff submitQueueSerial and generate a serial and then use it and release the
     // index.
-    SerialIndex queueIndex;
-    Serial lastSubmittedSerial;
-    ANGLE_TRY(allocateQueueSerialIndex(&queueIndex, &lastSubmittedSerial));
-    QueueSerial submitQueueSerial(queueIndex, generateQueueSerial(queueIndex));
+    QueueSerial lastSubmittedQueueSerial;
+    ANGLE_TRY(allocateQueueSerialIndex(&lastSubmittedQueueSerial));
+    QueueSerial submitQueueSerial(lastSubmittedQueueSerial.getIndex(),
+                                  generateQueueSerial(lastSubmittedQueueSerial.getIndex()));
 
     if (isAsyncCommandQueueEnabled())
     {
@@ -4571,7 +4573,7 @@ angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
     }
 
     // Immediately release the queue index since itis an one off use.
-    releaseQueueSerialIndex(queueIndex);
+    releaseQueueSerialIndex(lastSubmittedQueueSerial.getIndex());
 
     *queueSerialOut = submitQueueSerial;
     if (primary.valid())
@@ -5070,8 +5072,8 @@ void RendererVk::logCacheStats() const
 
 void RendererVk::logMemoryStatsOnError()
 {
-    checkForCurrentMemoryAllocations(this);
-    logPendingMemoryAllocation(this);
+    checkForCurrentMemoryAllocations(this, vk::MemoryLogSeverity::WARN);
+    logPendingMemoryAllocation(this, vk::MemoryLogSeverity::WARN);
     logMemoryHeapStats(this, vk::MemoryLogSeverity::WARN);
 }
 
@@ -5149,16 +5151,16 @@ VkDeviceSize RendererVk::getPreferedBufferBlockSize(uint32_t memoryTypeIndex) co
     return std::min(heapSize / 64, mPreferredLargeHeapBlockSize);
 }
 
-angle::Result RendererVk::allocateQueueSerialIndex(SerialIndex *indexOut, Serial *serialOut)
+angle::Result RendererVk::allocateQueueSerialIndex(QueueSerial *queueSerialOut)
 {
     SerialIndex index = mQueueSerialIndexAllocator.allocate();
     if (index == kInvalidQueueSerialIndex)
     {
         return angle::Result::Stop;
     }
-    *indexOut  = index;
-    *serialOut = isAsyncCommandQueueEnabled() ? mCommandProcessor.getLastSubmittedSerial(index)
-                                              : mCommandQueue.getLastSubmittedSerial(index);
+    Serial serial   = isAsyncCommandQueueEnabled() ? mCommandProcessor.getLastSubmittedSerial(index)
+                                                   : mCommandQueue.getLastSubmittedSerial(index);
+    *queueSerialOut = QueueSerial(index, serial);
     return angle::Result::Continue;
 }
 
