@@ -356,6 +356,10 @@ class VulkanPerformanceCounterTest : public ANGLETest<>
     {
         return isFeatureEnabled(Feature::WarmUpPipelineCacheAtLink);
     }
+    bool hasEffectivePipelineCacheSerialization() const
+    {
+        return isFeatureEnabled(Feature::HasEffectivePipelineCacheSerialization);
+    }
     bool hasPreferCPUForBufferSubData() const
     {
         return isFeatureEnabled(Feature::PreferCPUForBufferSubData);
@@ -645,6 +649,7 @@ TEST_P(VulkanPerformanceCounterTest, SubmittingOutsideCommandBufferDoesNotCollec
     ASSERT_EQ(posLoc, glGetAttribLocation(program2, essl1_shaders::PositionAttrib()));
 
     // Issue uploads until there's an implicit submission
+    size_t textureCount = 0;
     while (getPerfCounters().vkQueueSubmitCallsTotal == submitCommandsCount)
     {
         GLTexture newTexture;
@@ -656,7 +661,10 @@ TEST_P(VulkanPerformanceCounterTest, SubmittingOutsideCommandBufferDoesNotCollec
 
         glDrawArrays(GL_TRIANGLES, 0, 6);
         ASSERT_GL_NO_ERROR();
+        textureCount++;
     }
+    // 256x256 texture upload should not trigger a submission
+    ASSERT(textureCount > 1);
 
     ++submitCommandsCount;
     EXPECT_EQ(getPerfCounters().vkQueueSubmitCallsTotal, submitCommandsCount);
@@ -675,16 +683,63 @@ TEST_P(VulkanPerformanceCounterTest, SubmittingOutsideCommandBufferDoesNotCollec
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
     ++submitCommandsCount;
 
-    // When the preferSubmitAtFBOBoundary feature is enabled, the render pass closure causes an
-    // extra submission.
-    if (hasPreferSubmitAtFBOBoundary())
-    {
-        ++submitCommandsCount;
-    }
-
     // Verify counters.
     EXPECT_EQ(getPerfCounters().renderPasses, expectedRenderPassCount);
     EXPECT_EQ(getPerfCounters().vkQueueSubmitCallsTotal, submitCommandsCount);
+}
+
+// Tests that submitting the outside command buffer due to texture upload size and triggers
+// endRenderPass works correctly.
+TEST_P(VulkanPerformanceCounterTest, SubmittingOutsideCommandBufferTriggersEndRenderPass)
+{
+    const int width                  = getWindowWidth();
+    const int height                 = getWindowHeight();
+    uint64_t expectedRenderPassCount = getPerfCounters().renderPasses + 1;
+    uint64_t submitCommandsCount     = getPerfCounters().vkQueueSubmitCallsTotal;
+
+    // Start a new renderpass with red quad on left.
+    ANGLE_GL_PROGRAM(redProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    glScissor(0, 0, width / 2, height);
+    glEnable(GL_SCISSOR_TEST);
+    drawQuad(redProgram, essl1_shaders::PositionAttrib(), 0.5f);
+
+    // Issue texture uploads and draw green quad on right until endRenderPass is triggered
+    glScissor(width / 2, 0, width / 2, height);
+    ANGLE_GL_PROGRAM(textureProgram, essl1_shaders::vs::Texture2D(),
+                     essl1_shaders::fs::Texture2D());
+    glUseProgram(textureProgram);
+    GLint textureLoc = glGetUniformLocation(textureProgram, essl1_shaders::Texture2DUniform());
+    ASSERT_NE(-1, textureLoc);
+    glUniform1i(textureLoc, 0);
+
+    // This test is specifically try to test outsideRPCommands submission drain the reserved
+    // queueSerials. Right now we are reserving 15 queue Serials. This is to ensure if the
+    // implementation changes, we do not end up with infinite loop here.
+    constexpr GLsizei kMaxOutsideRPCommandsSubmitCount = 17;
+    constexpr GLsizei kTexDim                          = 1024;
+    std::vector<GLColor> kInitialData(kTexDim * kTexDim, GLColor::green);
+    // Put a limit on the loop to avoid infinite loop in bad case.
+    while (getPerfCounters().renderPasses == expectedRenderPassCount &&
+           getPerfCounters().vkQueueSubmitCallsTotal <
+               submitCommandsCount + kMaxOutsideRPCommandsSubmitCount)
+    {
+        GLTexture newTexture;
+        glBindTexture(GL_TEXTURE_2D, newTexture);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kTexDim, kTexDim);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kTexDim, kTexDim, GL_RGBA, GL_UNSIGNED_BYTE,
+                        kInitialData.data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        drawQuad(textureProgram, essl1_shaders::PositionAttrib(), 0.5f);
+        ASSERT_GL_NO_ERROR();
+    }
+
+    ++expectedRenderPassCount;
+    EXPECT_EQ(getPerfCounters().renderPasses, expectedRenderPassCount);
+
+    // Verify renderpass draw quads correctly
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    EXPECT_PIXEL_COLOR_EQ(width / 2 + 1, 0, GLColor::green);
 }
 
 // Tests that mutable texture is uploaded with appropriate mip level attributes.
@@ -6563,7 +6618,8 @@ TEST_P(VulkanPerformanceCounterTest, PipelineCacheIsWarmedUpAtLinkTime)
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled(kPerfMonitorExtensionName));
 
     // Test is only valid when pipeline creation feedback is available
-    ANGLE_SKIP_TEST_IF(!hasSupportsPipelineCreationFeedback() || !hasWarmUpPipelineCacheAtLink());
+    ANGLE_SKIP_TEST_IF(!hasSupportsPipelineCreationFeedback() || !hasWarmUpPipelineCacheAtLink() ||
+                       !hasEffectivePipelineCacheSerialization());
 
     ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Passthrough(), essl1_shaders::fs::UniformColor());
 
@@ -6576,7 +6632,8 @@ TEST_P(VulkanPerformanceCounterTest, PipelineCacheIsRestoredWithProgramBinary)
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled(kPerfMonitorExtensionName));
 
     // Test is only valid when pipeline creation feedback is available
-    ANGLE_SKIP_TEST_IF(!hasSupportsPipelineCreationFeedback() || !hasWarmUpPipelineCacheAtLink());
+    ANGLE_SKIP_TEST_IF(!hasSupportsPipelineCreationFeedback() || !hasWarmUpPipelineCacheAtLink() ||
+                       !hasEffectivePipelineCacheSerialization());
 
     ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Passthrough(), essl1_shaders::fs::UniformColor());
     GLProgram reloadedProgram;
@@ -6591,7 +6648,8 @@ TEST_P(VulkanPerformanceCounterTest, PipelineCacheIsRestoredWithProgramBinaryTwi
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled(kPerfMonitorExtensionName));
 
     // Test is only valid when pipeline creation feedback is available
-    ANGLE_SKIP_TEST_IF(!hasSupportsPipelineCreationFeedback() || !hasWarmUpPipelineCacheAtLink());
+    ANGLE_SKIP_TEST_IF(!hasSupportsPipelineCreationFeedback() || !hasWarmUpPipelineCacheAtLink() ||
+                       !hasEffectivePipelineCacheSerialization());
 
     ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Passthrough(), essl1_shaders::fs::UniformColor());
     GLProgram reloadedProgram;
@@ -6991,8 +7049,59 @@ TEST_P(VulkanPerformanceCounterTest, EndXfbAfterRenderPassClosed)
     EXPECT_EQ(getPerfCounters().renderPasses, expectedRenderPassCount);
 }
 
+// Verify that monolithic pipeline handles correctly replace the linked pipelines, if
+// VK_EXT_graphics_pipeline_library is supported.
+TEST_P(VulkanPerformanceCounterTest, AsyncMonolithicPipelineCreation)
+{
+    const bool hasAsyncMonolithicPipelineCreation =
+        isFeatureEnabled(Feature::SupportsGraphicsPipelineLibrary) &&
+        isFeatureEnabled(Feature::PreferMonolithicPipelinesOverLibraries);
+    ANGLE_SKIP_TEST_IF(!hasAsyncMonolithicPipelineCreation);
+
+    uint64_t expectedMonolithicPipelineCreationCount =
+        getPerfCounters().monolithicPipelineCreation + 2;
+
+    // Create two programs:
+    ANGLE_GL_PROGRAM(drawRed, essl3_shaders::vs::Simple(), essl3_shaders::fs::Red());
+    ANGLE_GL_PROGRAM(drawGreen, essl3_shaders::vs::Simple(), essl3_shaders::fs::Green());
+
+    // Ping pong between the programs, letting async monolithic pipeline creation happen.
+    uint32_t drawCount                 = 0;
+    constexpr uint32_t kDrawCountLimit = 200;
+
+    while (getPerfCounters().monolithicPipelineCreation < expectedMonolithicPipelineCreationCount)
+    {
+        drawQuad(drawGreen, essl3_shaders::PositionAttrib(), 0.0f);
+        drawQuad(drawRed, essl3_shaders::PositionAttrib(), 0.0f);
+
+        ++drawCount;
+        if (drawCount > kDrawCountLimit)
+        {
+            drawCount = 0;
+            EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+        }
+    }
+
+    // Make sure the monolithic pipelines are replaced correctly
+    drawQuad(drawGreen, essl3_shaders::PositionAttrib(), 0.0f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+
+    drawQuad(drawRed, essl3_shaders::PositionAttrib(), 0.0f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+}
+
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(VulkanPerformanceCounterTest);
-ANGLE_INSTANTIATE_TEST(VulkanPerformanceCounterTest, ES3_VULKAN(), ES3_VULKAN_SWIFTSHADER());
+ANGLE_INSTANTIATE_TEST(
+    VulkanPerformanceCounterTest,
+    ES3_VULKAN(),
+    ES3_VULKAN_SWIFTSHADER().disable(Feature::PreferMonolithicPipelinesOverLibraries),
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::PreferMonolithicPipelinesOverLibraries),
+    ES3_VULKAN_SWIFTSHADER()
+        .enable(Feature::PreferMonolithicPipelinesOverLibraries)
+        .enable(Feature::SlowDownMonolithicPipelineCreationForTesting),
+    ES3_VULKAN_SWIFTSHADER()
+        .enable(Feature::PreferMonolithicPipelinesOverLibraries)
+        .disable(Feature::MergeProgramPipelineCachesToGlobalCache));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(VulkanPerformanceCounterTest_ES31);
 ANGLE_INSTANTIATE_TEST(VulkanPerformanceCounterTest_ES31, ES31_VULKAN(), ES31_VULKAN_SWIFTSHADER());

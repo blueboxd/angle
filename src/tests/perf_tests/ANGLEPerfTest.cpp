@@ -13,6 +13,7 @@
 #    include <android/log.h>
 #endif
 #include "ANGLEPerfTestArgs.h"
+#include "common/base/anglebase/trace_event/trace_event.h"
 #include "common/debug.h"
 #include "common/gl_enum_utils.h"
 #include "common/mathutil.h"
@@ -22,7 +23,6 @@
 #include "common/utilities.h"
 #include "test_utils/runner/TestSuite.h"
 #include "third_party/perf/perf_test.h"
-#include "third_party/trace_event/trace_event.h"
 #include "util/shader_utils.h"
 #include "util/test_utils.h"
 
@@ -271,6 +271,7 @@ ANGLEPerfTest::ANGLEPerfTest(const std::string &name,
       mStory(story),
       mGPUTimeNs(0),
       mSkipTest(false),
+      mWarmupSteps(gWarmupSteps),
       mStepsToRun(std::max(gStepsPerTrial, gMaxStepsPerformed)),
       mTrialTimeLimitSeconds(gTrialTimeSeconds),
       mTrialNumStepsPerformed(0),
@@ -684,6 +685,9 @@ std::string RenderTestParams::backend() const
     {
         case GLESDriverType::AngleEGL:
             break;
+        case GLESDriverType::AngleVulkanSecondariesEGL:
+            strstr << "_vulkan_secondaries";
+            break;
         case GLESDriverType::SystemWGL:
         case GLESDriverType::SystemEGL:
             strstr << "_native";
@@ -799,6 +803,12 @@ ANGLERenderTest::ANGLERenderTest(const std::string &name,
             mGLWindow = EGLWindow::New(testParams.clientType, testParams.majorVersion,
                                        testParams.minorVersion, testParams.profileMask);
             mEntryPointsLib.reset(OpenSharedLibrary(ANGLE_EGL_LIBRARY_NAME, SearchType::ModuleDir));
+            break;
+        case GLESDriverType::AngleVulkanSecondariesEGL:
+            mGLWindow = EGLWindow::New(testParams.clientType, testParams.majorVersion,
+                                       testParams.minorVersion, testParams.profileMask);
+            mEntryPointsLib.reset(OpenSharedLibrary(ANGLE_VULKAN_SECONDARIES_EGL_LIBRARY_NAME,
+                                                    SearchType::ModuleDir));
             break;
         case GLESDriverType::SystemEGL:
 #if defined(ANGLE_USE_UTIL_LOADER) && !defined(ANGLE_PLATFORM_WINDOWS)
@@ -1008,7 +1018,7 @@ void ANGLERenderTest::SetUp()
 
     mTestTrialResults.reserve(gTestTrials);
 
-    if (mStepsToRun <= 0)
+    if (mStepsToRun <= 0 && mWarmupSteps <= 0)
     {
         calibrateStepsToRun();
     }
@@ -1016,12 +1026,12 @@ void ANGLERenderTest::SetUp()
     {
         if (gVerboseLogging)
         {
-            printf("Warmup: %d trials, %d steps per trial\n", gWarmupTrials, mStepsToRun);
+            printf("Warmup: %d trials, %d steps per trial\n", gWarmupTrials, mWarmupSteps);
         }
 
         for (int warmupTrial = 0; warmupTrial < gWarmupTrials; ++warmupTrial)
         {
-            runTrial(mTrialTimeLimitSeconds, mStepsToRun, RunTrialPolicy::RunContinuously);
+            runTrial(mTrialTimeLimitSeconds, mWarmupSteps, RunTrialPolicy::RunContinuously);
             if (gVerboseLogging)
             {
                 printf("Warm-up trial took %.2lf seconds.\n",

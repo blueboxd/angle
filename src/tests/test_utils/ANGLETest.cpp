@@ -177,7 +177,8 @@ GPUTestConfig::API GetTestConfigAPIFromRenderer(angle::GLESDriverType driverType
                                                 EGLenum renderer,
                                                 EGLenum deviceType)
 {
-    if (driverType != angle::GLESDriverType::AngleEGL)
+    if (driverType != angle::GLESDriverType::AngleEGL &&
+        driverType != angle::GLESDriverType::AngleVulkanSecondariesEGL)
     {
         return GPUTestConfig::kAPIUnknown;
     }
@@ -523,9 +524,13 @@ void ANGLETestBase::initOSWindow()
         mFixture->osWindow = mOSWindowSingleton;
     }
 
-    if (!mFixture->osWindow)
+    if (mFixture->osWindow == nullptr)
     {
         mFixture->osWindow = OSWindow::New();
+        if (mFixture->osWindow == nullptr)
+        {
+            FATAL() << "Failed to create a new window";
+        }
         mFixture->osWindow->disableErrorMessageDialog();
         if (!mFixture->osWindow->initialize(windowName.c_str(), 128, 128))
         {
@@ -550,6 +555,7 @@ void ANGLETestBase::initOSWindow()
     switch (mCurrentParams->driver)
     {
         case GLESDriverType::AngleEGL:
+        case GLESDriverType::AngleVulkanSecondariesEGL:
         case GLESDriverType::SystemEGL:
         case GLESDriverType::ZinkEGL:
         {
@@ -820,7 +826,6 @@ void ANGLETestBase::ANGLETestTearDown()
         mFixture->eglWindow->destroySurface();
     }
 
-    // Check for quit message
     Event myEvent;
     while (mFixture->osWindow->popEvent(&myEvent))
     {
@@ -835,11 +840,31 @@ void ANGLETestBase::ReleaseFixtures()
 {
     for (auto it = gFixtures.begin(); it != gFixtures.end(); it++)
     {
-        if (it->second.eglWindow)
+        TestFixture &fixture = it->second;
+        if (fixture.eglWindow != nullptr)
         {
-            it->second.eglWindow->destroyGL();
+            fixture.eglWindow->destroyGL();
+            EGLWindow::Delete(&fixture.eglWindow);
+        }
+
+        if (IsAndroid())
+        {
+            if (mOSWindowSingleton != nullptr)
+            {
+                OSWindow::Delete(&mOSWindowSingleton);
+            }
+            fixture.osWindow = nullptr;
+        }
+        else
+        {
+            if (fixture.osWindow != nullptr)
+            {
+                OSWindow::Delete(&fixture.osWindow);
+            }
         }
     }
+
+    gFixtures.clear();
 }
 
 void ANGLETestBase::swapBuffers()
@@ -1520,6 +1545,7 @@ Optional<EGLint> ANGLETestBase::mLastRendererType;
 Optional<angle::GLESDriverType> ANGLETestBase::mLastLoadedDriver;
 
 std::unique_ptr<Library> ANGLETestEnvironment::gAngleEGLLibrary;
+std::unique_ptr<Library> ANGLETestEnvironment::gAngleVulkanSecondariesEGLLibrary;
 std::unique_ptr<Library> ANGLETestEnvironment::gMesaEGLLibrary;
 std::unique_ptr<Library> ANGLETestEnvironment::gSystemEGLLibrary;
 std::unique_ptr<Library> ANGLETestEnvironment::gSystemWGLLibrary;
@@ -1538,6 +1564,8 @@ Library *ANGLETestEnvironment::GetDriverLibrary(angle::GLESDriverType driver)
     {
         case angle::GLESDriverType::AngleEGL:
             return GetAngleEGLLibrary();
+        case angle::GLESDriverType::AngleVulkanSecondariesEGL:
+            return GetAngleVulkanSecondariesEGLLibrary();
         case angle::GLESDriverType::SystemEGL:
             return GetSystemEGLLibrary();
         case angle::GLESDriverType::SystemWGL:
@@ -1559,6 +1587,19 @@ Library *ANGLETestEnvironment::GetAngleEGLLibrary()
     }
 #endif  // defined(ANGLE_USE_UTIL_LOADER)
     return gAngleEGLLibrary.get();
+}
+
+// static
+Library *ANGLETestEnvironment::GetAngleVulkanSecondariesEGLLibrary()
+{
+#if defined(ANGLE_USE_UTIL_LOADER)
+    if (!gAngleVulkanSecondariesEGLLibrary)
+    {
+        gAngleVulkanSecondariesEGLLibrary.reset(
+            OpenSharedLibrary(ANGLE_VULKAN_SECONDARIES_EGL_LIBRARY_NAME, SearchType::ModuleDir));
+    }
+#endif  // defined(ANGLE_USE_UTIL_LOADER)
+    return gAngleVulkanSecondariesEGLLibrary.get();
 }
 
 // static

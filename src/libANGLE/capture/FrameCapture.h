@@ -170,6 +170,8 @@ class TrackedResource final : angle::NonCopyable
     ResourceSet &getStartingResources() { return mStartingResources; }
     const ResourceSet &getNewResources() const { return mNewResources; }
     ResourceSet &getNewResources() { return mNewResources; }
+    const ResourceSet &getResourcesToDelete() const { return mResourcesToDelete; }
+    ResourceSet &getResourcesToDelete() { return mResourcesToDelete; }
     const ResourceSet &getResourcesToRegen() const { return mResourcesToRegen; }
     ResourceSet &getResourcesToRegen() { return mResourcesToRegen; }
     const ResourceSet &getResourcesToRestore() const { return mResourcesToRestore; }
@@ -194,6 +196,8 @@ class TrackedResource final : angle::NonCopyable
 
     // Resources created during the run that need to be deleted
     ResourceSet mNewResources;
+    // Resources recreated during the run that need to be deleted
+    ResourceSet mResourcesToDelete;
     // Resources deleted during the run that need to be recreated
     ResourceSet mResourcesToRegen;
     // Resources modified during the run that need to be restored
@@ -202,6 +206,12 @@ class TrackedResource final : angle::NonCopyable
 
 using TrackedResourceArray =
     std::array<TrackedResource, static_cast<uint32_t>(ResourceIDType::EnumCount)>;
+
+enum class ShaderProgramType
+{
+    ShaderType,
+    ProgramType
+};
 
 // Helper to track resource changes during the capture
 class ResourceTracker final : angle::NonCopyable
@@ -266,6 +276,16 @@ class ResourceTracker final : angle::NonCopyable
 
     std::map<GLuint, egl::ImageID> &getTextureIDToImageTable() { return mMatchTextureIDToImage; }
 
+    void setShaderProgramType(gl::ShaderProgramID id, angle::ShaderProgramType type)
+    {
+        mShaderProgramType[id] = type;
+    }
+    ShaderProgramType getShaderProgramType(gl::ShaderProgramID id)
+    {
+        ASSERT(mShaderProgramType.find(id) != mShaderProgramType.end());
+        return mShaderProgramType[id];
+    }
+
   private:
     // Buffer map calls will map a buffer with correct offset, length, and access flags
     BufferCalls mBufferMapCalls;
@@ -305,6 +325,8 @@ class ResourceTracker final : angle::NonCopyable
 
     std::map<EGLImage, egl::AttributeMap> mMatchImageToAttribs;
     std::map<GLuint, egl::ImageID> mMatchTextureIDToImage;
+
+    std::map<gl::ShaderProgramID, ShaderProgramType> mShaderProgramType;
 };
 
 // Used by the CPP replay to filter out unnecessary code.
@@ -757,6 +779,9 @@ class FrameCaptureShared final : angle::NonCopyable
     gl::ContextID mWindowSurfaceContextID;
 
     std::vector<CallCapture> mShareGroupSetupCalls;
+    // Track which Contexts were created and made current at least once before MEC,
+    // requiring setup for replay
+    std::unordered_set<GLuint> mActiveSecondaryContexts;
 };
 
 template <typename CaptureFuncT, typename... ArgsT>

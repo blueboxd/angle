@@ -841,11 +841,13 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
         return false;
     }
 
-    if (parseContext.isExtensionEnabled(TExtension::EXT_clip_cull_distance))
+    if (parseContext.isExtensionEnabled(TExtension::EXT_clip_cull_distance) ||
+        parseContext.isExtensionEnabled(TExtension::APPLE_clip_distance))
     {
-        if (!ValidateClipCullDistance(root, &mDiagnostics,
-                                      mResources.MaxCombinedClipAndCullDistances,
-                                      compileOptions.limitSimultaneousClipAndCullDistanceUsage))
+        if (!ValidateClipCullDistance(
+                root, &mDiagnostics, mResources.MaxCombinedClipAndCullDistances,
+                compileOptions.limitSimultaneousClipAndCullDistanceUsage, &mClipDistanceSize,
+                &mCullDistanceSize, &mClipDistanceMaxIndex, &mCullDistanceMaxIndex))
         {
             return false;
         }
@@ -1306,6 +1308,7 @@ void TCompiler::setResourceString()
         << ":EXT_frag_depth:" << mResources.EXT_frag_depth
         << ":EXT_primitive_bounding_box:" << mResources.EXT_primitive_bounding_box
         << ":OES_primitive_bounding_box:" << mResources.OES_primitive_bounding_box
+        << ":EXT_separate_shader_objects:" << mResources.EXT_separate_shader_objects
         << ":EXT_shader_texture_lod:" << mResources.EXT_shader_texture_lod
         << ":EXT_shader_framebuffer_fetch:" << mResources.EXT_shader_framebuffer_fetch
         << ":EXT_shader_framebuffer_fetch_non_coherent:" << mResources.EXT_shader_framebuffer_fetch_non_coherent
@@ -1434,6 +1437,11 @@ void TCompiler::clearResults()
     mGLPositionInitialized = false;
 
     mNumViews = -1;
+
+    mClipDistanceSize     = 0;
+    mCullDistanceSize     = 0;
+    mClipDistanceMaxIndex = -1;
+    mCullDistanceMaxIndex = -1;
 
     mGeometryShaderInputPrimitiveType  = EptUndefined;
     mGeometryShaderOutputPrimitiveType = EptUndefined;

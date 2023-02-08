@@ -11,7 +11,6 @@
 
 #include "common/spirv/spirv_instruction_builder_autogen.h"
 
-#include "libANGLE/renderer/glslang_wrapper_utils.h"
 #include "libANGLE/renderer/vulkan/ContextVk.h"
 #include "libANGLE/renderer/vulkan/FramebufferVk.h"
 #include "libANGLE/renderer/vulkan/RenderTargetVk.h"
@@ -1155,9 +1154,10 @@ UtilsVk::UtilsVk() = default;
 
 UtilsVk::~UtilsVk() = default;
 
-void UtilsVk::destroy(RendererVk *renderer)
+void UtilsVk::destroy(ContextVk *contextVk)
 {
-    VkDevice device = renderer->getDevice();
+    RendererVk *renderer = contextVk->getRenderer();
+    VkDevice device      = renderer->getDevice();
 
     for (Function f : angle::AllEnums<Function>())
     {
@@ -1202,21 +1202,21 @@ void UtilsVk::destroy(RendererVk *renderer)
         }
     }
     mImageClearVSOnly.program.destroy(renderer);
-    mImageClearVSOnly.pipelines.destroy(renderer);
+    mImageClearVSOnly.pipelines.destroy(contextVk);
     for (GraphicsShaderProgramAndPipelines &programAndPipelines : mImageClear)
     {
         programAndPipelines.program.destroy(renderer);
-        programAndPipelines.pipelines.destroy(renderer);
+        programAndPipelines.pipelines.destroy(contextVk);
     }
     for (GraphicsShaderProgramAndPipelines &programAndPipelines : mImageCopy)
     {
         programAndPipelines.program.destroy(renderer);
-        programAndPipelines.pipelines.destroy(renderer);
+        programAndPipelines.pipelines.destroy(contextVk);
     }
     for (GraphicsShaderProgramAndPipelines &programAndPipelines : mBlitResolve)
     {
         programAndPipelines.program.destroy(renderer);
-        programAndPipelines.pipelines.destroy(renderer);
+        programAndPipelines.pipelines.destroy(contextVk);
     }
     for (ComputeShaderProgramAndPipelines &programAndPipelines : mBlitResolveStencilNoExport)
     {
@@ -1227,9 +1227,9 @@ void UtilsVk::destroy(RendererVk *renderer)
         }
     }
     mExportStencil.program.destroy(renderer);
-    mExportStencil.pipelines.destroy(renderer);
+    mExportStencil.pipelines.destroy(contextVk);
     mOverlayDraw.program.destroy(renderer);
-    mOverlayDraw.pipelines.destroy(renderer);
+    mOverlayDraw.pipelines.destroy(contextVk);
     for (ComputeShaderProgramAndPipelines &programAndPipelines : mGenerateMipmap)
     {
         programAndPipelines.program.destroy(renderer);
@@ -1250,7 +1250,7 @@ void UtilsVk::destroy(RendererVk *renderer)
     {
         GraphicsShaderProgramAndPipelines &programAndPipelines = programIter.second;
         programAndPipelines.program.destroy(renderer);
-        programAndPipelines.pipelines.destroy(renderer);
+        programAndPipelines.pipelines.destroy(contextVk);
     }
     mUnresolve.clear();
 
@@ -1624,7 +1624,7 @@ angle::Result UtilsVk::setupComputeProgram(
     }
 
     vk::PipelineHelper *pipeline;
-    PipelineCacheAccess pipelineCache;
+    vk::PipelineCacheAccess pipelineCache;
     ANGLE_TRY(renderer->getPipelineCache(&pipelineCache));
     ANGLE_TRY(programAndPipelines->program.getOrCreateComputePipeline(
         contextVk, &programAndPipelines->pipelines, &pipelineCache, pipelineLayout.get(),
@@ -1680,11 +1680,11 @@ angle::Result UtilsVk::setupGraphicsProgram(ContextVk *contextVk,
     }
 
     // This value is not used but is passed to getGraphicsPipeline to avoid a nullptr check.
-    PipelineCacheAccess pipelineCache;
+    vk::PipelineCacheAccess pipelineCache;
     ANGLE_TRY(renderer->getPipelineCache(&pipelineCache));
 
     // Pull in a compatible RenderPass.
-    vk::RenderPass *compatibleRenderPass = nullptr;
+    const vk::RenderPass *compatibleRenderPass = nullptr;
     ANGLE_TRY(contextVk->getRenderPassCache().getCompatibleRenderPass(
         contextVk, pipelineDesc->getRenderPassDesc(), &compatibleRenderPass));
 
@@ -2145,7 +2145,7 @@ angle::Result UtilsVk::startRenderPass(ContextVk *contextVk,
                                        const gl::Rectangle &renderArea,
                                        vk::RenderPassCommandBuffer **commandBufferOut)
 {
-    vk::RenderPass *compatibleRenderPass = nullptr;
+    const vk::RenderPass *compatibleRenderPass = nullptr;
     ANGLE_TRY(contextVk->getCompatibleRenderPass(renderPassDesc, &compatibleRenderPass));
 
     VkFramebufferCreateInfo framebufferInfo = {};
@@ -2172,11 +2172,9 @@ angle::Result UtilsVk::startRenderPass(ContextVk *contextVk,
                                               vk::ImageLayout::ColorAttachment,
                                               vk::ImageLayout::ColorAttachment);
 
-    vk::RenderPassSerial renderPassSerial;
-    ANGLE_TRY(contextVk->beginNewRenderPass(framebuffer, renderArea, renderPassDesc,
-                                            renderPassAttachmentOps, vk::PackedAttachmentCount(1),
-                                            vk::kAttachmentIndexInvalid, clearValues,
-                                            commandBufferOut, &renderPassSerial));
+    ANGLE_TRY(contextVk->beginNewRenderPass(
+        framebuffer, renderArea, renderPassDesc, renderPassAttachmentOps,
+        vk::PackedAttachmentCount(1), vk::kAttachmentIndexInvalid, clearValues, commandBufferOut));
 
     contextVk->addGarbage(&framebuffer.getFramebuffer());
 
@@ -2189,14 +2187,11 @@ angle::Result UtilsVk::clearFramebuffer(ContextVk *contextVk,
 {
     ANGLE_TRY(ensureImageClearResourcesInitialized(contextVk));
 
-    const gl::Rectangle &scissoredRenderArea         = params.clearArea;
-    vk::MaybeImagelessFramebuffer currentFramebuffer = {};
+    const gl::Rectangle &scissoredRenderArea = params.clearArea;
     vk::RenderPassCommandBuffer *commandBuffer;
 
     // Start a new render pass if not already started
-    ANGLE_TRY(framebuffer->getFramebuffer(contextVk, &currentFramebuffer, nullptr, nullptr,
-                                          SwapchainResolveMode::Disabled));
-    if (contextVk->hasStartedRenderPassWithSerial(framebuffer->getLastRenderPassSerial()))
+    if (contextVk->hasStartedRenderPassWithQueueSerial(framebuffer->getLastRenderPassQueueSerial()))
     {
         vk::RenderPassCommandBufferHelper *renderPassCommands =
             &contextVk->getStartedRenderPassCommands();

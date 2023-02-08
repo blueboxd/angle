@@ -140,6 +140,12 @@ class TracePerfTest : public ANGLERenderTest
                                     const EGLint *attrib_list);
     EGLBoolean onEglDestroyImage(EGLDisplay display, EGLImage image);
     EGLBoolean onEglDestroyImageKHR(EGLDisplay display, EGLImage image);
+    EGLSync onEglCreateSync(EGLDisplay dpy, EGLenum type, const EGLAttrib *attrib_list);
+    EGLSync onEglCreateSyncKHR(EGLDisplay dpy, EGLenum type, const EGLint *attrib_list);
+    EGLBoolean onEglDestroySync(EGLDisplay dpy, EGLSync sync);
+    EGLBoolean onEglDestroySyncKHR(EGLDisplay dpy, EGLSync sync);
+    EGLint onEglClientWaitSync(EGLDisplay dpy, EGLSync sync, EGLint flags, EGLTimeKHR timeout);
+    EGLint onEglClientWaitSyncKHR(EGLDisplay dpy, EGLSync sync, EGLint flags, EGLTimeKHR timeout);
     EGLint onEglGetError();
 
     void onReplayFramebufferChange(GLenum target, GLuint framebuffer);
@@ -280,6 +286,41 @@ EGLBoolean KHRONOS_APIENTRY EglDestroyImage(EGLDisplay display, EGLImage image)
 EGLBoolean KHRONOS_APIENTRY EglDestroyImageKHR(EGLDisplay display, EGLImage image)
 {
     return gCurrentTracePerfTest->onEglDestroyImageKHR(display, image);
+}
+
+EGLSync KHRONOS_APIENTRY EglCreateSync(EGLDisplay dpy, EGLenum type, const EGLAttrib *attrib_list)
+{
+    return gCurrentTracePerfTest->onEglCreateSync(dpy, type, attrib_list);
+}
+
+EGLSync KHRONOS_APIENTRY EglCreateSyncKHR(EGLDisplay dpy, EGLenum type, const EGLint *attrib_list)
+{
+    return gCurrentTracePerfTest->onEglCreateSyncKHR(dpy, type, attrib_list);
+}
+
+EGLBoolean KHRONOS_APIENTRY EglDestroySync(EGLDisplay dpy, EGLSync sync)
+{
+    return gCurrentTracePerfTest->onEglDestroySync(dpy, sync);
+}
+
+EGLBoolean KHRONOS_APIENTRY EglDestroySyncKHR(EGLDisplay dpy, EGLSync sync)
+{
+    return gCurrentTracePerfTest->onEglDestroySyncKHR(dpy, sync);
+}
+
+EGLint KHRONOS_APIENTRY EglClientWaitSync(EGLDisplay dpy,
+                                          EGLSync sync,
+                                          EGLint flags,
+                                          EGLTimeKHR timeout)
+{
+    return gCurrentTracePerfTest->onEglClientWaitSync(dpy, sync, flags, timeout);
+}
+EGLint KHRONOS_APIENTRY EglClientWaitSyncKHR(EGLDisplay dpy,
+                                             EGLSync sync,
+                                             EGLint flags,
+                                             EGLTimeKHR timeout)
+{
+    return gCurrentTracePerfTest->onEglClientWaitSyncKHR(dpy, sync, flags, timeout);
 }
 
 EGLint KHRONOS_APIENTRY EglGetError()
@@ -599,6 +640,30 @@ angle::GenericProc KHRONOS_APIENTRY TraceLoadProc(const char *procName)
     {
         return reinterpret_cast<angle::GenericProc>(EglDestroyImageKHR);
     }
+    if (strcmp(procName, "eglCreateSync") == 0)
+    {
+        return reinterpret_cast<angle::GenericProc>(EglCreateSync);
+    }
+    if (strcmp(procName, "eglCreateSyncKHR") == 0)
+    {
+        return reinterpret_cast<angle::GenericProc>(EglCreateSyncKHR);
+    }
+    if (strcmp(procName, "eglDestroySync") == 0)
+    {
+        return reinterpret_cast<angle::GenericProc>(EglDestroySync);
+    }
+    if (strcmp(procName, "eglDestroySyncKHR") == 0)
+    {
+        return reinterpret_cast<angle::GenericProc>(EglDestroySyncKHR);
+    }
+    if (strcmp(procName, "eglClientWaitSync") == 0)
+    {
+        return reinterpret_cast<angle::GenericProc>(EglClientWaitSync);
+    }
+    if (strcmp(procName, "eglClientWaitSyncKHR") == 0)
+    {
+        return reinterpret_cast<angle::GenericProc>(EglClientWaitSyncKHR);
+    }
     if (strcmp(procName, "eglGetError") == 0)
     {
         return reinterpret_cast<angle::GenericProc>(EglGetError);
@@ -813,6 +878,16 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         {
             skipTest("http://anglebug.com/6568 Flaky on Intel/windows");
         }
+    }
+
+    if (IsWindows() && IsIntel() && mParams->isVulkan() && traceNameIs("black_desert_mobile"))
+    {
+        skipTest("TODO: http://anglebug.com/7879 Non-deterministic image on 31.0.101.2111 driver");
+    }
+
+    if (IsWindows() && IsIntel() && mParams->isVulkan() && traceNameIs("the_gardens_between"))
+    {
+        skipTest("TODO: http://anglebug.com/7879 Non-deterministic image on 31.0.101.2111 driver");
     }
 
     if (traceNameIs("brawl_stars"))
@@ -1379,6 +1454,17 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         }
     }
 
+    if (traceNameIs("minetest"))
+    {
+        addExtensionPrerequisite("GL_EXT_texture_format_BGRA8888");
+        addIntegerPrerequisite(GL_MAX_TEXTURE_UNITS, 4);
+    }
+
+    if (traceNameIs("diablo_immortal"))
+    {
+        addExtensionPrerequisite("GL_EXT_shader_framebuffer_fetch");
+    }
+
     // glDebugMessageControlKHR and glDebugMessageCallbackKHR crash on ARM GLES1.
     if (IsARM() && mParams->traceInfo.contextClientMajorVersion == 1)
     {
@@ -1393,6 +1479,11 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
     if (gTraceTestValidation)
     {
         mStepsToRun = frameCount();
+    }
+
+    if (gWarmupSteps == kAllFrames)
+    {
+        mWarmupSteps = frameCount();
     }
 }
 
@@ -1808,6 +1899,42 @@ EGLBoolean TracePerfTest::onEglDestroyImageKHR(EGLDisplay display, EGLImage imag
     return getGLWindow()->destroyImageKHR(image);
 }
 
+EGLSync TracePerfTest::onEglCreateSync(EGLDisplay dpy, EGLenum type, const EGLAttrib *attrib_list)
+{
+    return getGLWindow()->createSync(dpy, type, attrib_list);
+}
+
+EGLSync TracePerfTest::onEglCreateSyncKHR(EGLDisplay dpy, EGLenum type, const EGLint *attrib_list)
+{
+    return getGLWindow()->createSyncKHR(dpy, type, attrib_list);
+}
+
+EGLBoolean TracePerfTest::onEglDestroySync(EGLDisplay dpy, EGLSync sync)
+{
+    return getGLWindow()->destroySync(dpy, sync);
+}
+
+EGLBoolean TracePerfTest::onEglDestroySyncKHR(EGLDisplay dpy, EGLSync sync)
+{
+    return getGLWindow()->destroySyncKHR(dpy, sync);
+}
+
+EGLint TracePerfTest::onEglClientWaitSync(EGLDisplay dpy,
+                                          EGLSync sync,
+                                          EGLint flags,
+                                          EGLTimeKHR timeout)
+{
+    return getGLWindow()->clientWaitSync(dpy, sync, flags, timeout);
+}
+
+EGLint TracePerfTest::onEglClientWaitSyncKHR(EGLDisplay dpy,
+                                             EGLSync sync,
+                                             EGLint flags,
+                                             EGLTimeKHR timeout)
+{
+    return getGLWindow()->clientWaitSyncKHR(dpy, sync, flags, timeout);
+}
+
 EGLint TracePerfTest::onEglGetError()
 {
     return getGLWindow()->getEGLError();
@@ -2161,7 +2288,7 @@ void RegisterTraceTests()
     GLESDriverType driverType = GetDriverTypeFromString(gUseGL, GLESDriverType::AngleEGL);
     GLenum platformType       = EGL_PLATFORM_ANGLE_TYPE_DEFAULT_ANGLE;
     GLenum deviceType         = EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE;
-    if (driverType == GLESDriverType::AngleEGL)
+    if (IsANGLE(driverType))
     {
         platformType = GetPlatformANGLETypeFromArg(gUseANGLE, EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE);
         deviceType =

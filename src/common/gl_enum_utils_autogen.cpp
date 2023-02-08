@@ -1988,7 +1988,7 @@ const char *GLenumToString(GLESEnum enumGroup, unsigned int value)
                 case 0x8E4E:
                     return "GL_LAST_VERTEX_CONVENTION";
                 case 0x8E4F:
-                    return "GL_PROVOKING_VERTEX";
+                    return "GL_PROVOKING_VERTEX_ANGLE";
                 case 0x8E50:
                     return "GL_SAMPLE_POSITION";
                 case 0x8E51:
@@ -2724,22 +2724,28 @@ const char *GLenumToString(GLESEnum enumGroup, unsigned int value)
                 case 0x96E3:
                     return "GL_PIXEL_LOCAL_STORAGE_ACTIVE_PLANES_ANGLE";
                 case 0x96E4:
-                    return "GL_CLEAR_ANGLE";
+                    return "GL_LOAD_OP_ZERO_ANGLE";
                 case 0x96E5:
-                    return "GL_DISABLE_ANGLE";
+                    return "GL_LOAD_OP_CLEAR_ANGLE";
                 case 0x96E6:
-                    return "GL_PIXEL_LOCAL_FORMAT_ANGLE";
+                    return "GL_LOAD_OP_LOAD_ANGLE";
                 case 0x96E7:
-                    return "GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE";
+                    return "GL_LOAD_OP_DISABLE_ANGLE";
                 case 0x96E8:
-                    return "GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE";
+                    return "GL_STORE_OP_STORE_ANGLE";
                 case 0x96E9:
-                    return "GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE";
+                    return "GL_PIXEL_LOCAL_FORMAT_ANGLE";
                 case 0x96EA:
-                    return "GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE";
+                    return "GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE";
                 case 0x96EB:
-                    return "GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE";
+                    return "GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE";
                 case 0x96EC:
+                    return "GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE";
+                case 0x96ED:
+                    return "GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE";
+                case 0x96EE:
+                    return "GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE";
+                case 0x96EF:
                     return "GL_PIXEL_LOCAL_CLEAR_VALUE_UNSIGNED_INT_ANGLE";
                 case 0xFFFFFFFF:
                     return "GL_INVALID_INDEX";
@@ -4874,7 +4880,7 @@ const char *GLenumToString(GLESEnum enumGroup, unsigned int value)
                 case 0x8E28:
                     return "GL_TIMESTAMP_EXT";
                 case 0x8E4F:
-                    return "GL_PROVOKING_VERTEX";
+                    return "GL_PROVOKING_VERTEX_ANGLE";
                 case 0x8E59:
                     return "GL_MAX_SAMPLE_MASK_WORDS";
                 case 0x8E89:
@@ -5877,7 +5883,7 @@ const char *GLenumToString(GLESEnum enumGroup, unsigned int value)
         {
             switch (value)
             {
-                case 0x96EA:
+                case 0x96ED:
                     return "GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE";
                 default:
                     return UnknownEnumToString(value);
@@ -5888,17 +5894,17 @@ const char *GLenumToString(GLESEnum enumGroup, unsigned int value)
         {
             switch (value)
             {
-                case 0x96E6:
-                    return "GL_PIXEL_LOCAL_FORMAT_ANGLE";
-                case 0x96E7:
-                    return "GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE";
-                case 0x96E8:
-                    return "GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE";
                 case 0x96E9:
-                    return "GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE";
+                    return "GL_PIXEL_LOCAL_FORMAT_ANGLE";
+                case 0x96EA:
+                    return "GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE";
                 case 0x96EB:
-                    return "GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE";
+                    return "GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE";
                 case 0x96EC:
+                    return "GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE";
+                case 0x96EE:
+                    return "GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE";
+                case 0x96EF:
                     return "GL_PIXEL_LOCAL_CLEAR_VALUE_UNSIGNED_INT_ANGLE";
                 default:
                     return UnknownEnumToString(value);
@@ -20147,7 +20153,7 @@ unsigned int StringToGLenum(const char *str)
     }
     if (strcmp(str, "GL_CLEAR_ANGLE") == 0)
     {
-        return 0x96E4;
+        return 0x1500;
     }
     if (strcmp(str, "GL_CLEAR_BUFFER") == 0)
     {
@@ -23509,10 +23515,6 @@ unsigned int StringToGLenum(const char *str)
     {
         return 0x1201;
     }
-    if (strcmp(str, "GL_DISABLE_ANGLE") == 0)
-    {
-        return 0x96E5;
-    }
     if (strcmp(str, "GL_DISCARD_ATI") == 0)
     {
         return 0x8763;
@@ -24802,6 +24804,10 @@ unsigned int StringToGLenum(const char *str)
         return 0x90AF;
     }
     if (strcmp(str, "GL_FIRST_VERTEX_CONVENTION") == 0)
+    {
+        return 0x8E4D;
+    }
+    if (strcmp(str, "GL_FIRST_VERTEX_CONVENTION_ANGLE") == 0)
     {
         return 0x8E4D;
     }
@@ -27739,6 +27745,10 @@ unsigned int StringToGLenum(const char *str)
     {
         return 0x8E4E;
     }
+    if (strcmp(str, "GL_LAST_VERTEX_CONVENTION_ANGLE") == 0)
+    {
+        return 0x8E4E;
+    }
     if (strcmp(str, "GL_LAST_VERTEX_CONVENTION_EXT") == 0)
     {
         return 0x8E4E;
@@ -28114,6 +28124,22 @@ unsigned int StringToGLenum(const char *str)
     if (strcmp(str, "GL_LOAD") == 0)
     {
         return 0x0101;
+    }
+    if (strcmp(str, "GL_LOAD_OP_CLEAR_ANGLE") == 0)
+    {
+        return 0x96E5;
+    }
+    if (strcmp(str, "GL_LOAD_OP_DISABLE_ANGLE") == 0)
+    {
+        return 0x96E7;
+    }
+    if (strcmp(str, "GL_LOAD_OP_LOAD_ANGLE") == 0)
+    {
+        return 0x96E6;
+    }
+    if (strcmp(str, "GL_LOAD_OP_ZERO_ANGLE") == 0)
+    {
+        return 0x96E4;
     }
     if (strcmp(str, "GL_LOCAL_CONSTANT_DATATYPE_EXT") == 0)
     {
@@ -33141,19 +33167,19 @@ unsigned int StringToGLenum(const char *str)
     }
     if (strcmp(str, "GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE") == 0)
     {
-        return 0x96EA;
+        return 0x96ED;
     }
     if (strcmp(str, "GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE") == 0)
     {
-        return 0x96EB;
+        return 0x96EE;
     }
     if (strcmp(str, "GL_PIXEL_LOCAL_CLEAR_VALUE_UNSIGNED_INT_ANGLE") == 0)
     {
-        return 0x96EC;
+        return 0x96EF;
     }
     if (strcmp(str, "GL_PIXEL_LOCAL_FORMAT_ANGLE") == 0)
     {
-        return 0x96E6;
+        return 0x96E9;
     }
     if (strcmp(str, "GL_PIXEL_LOCAL_STORAGE_ACTIVE_PLANES_ANGLE") == 0)
     {
@@ -33161,15 +33187,15 @@ unsigned int StringToGLenum(const char *str)
     }
     if (strcmp(str, "GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE") == 0)
     {
-        return 0x96E9;
+        return 0x96EC;
     }
     if (strcmp(str, "GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE") == 0)
     {
-        return 0x96E8;
+        return 0x96EB;
     }
     if (strcmp(str, "GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE") == 0)
     {
-        return 0x96E7;
+        return 0x96EA;
     }
     if (strcmp(str, "GL_PIXEL_MAG_FILTER_EXT") == 0)
     {
@@ -34248,6 +34274,10 @@ unsigned int StringToGLenum(const char *str)
         return 0x959B;
     }
     if (strcmp(str, "GL_PROVOKING_VERTEX") == 0)
+    {
+        return 0x8E4F;
+    }
+    if (strcmp(str, "GL_PROVOKING_VERTEX_ANGLE") == 0)
     {
         return 0x8E4F;
     }
@@ -37966,6 +37996,10 @@ unsigned int StringToGLenum(const char *str)
     if (strcmp(str, "GL_STORAGE_SHARED_APPLE") == 0)
     {
         return 0x85BF;
+    }
+    if (strcmp(str, "GL_STORE_OP_STORE_ANGLE") == 0)
+    {
+        return 0x96E8;
     }
     if (strcmp(str, "GL_STREAM_COPY") == 0)
     {

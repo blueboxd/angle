@@ -333,14 +333,6 @@
             ]
         },
         {
-            "name": "shadow_buffers",
-            "category": "Features",
-            "description": [
-                "Allocate a shadow buffer for GL buffer objects to reduce glMap* latency."
-            ],
-            "issue": "http://anglebug.com/4339"
-        },
-        {
             "name": "prefer_CPU_for_buffer_sub_data",
             "category": "Features",
             "description": [
@@ -371,6 +363,15 @@
                 "Enable precision qualifiers in shaders"
             ],
             "issue": "http://anglebug.com/3078"
+        },
+        {
+            "name": "varyings_require_matching_precision_in_spirv",
+            "category": "Workarounds",
+            "description": [
+                "Add additional SPIRV instructions to make sure precision ",
+                "between shader stages match with each other"
+            ],
+            "issue": "http://anglebug.com/7488"
         },
         {
             "name": "prefer_aggregate_barrier_calls",
@@ -1031,6 +1032,14 @@
             "issue": "https://anglebug.com/7369"
         },
         {
+            "name": "slow_down_monolithic_pipeline_creation_for_testing",
+            "category": "Workarounds",
+            "description": [
+                "Artificially slow down async monolithic pipeline creation for threading testing"
+            ],
+            "issue": "https://anglebug.com/7369"
+        },
+        {
             "name": "sync_monolithic_pipelines_to_blob_cache",
             "category": "Workarounds",
             "description": [
@@ -1049,6 +1058,24 @@
                 "monolithic pipelines can reuse blobs from partial pipelines"
             ],
             "issue": "https://anglebug.com/7369"
+        },
+        {
+            "name": "has_effective_pipeline_cache_serialization",
+            "category": "Features",
+            "description": [
+                "Whether the implementation serializes the Vulkan pipeline cache effectively. ",
+                "On some implementations, pipeline cache serialization returns no data, so there ",
+                "is no benefit to serializing it"
+            ],
+            "issue": "https://anglebug.com/7369"
+        },
+        {
+            "name": "enable_async_pipeline_cache_compression",
+            "category": "Workarounds",
+            "description": [
+                "Enable compressing pipeline cache in a thread."
+            ],
+            "issue": "http://anglebug.com/4722"
         },
         {
             "name": "supports_pipeline_protected_access",

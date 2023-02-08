@@ -21,6 +21,8 @@ libangle_common_sources = [
   "src/common/PackedGLEnums_autogen.h",
   "src/common/PoolAlloc.cpp",
   "src/common/PoolAlloc.h",
+  "src/common/RingBufferAllocator.cpp",
+  "src/common/RingBufferAllocator.h",
   "src/common/Spinlock.h",
   "src/common/SynchronizedValue.h",
   "src/common/WorkerThread.cpp",
@@ -32,6 +34,28 @@ libangle_common_sources = [
   "src/common/angleutils.cpp",
   "src/common/angleutils.h",
   "src/common/apple_platform_utils.h",
+  "src/common/backtrace_utils.h",
+  "src/common/base/anglebase/base_export.h",
+  "src/common/base/anglebase/containers/mru_cache.h",
+  "src/common/base/anglebase/logging.h",
+  "src/common/base/anglebase/macros.h",
+  "src/common/base/anglebase/no_destructor.h",
+  "src/common/base/anglebase/numerics/checked_math.h",
+  "src/common/base/anglebase/numerics/checked_math_impl.h",
+  "src/common/base/anglebase/numerics/clamped_math.h",
+  "src/common/base/anglebase/numerics/clamped_math_impl.h",
+  "src/common/base/anglebase/numerics/math_constants.h",
+  "src/common/base/anglebase/numerics/ranges.h",
+  "src/common/base/anglebase/numerics/safe_conversions.h",
+  "src/common/base/anglebase/numerics/safe_conversions_arm_impl.h",
+  "src/common/base/anglebase/numerics/safe_conversions_impl.h",
+  "src/common/base/anglebase/numerics/safe_math.h",
+  "src/common/base/anglebase/numerics/safe_math_arm_impl.h",
+  "src/common/base/anglebase/numerics/safe_math_clang_gcc_impl.h",
+  "src/common/base/anglebase/numerics/safe_math_shared_impl.h",
+  "src/common/base/anglebase/sha1.cc",
+  "src/common/base/anglebase/sha1.h",
+  "src/common/base/anglebase/sys_byteorder.h",
   "src/common/bitset_utils.h",
   "src/common/debug.cpp",
   "src/common/debug.h",
@@ -49,29 +73,6 @@ libangle_common_sources = [
   "src/common/string_utils.h",
   "src/common/system_utils.cpp",
   "src/common/system_utils.h",
-  "src/common/third_party/base/anglebase/base_export.h",
-  "src/common/third_party/base/anglebase/containers/mru_cache.h",
-  "src/common/third_party/base/anglebase/logging.h",
-  "src/common/third_party/base/anglebase/macros.h",
-  "src/common/third_party/base/anglebase/no_destructor.h",
-  "src/common/third_party/base/anglebase/numerics/checked_math.h",
-  "src/common/third_party/base/anglebase/numerics/checked_math_impl.h",
-  "src/common/third_party/base/anglebase/numerics/clamped_math.h",
-  "src/common/third_party/base/anglebase/numerics/clamped_math_impl.h",
-  "src/common/third_party/base/anglebase/numerics/math_constants.h",
-  "src/common/third_party/base/anglebase/numerics/ranges.h",
-  "src/common/third_party/base/anglebase/numerics/safe_conversions.h",
-  "src/common/third_party/base/anglebase/numerics/safe_conversions_arm_impl.h",
-  "src/common/third_party/base/anglebase/numerics/safe_conversions_impl.h",
-  "src/common/third_party/base/anglebase/numerics/safe_math.h",
-  "src/common/third_party/base/anglebase/numerics/safe_math_arm_impl.h",
-  "src/common/third_party/base/anglebase/numerics/safe_math_clang_gcc_impl.h",
-  "src/common/third_party/base/anglebase/numerics/safe_math_shared_impl.h",
-  "src/common/third_party/base/anglebase/sha1.cc",
-  "src/common/third_party/base/anglebase/sha1.h",
-  "src/common/third_party/base/anglebase/sys_byteorder.h",
-  "src/common/third_party/smhasher/src/PMurHash.cpp",
-  "src/common/third_party/smhasher/src/PMurHash.h",
   "src/common/tls.cpp",
   "src/common/tls.h",
   "src/common/uniform_type_info_autogen.cpp",
@@ -89,6 +90,12 @@ xxhash_sources = [
   "src/common/third_party/xxhash/xxhash.c",
   "src/common/third_party/xxhash/xxhash.h",
 ]
+
+if (is_android && angle_enable_unwind_backtrace_support) {
+  libangle_common_sources += [ "src/common/backtrace_utils_android.cpp" ]
+} else {
+  libangle_common_sources += [ "src/common/backtrace_utils_noop.cpp" ]
+}
 
 if (is_linux || is_chromeos || is_android || is_fuchsia) {
   libangle_common_sources += [
@@ -336,6 +343,7 @@ libangle_headers = [
   "src/libANGLE/renderer/TextureImpl.h",
   "src/libANGLE/renderer/TransformFeedbackImpl.h",
   "src/libANGLE/renderer/VertexArrayImpl.h",
+  "src/libANGLE/renderer/vulkan/DisplayVk_api.h",
   "src/libANGLE/renderer/copyvertex.h",
   "src/libANGLE/renderer/copyvertex.inc.h",
   "src/libANGLE/renderer/load_functions_table.h",
@@ -360,7 +368,7 @@ libangle_headers = [
   "src/libANGLE/validationGL2_autogen.h",
   "src/libANGLE/validationGL3_autogen.h",
   "src/libANGLE/validationGL4_autogen.h",
-  "src/third_party/trace_event/trace_event.h",
+  "src/common/base/anglebase/trace_event/trace_event.h",
 ]
 
 libangle_sources = [
