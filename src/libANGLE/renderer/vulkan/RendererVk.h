@@ -186,14 +186,16 @@ class WaitableCompressEvent
 class OneOffCommandPool : angle::NonCopyable
 {
   public:
+    OneOffCommandPool();
+    void init(vk::ProtectionType protectionType);
     angle::Result getCommandBuffer(vk::Context *context,
-                                   bool hasProtectedContent,
                                    vk::PrimaryCommandBuffer *commandBufferOut);
     void releaseCommandBuffer(const QueueSerial &submitQueueSerial,
                               vk::PrimaryCommandBuffer &&primary);
     void destroy(VkDevice device);
 
   private:
+    vk::ProtectionType mProtectionType;
     std::mutex mMutex;
     vk::CommandPool mCommandPool;
     struct PendingOneOffCommands
@@ -393,10 +395,10 @@ class RendererVk : angle::NonCopyable
 
     // This command buffer should be submitted immediately via queueSubmitOneOff.
     angle::Result getCommandBufferOneOff(vk::Context *context,
-                                         bool hasProtectedContent,
+                                         vk::ProtectionType protectionType,
                                          vk::PrimaryCommandBuffer *commandBufferOut)
     {
-        return mOneOffCommandPool.getCommandBuffer(context, hasProtectedContent, commandBufferOut);
+        return mOneOffCommandPoolMap[protectionType].getCommandBuffer(context, commandBufferOut);
     }
 
     void resetOutsideRenderPassCommandBuffer(vk::OutsideRenderPassCommandBuffer &&commandBuffer)
@@ -413,7 +415,7 @@ class RendererVk : angle::NonCopyable
     // Command buffer must be allocated with getCommandBufferOneOff and is reclaimed.
     angle::Result queueSubmitOneOff(vk::Context *context,
                                     vk::PrimaryCommandBuffer &&primary,
-                                    bool hasProtectedContent,
+                                    vk::ProtectionType protectionType,
                                     egl::ContextPriority priority,
                                     const vk::Semaphore *waitSemaphore,
                                     VkPipelineStageFlags waitSemaphoreStageMasks,
@@ -552,11 +554,6 @@ class RendererVk : angle::NonCopyable
 
     egl::Display *getDisplay() const { return mDisplay; }
 
-    VkResult getLastPresentResult(VkSwapchainKHR swapchain)
-    {
-        return mCommandProcessor.getLastPresentResult(swapchain);
-    }
-
     bool enableDebugUtils() const { return mEnableDebugUtils; }
     bool angleDebuggerMode() const { return mAngleDebuggerMode; }
 
@@ -580,10 +577,8 @@ class RendererVk : angle::NonCopyable
     void cleanupPendingSubmissionGarbage();
 
     angle::Result submitCommands(vk::Context *context,
-                                 bool hasProtectedContent,
+                                 vk::ProtectionType protectionType,
                                  egl::ContextPriority contextPriority,
-                                 std::vector<VkSemaphore> &&waitSemaphores,
-                                 std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks,
                                  const vk::Semaphore *signalSemaphore,
                                  vk::SecondaryCommandPools *commandPools,
                                  const QueueSerial &submitSerialOut);
@@ -595,21 +590,25 @@ class RendererVk : angle::NonCopyable
                                                             const vk::ResourceUse &use,
                                                             uint64_t timeout,
                                                             VkResult *result);
-    angle::Result finish(vk::Context *context, bool hasProtectedContent);
+    angle::Result finish(vk::Context *context);
     angle::Result checkCompletedCommands(vk::Context *context);
 
+    angle::Result flushWaitSemaphores(vk::ProtectionType protectionType,
+                                      std::vector<VkSemaphore> &&waitSemaphores,
+                                      std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks);
     angle::Result flushRenderPassCommands(vk::Context *context,
-                                          bool hasProtectedContent,
+                                          vk::ProtectionType protectionType,
                                           const vk::RenderPass &renderPass,
                                           vk::RenderPassCommandBufferHelper **renderPassCommands);
     angle::Result flushOutsideRPCommands(
         vk::Context *context,
-        bool hasProtectedContent,
+        vk::ProtectionType protectionType,
         vk::OutsideRenderPassCommandBufferHelper **outsideRPCommands);
 
     VkResult queuePresent(vk::Context *context,
                           egl::ContextPriority priority,
-                          const VkPresentInfoKHR &presentInfo);
+                          const VkPresentInfoKHR &presentInfo,
+                          vk::SwapchainStatus *swapchainStatus);
 
     angle::Result getOutsideRenderPassCommandBufferHelper(
         vk::Context *context,
@@ -960,7 +959,7 @@ class RendererVk : angle::NonCopyable
     uint32_t mGarbageCollectionFlushThreshold;
 
     // Only used for "one off" command buffers.
-    OneOffCommandPool mOneOffCommandPool;
+    angle::PackedEnumMap<vk::ProtectionType, OneOffCommandPool> mOneOffCommandPoolMap;
 
     // Synchronous Command Queue
     vk::CommandQueue mCommandQueue;

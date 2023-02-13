@@ -205,8 +205,6 @@ constexpr const char *kSkippedMessages[] = {
     "VUID-VkDescriptorImageInfo-imageView-06711",
     // http://crbug.com/1412096
     "VUID-VkImageCreateInfo-pNext-00990",
-    "VUID-VkAttachmentDescription2-stencilStoreOp-parameter",
-    "VUID-VkAttachmentDescription2-storeOp-parameter",
 };
 
 // Validation messages that should be ignored only when VK_EXT_primitive_topology_list_restart is
@@ -1232,6 +1230,14 @@ void logMemoryHeapStats(RendererVk *renderer, vk::MemoryLogSeverity severity)
 }  // namespace
 
 // OneOffCommandPool implementation.
+OneOffCommandPool::OneOffCommandPool() : mProtectionType(vk::ProtectionType::InvalidEnum) {}
+
+void OneOffCommandPool::init(vk::ProtectionType protectionType)
+{
+    ASSERT(!mCommandPool.valid());
+    mProtectionType = protectionType;
+}
+
 void OneOffCommandPool::destroy(VkDevice device)
 {
     std::unique_lock<std::mutex> lock(mMutex);
@@ -1240,10 +1246,10 @@ void OneOffCommandPool::destroy(VkDevice device)
         pending.commandBuffer.releaseHandle();
     }
     mCommandPool.destroy(device);
+    mProtectionType = vk::ProtectionType::InvalidEnum;
 }
 
 angle::Result OneOffCommandPool::getCommandBuffer(vk::Context *context,
-                                                  bool hasProtectedContent,
                                                   vk::PrimaryCommandBuffer *commandBufferOut)
 {
     std::unique_lock<std::mutex> lock(mMutex);
@@ -1261,8 +1267,13 @@ angle::Result OneOffCommandPool::getCommandBuffer(vk::Context *context,
         {
             VkCommandPoolCreateInfo createInfo = {};
             createInfo.sType                   = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-            createInfo.flags                   = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
-                               (hasProtectedContent ? VK_COMMAND_POOL_CREATE_PROTECTED_BIT : 0);
+            createInfo.flags                   = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+            ASSERT(mProtectionType == vk::ProtectionType::Unprotected ||
+                   mProtectionType == vk::ProtectionType::Protected);
+            if (mProtectionType == vk::ProtectionType::Protected)
+            {
+                createInfo.flags |= VK_COMMAND_POOL_CREATE_PROTECTED_BIT;
+            }
             ANGLE_VK_TRY(context, mCommandPool.init(context->getDevice(), createInfo));
         }
 
@@ -1382,7 +1393,10 @@ void RendererVk::onDestroy(vk::Context *context)
     cleanupGarbage();
     ASSERT(!hasSharedGarbage());
 
-    mOneOffCommandPool.destroy(mDevice);
+    for (OneOffCommandPool &oneOffCommandPool : mOneOffCommandPoolMap)
+    {
+        oneOffCommandPool.destroy(mDevice);
+    }
 
     mPipelineCache.destroy(mDevice);
     mSamplerCache.destroy(this);
@@ -1826,6 +1840,11 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
 
     // Null terminate the extension list returned for EGL_VULKAN_INSTANCE_EXTENSIONS_ANGLE.
     mEnabledInstanceExtensions.push_back(nullptr);
+
+    for (vk::ProtectionType protectionType : angle::AllEnums<vk::ProtectionType>())
+    {
+        mOneOffCommandPoolMap[protectionType].init(protectionType);
+    }
 
     return angle::Result::Continue;
 }
@@ -4543,7 +4562,7 @@ void RendererVk::outputVmaStatString()
 
 angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
                                             vk::PrimaryCommandBuffer &&primary,
-                                            bool hasProtectedContent,
+                                            vk::ProtectionType protectionType,
                                             egl::ContextPriority priority,
                                             const vk::Semaphore *waitSemaphore,
                                             VkPipelineStageFlags waitSemaphoreStageMasks,
@@ -4562,13 +4581,13 @@ angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.queueSubmitOneOff(
-            context, hasProtectedContent, priority, primary.getHandle(), waitSemaphore,
+            context, protectionType, priority, primary.getHandle(), waitSemaphore,
             waitSemaphoreStageMasks, fence, submitPolicy, submitQueueSerial));
     }
     else
     {
         ANGLE_TRY(mCommandQueue.queueSubmitOneOff(
-            context, hasProtectedContent, priority, primary.getHandle(), waitSemaphore,
+            context, protectionType, priority, primary.getHandle(), waitSemaphore,
             waitSemaphoreStageMasks, fence, submitPolicy, submitQueueSerial));
     }
 
@@ -4578,7 +4597,8 @@ angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
     *queueSerialOut = submitQueueSerial;
     if (primary.valid())
     {
-        mOneOffCommandPool.releaseCommandBuffer(submitQueueSerial, std::move(primary));
+        mOneOffCommandPoolMap[protectionType].releaseCommandBuffer(submitQueueSerial,
+                                                                   std::move(primary));
     }
 
     return angle::Result::Continue;
@@ -4844,15 +4864,12 @@ void RendererVk::reloadVolkIfNeeded() const
 #endif  // defined(ANGLE_SHARED_LIBVULKAN)
 }
 
-angle::Result RendererVk::submitCommands(
-    vk::Context *context,
-    bool hasProtectedContent,
-    egl::ContextPriority contextPriority,
-    std::vector<VkSemaphore> &&waitSemaphores,
-    std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks,
-    const vk::Semaphore *signalSemaphore,
-    vk::SecondaryCommandPools *commandPools,
-    const QueueSerial &submitQueueSerial)
+angle::Result RendererVk::submitCommands(vk::Context *context,
+                                         vk::ProtectionType protectionType,
+                                         egl::ContextPriority contextPriority,
+                                         const vk::Semaphore *signalSemaphore,
+                                         vk::SecondaryCommandPools *commandPools,
+                                         const QueueSerial &submitQueueSerial)
 {
     vk::SecondaryCommandBufferList commandBuffersToReset;
     mOutsideRenderPassCommandBufferRecycler.releaseCommandBuffersToReset(
@@ -4866,18 +4883,15 @@ angle::Result RendererVk::submitCommands(
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.submitCommands(
-            context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
-            signalVkSemaphore, std::move(commandBuffersToReset), commandPools, submitQueueSerial));
+            context, protectionType, contextPriority, signalVkSemaphore,
+            std::move(commandBuffersToReset), commandPools, submitQueueSerial));
     }
     else
     {
-        ANGLE_TRY(mCommandQueue.submitCommands(
-            context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
-            signalVkSemaphore, std::move(commandBuffersToReset), commandPools, submitQueueSerial));
+        ANGLE_TRY(mCommandQueue.submitCommands(context, protectionType, contextPriority,
+                                               signalVkSemaphore, std::move(commandBuffersToReset),
+                                               commandPools, submitQueueSerial));
     }
-
-    waitSemaphores.clear();
-    waitSemaphoreStageMasks.clear();
 
     return angle::Result::Continue;
 }
@@ -4926,7 +4940,7 @@ angle::Result RendererVk::waitForResourceUseToFinishWithUserTimeout(vk::Context 
     return mCommandQueue.waitForResourceUseToFinishWithUserTimeout(context, use, timeout, result);
 }
 
-angle::Result RendererVk::finish(vk::Context *context, bool hasProtectedContent)
+angle::Result RendererVk::finish(vk::Context *context)
 {
     if (isAsyncCommandQueueEnabled())
     {
@@ -4940,21 +4954,41 @@ angle::Result RendererVk::checkCompletedCommands(vk::Context *context)
     return mCommandQueue.checkCompletedCommands(context);
 }
 
+angle::Result RendererVk::flushWaitSemaphores(
+    vk::ProtectionType protectionType,
+    std::vector<VkSemaphore> &&waitSemaphores,
+    std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks)
+{
+    ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::flushWaitSemaphores");
+    if (isAsyncCommandQueueEnabled())
+    {
+        ANGLE_TRY(mCommandProcessor.flushWaitSemaphores(protectionType, std::move(waitSemaphores),
+                                                        std::move(waitSemaphoreStageMasks)));
+    }
+    else
+    {
+        mCommandQueue.flushWaitSemaphores(protectionType, std::move(waitSemaphores),
+                                          std::move(waitSemaphoreStageMasks));
+    }
+
+    return angle::Result::Continue;
+}
+
 angle::Result RendererVk::flushRenderPassCommands(
     vk::Context *context,
-    bool hasProtectedContent,
+    vk::ProtectionType protectionType,
     const vk::RenderPass &renderPass,
     vk::RenderPassCommandBufferHelper **renderPassCommands)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::flushRenderPassCommands");
     if (isAsyncCommandQueueEnabled())
     {
-        ANGLE_TRY(mCommandProcessor.flushRenderPassCommands(context, hasProtectedContent,
-                                                            renderPass, renderPassCommands));
+        ANGLE_TRY(mCommandProcessor.flushRenderPassCommands(context, protectionType, renderPass,
+                                                            renderPassCommands));
     }
     else
     {
-        ANGLE_TRY(mCommandQueue.flushRenderPassCommands(context, hasProtectedContent, renderPass,
+        ANGLE_TRY(mCommandQueue.flushRenderPassCommands(context, protectionType, renderPass,
                                                         renderPassCommands));
     }
 
@@ -4963,19 +4997,18 @@ angle::Result RendererVk::flushRenderPassCommands(
 
 angle::Result RendererVk::flushOutsideRPCommands(
     vk::Context *context,
-    bool hasProtectedContent,
+    vk::ProtectionType protectionType,
     vk::OutsideRenderPassCommandBufferHelper **outsideRPCommands)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::flushOutsideRPCommands");
     if (isAsyncCommandQueueEnabled())
     {
-        ANGLE_TRY(mCommandProcessor.flushOutsideRPCommands(context, hasProtectedContent,
-                                                           outsideRPCommands));
+        ANGLE_TRY(
+            mCommandProcessor.flushOutsideRPCommands(context, protectionType, outsideRPCommands));
     }
     else
     {
-        ANGLE_TRY(
-            mCommandQueue.flushOutsideRPCommands(context, hasProtectedContent, outsideRPCommands));
+        ANGLE_TRY(mCommandQueue.flushOutsideRPCommands(context, protectionType, outsideRPCommands));
     }
 
     return angle::Result::Continue;
@@ -4983,16 +5016,17 @@ angle::Result RendererVk::flushOutsideRPCommands(
 
 VkResult RendererVk::queuePresent(vk::Context *context,
                                   egl::ContextPriority priority,
-                                  const VkPresentInfoKHR &presentInfo)
+                                  const VkPresentInfoKHR &presentInfo,
+                                  vk::SwapchainStatus *swapchainStatus)
 {
     VkResult result = VK_SUCCESS;
     if (isAsyncCommandQueueEnabled())
     {
-        result = mCommandProcessor.queuePresent(priority, presentInfo);
+        result = mCommandProcessor.queuePresent(priority, presentInfo, swapchainStatus);
     }
     else
     {
-        result = mCommandQueue.queuePresent(priority, presentInfo);
+        result = mCommandQueue.queuePresent(priority, presentInfo, swapchainStatus);
     }
 
     if (getFeatures().logMemoryReportStats.enabled)
