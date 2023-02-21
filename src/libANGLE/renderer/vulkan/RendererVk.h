@@ -301,7 +301,7 @@ class RendererVk : angle::NonCopyable
     gl::Version getMaxSupportedESVersion() const;
     gl::Version getMaxConformantESVersion() const;
 
-    uint32_t getApiVersion() const { return mApiVersion; }
+    uint32_t getDeviceVersion();
     VkInstance getInstance() const { return mInstance; }
     VkPhysicalDevice getPhysicalDevice() const { return mPhysicalDevice; }
     const VkPhysicalDeviceProperties &getPhysicalDeviceProperties() const
@@ -323,6 +323,9 @@ class RendererVk : angle::NonCopyable
     }
     const VkPhysicalDeviceFeatures2KHR &getEnabledFeatures() const { return mEnabledFeatures; }
     VkDevice getDevice() const { return mDevice; }
+
+    bool isVulkan11Instance() const;
+    bool isVulkan11Device() const;
 
     const vk::Allocator &getAllocator() const { return mAllocator; }
 
@@ -426,7 +429,11 @@ class RendererVk : angle::NonCopyable
     template <typename... ArgsT>
     void collectGarbage(const vk::ResourceUse &use, ArgsT... garbageIn)
     {
-        if (hasUnfinishedUse(use))
+        if (hasResourceUseFinished(use))
+        {
+            DestroyGarbage(mDevice, garbageIn...);
+        }
+        else
         {
             std::vector<vk::GarbageObject> sharedGarbage;
             CollectGarbage(&sharedGarbage, garbageIn...);
@@ -435,10 +442,6 @@ class RendererVk : angle::NonCopyable
                 collectGarbage(use, std::move(sharedGarbage));
             }
         }
-        else
-        {
-            DestroyGarbage(mDevice, garbageIn...);
-        }
     }
 
     void collectGarbage(const vk::ResourceUse &use, vk::GarbageList &&sharedGarbage)
@@ -446,7 +449,7 @@ class RendererVk : angle::NonCopyable
         if (!sharedGarbage.empty())
         {
             vk::SharedGarbage garbage(use, std::move(sharedGarbage));
-            if (hasUnsubmittedUse(use))
+            if (!hasResourceUseSubmitted(use))
             {
                 std::unique_lock<std::mutex> lock(mGarbageMutex);
                 mPendingSubmissionGarbage.push(std::move(garbage));
@@ -463,27 +466,27 @@ class RendererVk : angle::NonCopyable
                                      vk::BufferSuballocation &&suballocation,
                                      vk::Buffer &&buffer)
     {
-        if (hasUnfinishedUse(use))
-        {
-            std::unique_lock<std::mutex> lock(mGarbageMutex);
-            if (hasUnsubmittedUse(use))
-            {
-                mPendingSubmissionSuballocationGarbage.emplace(use, std::move(suballocation),
-                                                               std::move(buffer));
-            }
-            else
-            {
-                mSuballocationGarbageSizeInBytes += suballocation.getSize();
-                mSuballocationGarbage.emplace(use, std::move(suballocation), std::move(buffer));
-            }
-        }
-        else
+        if (hasResourceUseFinished(use))
         {
             // mSuballocationGarbageDestroyed is atomic, so we dont need mGarbageMutex to
             // protect it.
             mSuballocationGarbageDestroyed += suballocation.getSize();
             buffer.destroy(mDevice);
             suballocation.destroy(this);
+        }
+        else
+        {
+            std::unique_lock<std::mutex> lock(mGarbageMutex);
+            if (hasResourceUseSubmitted(use))
+            {
+                mSuballocationGarbageSizeInBytes += suballocation.getSize();
+                mSuballocationGarbage.emplace(use, std::move(suballocation), std::move(buffer));
+            }
+            else
+            {
+                mPendingSubmissionSuballocationGarbage.emplace(use, std::move(suballocation),
+                                                               std::move(buffer));
+            }
         }
     }
 
@@ -528,7 +531,7 @@ class RendererVk : angle::NonCopyable
             return mCommandProcessor.waitForResourceUseToBeSubmitted(context, use);
         }
         // This ResourceUse must have been submitted.
-        ASSERT(!mCommandQueue.hasUnsubmittedUse(use));
+        ASSERT(mCommandQueue.hasResourceUseSubmitted(use));
         return angle::Result::Continue;
     }
 
@@ -542,7 +545,7 @@ class RendererVk : angle::NonCopyable
             return mCommandProcessor.waitForQueueSerialToBeSubmitted(context, queueSerial);
         }
         // This queueSerial must have been submitted.
-        ASSERT(!mCommandQueue.hasUnsubmittedUse(vk::ResourceUse(queueSerial)));
+        ASSERT(mCommandQueue.hasResourceUseSubmitted(vk::ResourceUse(queueSerial)));
         return angle::Result::Continue;
     }
 
@@ -605,10 +608,13 @@ class RendererVk : angle::NonCopyable
         vk::ProtectionType protectionType,
         vk::OutsideRenderPassCommandBufferHelper **outsideRPCommands);
 
-    VkResult queuePresent(vk::Context *context,
-                          egl::ContextPriority priority,
-                          const VkPresentInfoKHR &presentInfo,
-                          vk::SwapchainStatus *swapchainStatus);
+    void queuePresent(vk::Context *context,
+                      egl::ContextPriority priority,
+                      const VkPresentInfoKHR &presentInfo,
+                      vk::SwapchainStatus *swapchainStatus);
+
+    // Only useful if async submission is enabled
+    angle::Result waitForPresentToBeSubmitted(vk::SwapchainStatus *swapchainStatus);
 
     angle::Result getOutsideRenderPassCommandBufferHelper(
         vk::Context *context,
@@ -735,10 +741,12 @@ class RendererVk : angle::NonCopyable
                              size_t count,
                              RangedSerialFactory *rangedSerialFactory);
 
-    // The ResourceUse still have unfinished queue serial by vulkan.
-    bool hasUnfinishedUse(const vk::ResourceUse &use) const;
-    // The ResourceUse still have queue serial not yet submitted to vulkan.
-    bool hasUnsubmittedUse(const vk::ResourceUse &use) const;
+    // Return true if all serials in ResourceUse have been submitted.
+    bool hasResourceUseSubmitted(const vk::ResourceUse &use) const;
+    bool hasQueueSerialSubmitted(const QueueSerial &queueSerial) const;
+    // Return true if all serials in ResourceUse have been finished.
+    bool hasResourceUseFinished(const vk::ResourceUse &use) const;
+    bool hasQueueSerialFinished(const QueueSerial &queueSerial) const;
 
     // Memory statistics can be updated on allocation and deallocation.
     template <typename HandleT>
@@ -772,6 +780,39 @@ class RendererVk : angle::NonCopyable
     void initializeValidationMessageSuppressions();
 
     void queryDeviceExtensionFeatures(const vk::ExtensionNameList &deviceExtensionNames);
+    void appendDeviceExtensionFeaturesNotPromoted(const vk::ExtensionNameList &deviceExtensionNames,
+                                                  VkPhysicalDeviceFeatures2KHR *deviceFeatures,
+                                                  VkPhysicalDeviceProperties2 *deviceProperties);
+    void appendDeviceExtensionFeaturesPromotedTo11(
+        const vk::ExtensionNameList &deviceExtensionNames,
+        VkPhysicalDeviceFeatures2KHR *deviceFeatures,
+        VkPhysicalDeviceProperties2 *deviceProperties);
+    void appendDeviceExtensionFeaturesPromotedTo12(
+        const vk::ExtensionNameList &deviceExtensionNames,
+        VkPhysicalDeviceFeatures2KHR *deviceFeatures,
+        VkPhysicalDeviceProperties2 *deviceProperties);
+    void appendDeviceExtensionFeaturesPromotedTo13(
+        const vk::ExtensionNameList &deviceExtensionNames,
+        VkPhysicalDeviceFeatures2KHR *deviceFeatures,
+        VkPhysicalDeviceProperties2 *deviceProperties);
+
+    angle::Result enableInstanceExtensions(DisplayVk *displayVk,
+                                           const VulkanLayerVector &enabledInstanceLayerNames,
+                                           const char *wsiExtension,
+                                           bool canLoadDebugUtils);
+    angle::Result enableDeviceExtensions(DisplayVk *displayVk,
+                                         const VulkanLayerVector &enabledDeviceLayerNames);
+
+    void enableDeviceExtensionsNotPromoted(const vk::ExtensionNameList &deviceExtensionNames);
+    void enableDeviceExtensionsPromotedTo11(const vk::ExtensionNameList &deviceExtensionNames);
+    void enableDeviceExtensionsPromotedTo12(const vk::ExtensionNameList &deviceExtensionNames);
+    void enableDeviceExtensionsPromotedTo13(const vk::ExtensionNameList &deviceExtensionNames);
+
+    void initInstanceExtensionEntryPoints();
+    void initDeviceExtensionEntryPoints();
+    // Initialize extension entry points from core ones if needed
+    void initializeInstanceExtensionEntryPointsFromCore() const;
+    void initializeDeviceExtensionEntryPointsFromCore() const;
 
     void initFeatures(DisplayVk *display, const vk::ExtensionNameList &extensions);
     void appBasedFeatureOverrides(DisplayVk *display, const vk::ExtensionNameList &extensions);
@@ -814,7 +855,18 @@ class RendererVk : angle::NonCopyable
     mutable ShPixelLocalStorageOptions mNativePLSOptions;
     mutable angle::FeaturesVk mFeatures;
 
-    uint32_t mApiVersion;
+    // The instance and device versions.  The instance version is the one from the Vulkan loader,
+    // while the device version comes from VkPhysicalDeviceProperties::apiVersion.  With instance
+    // version 1.0, only device version 1.0 can be used.  If instance version is at least 1.1, any
+    // device version (even higher than that) can be used.  Some extensions have been promoted to
+    // Vulkan 1.1 or higher, but the version check must be done against the instance or device
+    // version, depending on whether it's an instance or device extension.
+    //
+    // Note that mDeviceVersion is technically redundant with mPhysicalDeviceProperties.apiVersion,
+    // but ANGLE may use a smaller version with problematic ICDs.
+    uint32_t mInstanceVersion;
+    uint32_t mDeviceVersion;
+
     VkInstance mInstance;
     bool mEnableValidationLayers;
     // True if ANGLE is enabling the VK_EXT_debug_utils extension.
@@ -827,8 +879,13 @@ class RendererVk : angle::NonCopyable
     angle::vk::ICD mEnabledICD;
     VkDebugUtilsMessengerEXT mDebugUtilsMessenger;
     VkPhysicalDevice mPhysicalDevice;
+
     VkPhysicalDeviceProperties mPhysicalDeviceProperties;
+    VkPhysicalDeviceVulkan11Properties mPhysicalDevice11Properties;
+
     VkPhysicalDeviceFeatures mPhysicalDeviceFeatures;
+    VkPhysicalDeviceVulkan11Features mPhysicalDevice11Features;
+
     VkPhysicalDeviceLineRasterizationFeaturesEXT mLineRasterizationFeatures;
     VkPhysicalDeviceProvokingVertexFeaturesEXT mProvokingVertexFeatures;
     VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT mVertexAttributeDivisorFeatures;
@@ -853,12 +910,11 @@ class RendererVk : angle::NonCopyable
     VkPhysicalDeviceDriverPropertiesKHR mDriverProperties;
     VkPhysicalDeviceCustomBorderColorFeaturesEXT mCustomBorderColorFeatures;
     VkPhysicalDeviceProtectedMemoryFeatures mProtectedMemoryFeatures;
-    VkPhysicalDeviceProtectedMemoryProperties mProtectedMemoryProperties;
     VkPhysicalDeviceHostQueryResetFeaturesEXT mHostQueryResetFeatures;
+    VkPhysicalDeviceDepthClipEnableFeaturesEXT mDepthClipEnableFeatures;
     VkPhysicalDeviceDepthClipControlFeaturesEXT mDepthClipControlFeatures;
     VkPhysicalDevicePrimitivesGeneratedQueryFeaturesEXT mPrimitivesGeneratedQueryFeatures;
     VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT mPrimitiveTopologyListRestartFeatures;
-    VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT mBlendOperationAdvancedFeatures;
     VkPhysicalDeviceSamplerYcbcrConversionFeatures mSamplerYcbcrConversionFeatures;
     VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT mPipelineCreationCacheControlFeatures;
     VkPhysicalDeviceExtendedDynamicStateFeaturesEXT mExtendedDynamicStateFeatures;
@@ -872,8 +928,9 @@ class RendererVk : angle::NonCopyable
     VkPhysicalDevicePipelineProtectedAccessFeaturesEXT mPipelineProtectedAccessFeatures;
     VkPhysicalDeviceRasterizationOrderAttachmentAccessFeaturesEXT
         mRasterizationOrderAttachmentAccessFeatures;
-    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT mSwapchainMaintenance1FeaturesEXT;
+    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT mSwapchainMaintenance1Features;
     VkPhysicalDeviceDrmPropertiesEXT mDrmProperties;
+
     angle::PackedEnumBitSet<gl::ShadingRate, uint8_t> mSupportedFragmentShadingRates;
     std::vector<VkQueueFamilyProperties> mQueueFamilyProperties;
     uint32_t mMaxVertexAttribDivisor;
@@ -1034,21 +1091,49 @@ ANGLE_INLINE void RendererVk::reserveQueueSerials(SerialIndex index,
     mQueueSerialFactory[index].reserve(rangedSerialFactory, count);
 }
 
-ANGLE_INLINE bool RendererVk::hasUnfinishedUse(const vk::ResourceUse &use) const
-{
-    return mCommandQueue.hasUnfinishedUse(use);
-}
-
-ANGLE_INLINE bool RendererVk::hasUnsubmittedUse(const vk::ResourceUse &use) const
+ANGLE_INLINE bool RendererVk::hasResourceUseSubmitted(const vk::ResourceUse &use) const
 {
     if (isAsyncCommandQueueEnabled())
     {
-        return mCommandProcessor.hasUnsubmittedUse(use);
+        return mCommandProcessor.hasResourceUseEnqueued(use);
     }
     else
     {
-        return mCommandQueue.hasUnsubmittedUse(use);
+        return mCommandQueue.hasResourceUseSubmitted(use);
     }
+}
+
+ANGLE_INLINE bool RendererVk::hasQueueSerialSubmitted(const QueueSerial &queueSerial) const
+{
+    if (isAsyncCommandQueueEnabled())
+    {
+        return mCommandProcessor.hasQueueSerialEnqueued(queueSerial);
+    }
+    else
+    {
+        return mCommandQueue.hasQueueSerialSubmitted(queueSerial);
+    }
+}
+
+ANGLE_INLINE bool RendererVk::hasResourceUseFinished(const vk::ResourceUse &use) const
+{
+    return mCommandQueue.hasResourceUseFinished(use);
+}
+
+ANGLE_INLINE bool RendererVk::hasQueueSerialFinished(const QueueSerial &queueSerial) const
+{
+    return mCommandQueue.hasQueueSerialFinished(queueSerial);
+}
+
+ANGLE_INLINE angle::Result RendererVk::waitForPresentToBeSubmitted(
+    vk::SwapchainStatus *swapchainStatus)
+{
+    if (isAsyncCommandQueueEnabled())
+    {
+        return mCommandProcessor.waitForPresentToBeSubmitted(swapchainStatus);
+    }
+    ASSERT(!swapchainStatus->isPending);
+    return angle::Result::Continue;
 }
 }  // namespace rx
 
