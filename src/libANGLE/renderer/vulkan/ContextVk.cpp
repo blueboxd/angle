@@ -5169,6 +5169,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 break;
             case gl::State::DIRTY_BIT_DEPTH_FUNC:
                 updateDepthFunc(glState);
+                onDepthStencilAccessChange();
                 break;
             case gl::State::DIRTY_BIT_DEPTH_MASK:
                 updateDepthWriteEnabled(glState);
@@ -5672,9 +5673,12 @@ angle::Result ContextVk::onSurfaceUnMakeCurrent(WindowSurfaceVk *surface)
         ANGLE_TRY(flushImpl(nullptr, RenderPassClosureReason::SurfaceUnMakeCurrent));
         mCurrentWindowSurface = nullptr;
     }
-
     ASSERT(mCurrentWindowSurface == nullptr);
-    ASSERT(mOutsideRenderPassCommands->empty() && mRenderPassCommands->empty());
+
+    // Everything must be flushed and submitted.
+    ASSERT(mOutsideRenderPassCommands->empty());
+    ASSERT(mRenderPassCommands->empty());
+    ASSERT(mWaitSemaphores.empty());
     ASSERT(!mHasWaitSemaphoresPendingSubmission);
     ASSERT(mLastSubmittedQueueSerial == mLastFlushedQueueSerial);
     return angle::Result::Continue;
@@ -5699,8 +5703,10 @@ angle::Result ContextVk::onSurfaceUnMakeCurrent(OffscreenSurfaceVk *surface)
         ANGLE_TRY(flushCommandsAndEndRenderPass(RenderPassClosureReason::SurfaceUnMakeCurrent));
     }
 
-    ASSERT(mOutsideRenderPassCommands->empty() && mRenderPassCommands->empty());
-    ASSERT(!mHasWaitSemaphoresPendingSubmission);
+    // Everything must be flushed but may be pending submission.
+    ASSERT(mOutsideRenderPassCommands->empty());
+    ASSERT(mRenderPassCommands->empty());
+    ASSERT(mWaitSemaphores.empty());
     return angle::Result::Continue;
 }
 

@@ -232,6 +232,7 @@ class TracePerfTest : public ANGLERenderTest
     uint32_t mOffscreenFrameCount                                       = 0;
     uint32_t mTotalFrameCount                                           = 0;
     bool mScreenshotSaved                                               = false;
+    uint32_t mScreenshotFrame                                           = gScreenshotFrame;
     std::unique_ptr<TraceReplayInterface> mTraceReplay;
 };
 
@@ -871,6 +872,28 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
     for (std::string extension : mParams->traceInfo.requiredExtensions)
     {
         addExtensionPrerequisite(extension);
+    }
+
+    if (!mParams->traceInfo.keyFrames.empty())
+    {
+        // Only support one keyFrame for now
+        if (mParams->traceInfo.keyFrames.size() != 1)
+        {
+            WARN() << "Multiple keyframes detected, only using the first";
+        }
+
+        // Only use keyFrame if the user didn't specify a value.
+        if (gScreenshotFrame == kDefaultScreenshotFrame)
+        {
+            mScreenshotFrame = mParams->traceInfo.keyFrames[0];
+            INFO() << "Trace contains keyframe, using frame " << mScreenshotFrame
+                   << " for screenshot";
+        }
+        else
+        {
+            WARN() << "Ignoring keyframe, user requested frame " << mScreenshotFrame
+                   << " for screenshot";
+        }
     }
 
     if (isIntelWinANGLE && traceNameIs("manhattan_10"))
@@ -1567,6 +1590,22 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
     if (gWarmupSteps == kAllFrames)
     {
         mWarmupSteps = frameCount();
+    }
+
+    if (gRunToKeyFrame)
+    {
+        if (mParams->traceInfo.keyFrames.empty())
+        {
+            // If we don't have a keyFrame, run one step
+            INFO() << "No keyframe available for trace, running to frame 1";
+            mStepsToRun = 1;
+        }
+        else
+        {
+            int keyFrame = mParams->traceInfo.keyFrames[0];
+            INFO() << "Running to keyframe: " << keyFrame;
+            mStepsToRun = keyFrame;
+        }
     }
 }
 
@@ -2300,7 +2339,7 @@ void TracePerfTest::swap()
 {
     // Capture a screenshot if enabled.
     if (gScreenshotDir != nullptr && gSaveScreenshots && !mScreenshotSaved &&
-        static_cast<uint32_t>(gScreenshotFrame) == mCurrentIteration)
+        mScreenshotFrame == mCurrentIteration)
     {
         std::stringstream screenshotNameStr;
         screenshotNameStr << gScreenshotDir << GetPathSeparator() << "angle" << mBackend << "_"

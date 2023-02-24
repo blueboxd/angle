@@ -1327,7 +1327,6 @@ RendererVk::RendererVk()
       mMaxVertexAttribDivisor(1),
       mCurrentQueueFamilyIndex(std::numeric_limits<uint32_t>::max()),
       mMaxVertexAttribStride(0),
-      mMinImportedHostPointerAlignment(1),
       mDefaultUniformBufferSize(kPreferredDefaultUniformBufferSize),
       mDevice(VK_NULL_HANDLE),
       mDeviceLost(false),
@@ -1415,6 +1414,7 @@ void RendererVk::onDestroy(vk::Context *context)
     mOutsideRenderPassCommandBufferRecycler.onDestroy();
     mRenderPassCommandBufferRecycler.onDestroy();
 
+    mImageMemorySuballocator.destroy(this);
     mAllocator.destroy();
 
     // When the renderer is being destroyed, it is possible to check if all the allocated memory
@@ -2023,7 +2023,6 @@ angle::Result RendererVk::initializeMemoryAllocator(DisplayVk *displayVk)
 //                                                     geometryStreams (feature)
 // - VK_EXT_index_type_uint8:                          indexTypeUint8 (feature)
 // - VK_EXT_device_memory_report:                      deviceMemoryReport (feature)
-// - VK_EXT_external_memory_host:                      minImportedHostPointerAlignment (property)
 // - VK_EXT_multisampled_render_to_single_sampled or
 //   VK_GOOGLEX_multisampled_render_to_single_sampled: multisampledRenderToSingleSampled (feature)
 // - VK_EXT_image_2d_view_of_3d:                       image2DViewOf3D (feature)
@@ -2083,11 +2082,6 @@ void RendererVk::appendDeviceExtensionFeaturesNotPromoted(
     if (ExtensionFound(VK_EXT_DEVICE_MEMORY_REPORT_EXTENSION_NAME, deviceExtensionNames))
     {
         vk::AddToPNextChain(deviceFeatures, &mMemoryReportFeatures);
-    }
-
-    if (ExtensionFound(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME, deviceExtensionNames))
-    {
-        vk::AddToPNextChain(deviceProperties, &mExternalMemoryHostProperties);
     }
 
     if (ExtensionFound(VK_EXT_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_EXTENSION_NAME,
@@ -2342,10 +2336,6 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
     mMemoryReportFeatures.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_MEMORY_REPORT_FEATURES_EXT;
 
-    mExternalMemoryHostProperties = {};
-    mExternalMemoryHostProperties.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT;
-
     mShaderFloat16Int8Features = {};
     mShaderFloat16Int8Features.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES;
@@ -2492,7 +2482,6 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
     mIndexTypeUint8Features.pNext                           = nullptr;
     mSubgroupProperties.pNext                               = nullptr;
     mSubgroupExtendedTypesFeatures.pNext                    = nullptr;
-    mExternalMemoryHostProperties.pNext                     = nullptr;
     mCustomBorderColorFeatures.pNext                        = nullptr;
     mShaderFloat16Int8Features.pNext                        = nullptr;
     mDepthStencilResolveProperties.pNext                    = nullptr;
@@ -2544,7 +2533,6 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
 // - VK_GOOGLE_display_timing
 // - VK_EXT_external_memory_dma_buf
 // - VK_EXT_image_drm_format_modifier
-// - VK_EXT_external_memory_host
 // - VK_EXT_blend_operation_advanced
 //
 void RendererVk::enableDeviceExtensionsNotPromoted(
@@ -2701,13 +2689,6 @@ void RendererVk::enableDeviceExtensionsNotPromoted(
     {
         mEnabledDeviceExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
         mEnabledDeviceExtensions.push_back(VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME);
-    }
-
-    if (mFeatures.supportsExternalMemoryHost.enabled)
-    {
-        mEnabledDeviceExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
-        mMinImportedHostPointerAlignment =
-            mExternalMemoryHostProperties.minImportedHostPointerAlignment;
     }
 
     if (mFeatures.supportsDepthClipControl.enabled)
@@ -3048,11 +3029,6 @@ void RendererVk::initInstanceExtensionEntryPoints()
 {
 #if !defined(ANGLE_SHARED_LIBVULKAN)
     // Instance entry points
-    if (mFeatures.supportsExternalMemoryHost.enabled)
-    {
-        InitExternalMemoryHostFunctions(mInstance);
-    }
-
     if (mFeatures.supportsExternalSemaphoreFd.enabled ||
         mFeatures.supportsExternalSemaphoreFuchsia.enabled)
     {
@@ -4088,10 +4064,6 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
         ExtensionFound(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME, deviceExtensionNames) &&
             ExtensionFound(VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME, deviceExtensionNames));
 
-    ANGLE_FEATURE_CONDITION(
-        &mFeatures, supportsExternalMemoryHost,
-        ExtensionFound(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME, deviceExtensionNames));
-
     // Android pre-rotation support can be disabled.
     ANGLE_FEATURE_CONDITION(&mFeatures, enablePreRotateSurfaces,
                             IsAndroid() && supportsNegativeViewport);
@@ -4277,9 +4249,8 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // - Avoiding swapchain recreation when present modes change
     // - Amortizing the cost of memory allocation for swapchain creation over multiple frames
     //
-    ANGLE_FEATURE_CONDITION(
-        &mFeatures, supportsSwapchainMaintenance1,
-        !IsAndroid() && mSwapchainMaintenance1Features.swapchainMaintenance1 == VK_TRUE);
+    ANGLE_FEATURE_CONDITION(&mFeatures, supportsSwapchainMaintenance1,
+                            mSwapchainMaintenance1Features.swapchainMaintenance1 == VK_TRUE);
 
     // http://anglebug.com/6872
     // On ARM hardware, framebuffer-fetch-like behavior on Vulkan is already coherent, so we can
@@ -4344,6 +4315,9 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // The mutable texture uploading feature can sometimes result in incorrect rendering of some
     // textures.
     ANGLE_FEATURE_CONDITION(&mFeatures, mutableMipmapTextureUpload, false);
+
+    // Use VMA for image suballocation.
+    ANGLE_FEATURE_CONDITION(&mFeatures, useVmaForImageSuballocation, true);
 
     // Retain debug info in SPIR-V blob.
     ANGLE_FEATURE_CONDITION(&mFeatures, retainSPIRVDebugInfo, getEnableValidationLayers());
@@ -5881,5 +5855,27 @@ void MemoryReport::logMemoryReportStats() const
                << " (max=" << std::setw(10) << importedMemoryMax << ")";
     }
 }
+
+ImageMemorySuballocator::ImageMemorySuballocator() {}
+ImageMemorySuballocator::~ImageMemorySuballocator() {}
+
+void ImageMemorySuballocator::destroy(RendererVk *renderer) {}
+
+VkResult ImageMemorySuballocator::allocateAndBindMemory(RendererVk *renderer,
+                                                        Image *image,
+                                                        VkMemoryPropertyFlags requiredFlags,
+                                                        VkMemoryPropertyFlags preferredFlags,
+                                                        Allocation *allocationOut,
+                                                        uint32_t *memoryTypeIndexOut,
+                                                        VkDeviceSize *sizeOut)
+{
+    ASSERT(image && image->valid());
+    ASSERT(allocationOut && !allocationOut->valid());
+    const Allocator &allocator = renderer->getAllocator();
+    return vma::AllocateAndBindMemoryForImage(allocator.getHandle(), &image->mHandle, requiredFlags,
+                                              preferredFlags, &allocationOut->mHandle,
+                                              memoryTypeIndexOut, sizeOut);
+}
+
 }  // namespace vk
 }  // namespace rx
