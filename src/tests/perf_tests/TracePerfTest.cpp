@@ -1571,6 +1571,20 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         addExtensionPrerequisite("GL_EXT_texture_storage");
     }
 
+    if (traceNameIs("into_the_dead_2"))
+    {
+        if (isNVIDIAWinANGLE)
+        {
+            skipTest("http://anglebug.com/8042 Non-deterministic trace");
+        }
+    }
+
+    if (traceNameIs("arknights"))
+    {
+        // Intel doesn't support external images.
+        addExtensionPrerequisite("GL_OES_EGL_image_external");
+    }
+
     // glDebugMessageControlKHR and glDebugMessageCallbackKHR crash on ARM GLES1.
     if (IsARM() && mParams->traceInfo.contextClientMajorVersion == 1)
     {
@@ -2346,9 +2360,9 @@ void TracePerfTest::swap()
                           << mStory;
 
         // Add a marker to the name for any screenshot that isn't start frame
-        if (mStartFrame != static_cast<uint32_t>(gScreenshotFrame))
+        if (mStartFrame != mScreenshotFrame)
         {
-            screenshotNameStr << "_frame" << gScreenshotFrame;
+            screenshotNameStr << "_frame" << mScreenshotFrame;
         }
 
         screenshotNameStr << ".png";

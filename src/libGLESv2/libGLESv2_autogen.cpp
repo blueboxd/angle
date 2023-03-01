@@ -4065,6 +4065,8 @@ void GL_APIENTRY glClipControlEXT(GLenum origin, GLenum depth)
 
 // GL_EXT_color_buffer_half_float
 
+// GL_EXT_conservative_depth
+
 // GL_EXT_copy_image
 void GL_APIENTRY glCopyImageSubDataEXT(GLuint srcName,
                                        GLenum srcTarget,
@@ -4114,6 +4116,8 @@ void GL_APIENTRY glPushGroupMarkerEXT(GLsizei length, const GLchar *marker)
 {
     return GL_PushGroupMarkerEXT(length, marker);
 }
+
+// GL_EXT_depth_clamp
 
 // GL_EXT_discard_framebuffer
 void GL_APIENTRY glDiscardFramebufferEXT(GLenum target,
@@ -4513,6 +4517,8 @@ void GL_APIENTRY glPrimitiveBoundingBoxEXT(GLfloat minX,
 // GL_EXT_pvrtc_sRGB
 
 // GL_EXT_read_format_bgra
+
+// GL_EXT_render_snorm
 
 // GL_EXT_robustness
 GLenum GL_APIENTRY glGetGraphicsResetStatusEXT()
@@ -5860,6 +5866,8 @@ void GL_APIENTRY glFramebufferTextureMultiviewOVR(GLenum target,
 }
 
 // GL_OVR_multiview2
+
+// GL_QCOM_render_shared_exponent
 
 // GL_QCOM_shading_rate
 void GL_APIENTRY glShadingRateQCOM(GLenum rate)

@@ -33,9 +33,6 @@ enable_java_templates = true
 # Build with fewer Android dependencies
 limit_android_deps = true
 
-# Use C++17 instead of C++20 in MSVC builds
-msvc_use_cxx17 = true
-
 # Standalone ANGLE is used in places that are extremely performance sensitive,
 # such as the system graphics driver on Android. ANGLE validates arguments at
 # the API boundary and assumes that all bounds, et cetera are valid elsewhere
@@ -55,6 +52,9 @@ if (is_win) {
   # affects ABI, so ANGLE and Chromium's libc++ hardening modes need to remain
   # in sync on Windows. This is a bit of a hack but "OK" since the performance
   # concerns for standalone ANGLE builds are not relevant on Windows.
+  enable_safe_libcxx = true
+} else if (is_linux) {
+  # https://anglebug.com/8040: turning off safe_libcxx breaks TSAN
   enable_safe_libcxx = true
 } else {
   enable_safe_libcxx = false

@@ -269,15 +269,15 @@ class MemoryAllocationTracker : angle::NonCopyable
         mActiveMemoryAllocationsSize;
     std::array<std::atomic<uint64_t>, vk::kMemoryAllocationTypeCount> mActiveMemoryAllocationsCount;
 
-    // Memory allocation data per memory heap. To update the data, a mutex is used.
-    std::mutex mMemoryAllocationMutex;
+    // Memory allocation data per memory heap.
+    using PerHeapMemoryAllocationSizeArray =
+        std::array<std::atomic<VkDeviceSize>, VK_MAX_MEMORY_HEAPS>;
+    using PerHeapMemoryAllocationCountArray =
+        std::array<std::atomic<uint64_t>, VK_MAX_MEMORY_HEAPS>;
 
-    using PerHeapMemoryAllocationSizeVector  = std::vector<VkDeviceSize>;
-    using PerHeapMemoryAllocationCountVector = std::vector<uint64_t>;
-
-    std::array<PerHeapMemoryAllocationSizeVector, vk::kMemoryAllocationTypeCount>
+    std::array<PerHeapMemoryAllocationSizeArray, vk::kMemoryAllocationTypeCount>
         mActivePerHeapMemoryAllocationsSize;
-    std::array<PerHeapMemoryAllocationCountVector, vk::kMemoryAllocationTypeCount>
+    std::array<PerHeapMemoryAllocationCountArray, vk::kMemoryAllocationTypeCount>
         mActivePerHeapMemoryAllocationsCount;
 
     // Pending memory allocation information is used for logging in case of an allocation error.
@@ -286,6 +286,9 @@ class MemoryAllocationTracker : angle::NonCopyable
     std::atomic<VkDeviceSize> mPendingMemoryAllocationSize;
     std::atomic<vk::MemoryAllocationType> mPendingMemoryAllocationType;
     std::atomic<uint32_t> mPendingMemoryTypeIndex;
+
+    // Mutex is used to update the data when debug layers are enabled.
+    std::mutex mMemoryAllocationMutex;
 
     // Additional information regarding memory allocation with debug layers enabled, including
     // allocation ID and a record of all active allocations.
@@ -402,6 +405,10 @@ class RendererVk : angle::NonCopyable
                                     const VkFormatFeatureFlags featureBits) const;
 
     bool isAsyncCommandQueueEnabled() const { return mFeatures.asyncCommandQueue.enabled; }
+    bool isAsyncCommandBufferResetEnabled() const
+    {
+        return mFeatures.asyncCommandBufferReset.enabled;
+    }
 
     ANGLE_INLINE egl::ContextPriority getDriverPriority(egl::ContextPriority priority)
     {
@@ -811,6 +818,8 @@ class RendererVk : angle::NonCopyable
 
     MemoryAllocationTracker *getMemoryAllocationTracker() { return &mMemoryAllocationTracker; }
 
+    void requestAsyncCommandsAndGarbageCleanup(vk::Context *context);
+
   private:
     angle::Result initializeDevice(DisplayVk *displayVk, uint32_t queueFamilyIndex);
     void ensureCapsInitialized() const;
@@ -1172,6 +1181,22 @@ ANGLE_INLINE angle::Result RendererVk::waitForPresentToBeSubmitted(
         return mCommandProcessor.waitForPresentToBeSubmitted(swapchainStatus);
     }
     ASSERT(!swapchainStatus->isPending);
+    return angle::Result::Continue;
+}
+
+ANGLE_INLINE void RendererVk::requestAsyncCommandsAndGarbageCleanup(vk::Context *context)
+{
+    mCommandProcessor.requestCommandsAndGarbageCleanup();
+}
+
+ANGLE_INLINE angle::Result RendererVk::checkCompletedCommands(vk::Context *context)
+{
+    bool anyCommandFinished;
+    ANGLE_TRY(mCommandQueue.checkCompletedCommands(context, &anyCommandFinished));
+    if (anyCommandFinished)
+    {
+        ANGLE_TRY(mCommandQueue.retireFinishedCommandsAndCleanupGarbage(context));
+    }
     return angle::Result::Continue;
 }
 }  // namespace rx
