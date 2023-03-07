@@ -11,6 +11,7 @@
 #include "test_utils/MultiThreadSteps.h"
 #include "test_utils/gl_raii.h"
 #include "util/EGLWindow.h"
+#include "util/test_utils.h"
 
 #include "common/android_util.h"
 
@@ -21,6 +22,12 @@
 #    if __ANDROID_API__ >= 29
 #        define ANGLE_AHARDWARE_BUFFER_LOCK_PLANES_SUPPORT
 #    endif
+#endif
+
+#if defined(ANGLE_PLATFORM_ANDROID) && __ANDROID_API__ >= 33
+constexpr bool kHasAHBFrontBufferUsageSupport = 1;
+#else
+[[maybe_unused]] constexpr bool kHasAHBFrontBufferUsageSupport = 0;
 #endif
 
 namespace angle
@@ -43,9 +50,9 @@ constexpr char kEGLImageArrayExt[]               = "GL_EXT_EGL_image_array";
 constexpr char kEGLAndroidImageNativeBufferExt[] = "EGL_ANDROID_image_native_buffer";
 constexpr char kEGLImageStorageExt[]             = "GL_EXT_EGL_image_storage";
 constexpr EGLint kDefaultAttribs[]               = {
-                  EGL_IMAGE_PRESERVED,
-                  EGL_TRUE,
-                  EGL_NONE,
+    EGL_IMAGE_PRESERVED,
+    EGL_TRUE,
+    EGL_NONE,
 };
 constexpr EGLint kColorspaceAttribs[] = {
     EGL_IMAGE_PRESERVED, EGL_TRUE, EGL_GL_COLORSPACE, EGL_GL_COLORSPACE_SRGB_KHR, EGL_NONE,
@@ -106,6 +113,8 @@ constexpr int AHARDWAREBUFFER_FORMAT_D24_UNORM       = 0x31;
 constexpr int AHARDWAREBUFFER_FORMAT_Y8Cr8Cb8_420_SP = 0x11;
 constexpr int AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420    = 0x23;
 constexpr int AHARDWAREBUFFER_FORMAT_YV12            = 0x32315659;
+
+[[maybe_unused]] constexpr uint64_t ANGLE_AHARDWAREBUFFER_USAGE_FRONT_BUFFER = (1ULL << 32);
 
 }  // anonymous namespace
 
@@ -690,6 +699,7 @@ void main()
         kAHBUsageGPUFramebuffer    = 1 << 1,
         kAHBUsageGPUCubeMap        = 1 << 2,
         kAHBUsageGPUMipMapComplete = 1 << 3,
+        kAHBUsageFrontBuffer       = 1 << 4,
     };
 
     constexpr static uint32_t kDefaultAHBUsage = kAHBUsageGPUSampledImage | kAHBUsageGPUFramebuffer;
@@ -725,6 +735,10 @@ void main()
         if ((usage & kAHBUsageGPUMipMapComplete) != 0)
         {
             aHardwareBufferDescription.usage |= AHARDWAREBUFFER_USAGE_GPU_MIPMAP_COMPLETE;
+        }
+        if ((usage & kAHBUsageFrontBuffer) != 0)
+        {
+            aHardwareBufferDescription.usage |= ANGLE_AHARDWAREBUFFER_USAGE_FRONT_BUFFER;
         }
         aHardwareBufferDescription.stride = 0;
         aHardwareBufferDescription.rfu0   = 0;
@@ -3022,7 +3036,7 @@ TEST_P(ImageTest, SourceYUVAHBTargetExternalRGBSampleInitData)
     ANGLE_SKIP_TEST_IF(IsPixel2() || IsPixel2XL());
 
     // 3 planes of data
-    GLubyte dataY[4] = {7, 51, 197, 231};
+    GLubyte dataY[4]  = {7, 51, 197, 231};
     GLubyte dataCb[1] = {
         128,
     };
@@ -3106,7 +3120,7 @@ TEST_P(ImageTestES3, SourceYUVAHBTargetExternalYUVSample)
     ANGLE_SKIP_TEST_IF(!hasAndroidImageNativeBufferExt() || !hasAndroidHardwareBufferSupport());
 
     // 3 planes of data
-    GLubyte dataY[4] = {7, 51, 197, 231};
+    GLubyte dataY[4]  = {7, 51, 197, 231};
     GLubyte dataCb[1] = {
         128,
     };
@@ -3221,7 +3235,7 @@ TEST_P(ImageTestES3, RenderToYUVAHB)
     ANGLE_SKIP_TEST_IF(!hasAndroidImageNativeBufferExt() || !hasAndroidHardwareBufferSupport());
 
     // 3 planes of data, initialize to all zeroes
-    GLubyte dataY[4] = {0, 0, 0, 0};
+    GLubyte dataY[4]  = {0, 0, 0, 0};
     GLubyte dataCb[1] = {
         0,
     };
@@ -3262,7 +3276,7 @@ TEST_P(ImageTestES3, RenderToYUVAHB)
     // Finish before reading back AHB data
     glFinish();
 
-    GLubyte expectedDataY[4] = {drawColor[0], drawColor[0], drawColor[0], drawColor[0]};
+    GLubyte expectedDataY[4]  = {drawColor[0], drawColor[0], drawColor[0], drawColor[0]};
     GLubyte expectedDataCb[1] = {
         drawColor[1],
     };
@@ -3321,7 +3335,6 @@ TEST_P(ImageTestES3, ClearYUVAHB)
 }
 
 #if defined(ANGLE_AHARDWARE_BUFFER_SUPPORT)
-
 // Test glClear on FBO with AHB attachment is applied to the AHB image before we read back
 TEST_P(ImageTestES3, AHBClearAppliedBeforeReadBack)
 {
@@ -3571,6 +3584,213 @@ TEST_P(ImageTestES3, AHBClearWithGLClientWaitSyncBeforeReadBack)
         glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
     }
 
+    verifyResultAHB(ahb, {{kRed, 4}});
+
+    eglDestroyImageKHR(window->getDisplay(), ahbImage);
+    destroyAndroidHardwareBuffer(ahb);
+}
+
+// Test glDraw + glFlush on FBO with AHB attachment are applied to the AHB image before we read back
+TEST_P(ImageTestES3, AHBDrawFlushAppliedBeforeReadBack)
+{
+    ANGLE_SKIP_TEST_IF(!kHasAHBFrontBufferUsageSupport);
+
+    EGLWindow *window = getEGLWindow();
+    ANGLE_SKIP_TEST_IF(!hasAndroidImageNativeBufferExt() || !hasAndroidHardwareBufferSupport());
+
+    // Create a GLTexture backed by the AHB.
+    AHardwareBuffer *ahb;
+    EGLImageKHR ahbImage;
+    const GLubyte kBlack[] = {0, 0, 0, 0};
+    const GLubyte kRed[]   = {255, 0, 0, 255};
+    createEGLImageAndroidHardwareBufferSource(1, 1, 1, AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM,
+                                              kDefaultAHBUsage | kAHBUsageFrontBuffer,
+                                              kDefaultAttribs, {{kBlack, 4}}, &ahb, &ahbImage);
+    GLTexture ahbTexture;
+    createEGLImageTargetTexture2D(ahbImage, ahbTexture);
+
+    // Create one framebuffer backed by the AHB-based GLTexture
+    GLFramebuffer ahbFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, ahbFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ahbTexture, 0);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Draw to the FBO and call glFlush()
+    ANGLE_GL_PROGRAM(drawColor, essl1_shaders::vs::Simple(), essl1_shaders::fs::UniformColor());
+    glUseProgram(drawColor);
+    GLint colorUniformLocation =
+        glGetUniformLocation(drawColor, angle::essl1_shaders::ColorUniform());
+    ASSERT_NE(colorUniformLocation, -1);
+
+    glUniform4f(colorUniformLocation, kRed[0] / 255.0f, kRed[1] / 255.0f, kRed[2] / 255.0f,
+                kRed[3] / 255.0f);
+    drawQuad(drawColor, essl1_shaders::PositionAttrib(), 0.5f);
+    glFlush();
+    // unlike glFinish(), glFlush() does not wait for commands execution to complete.
+    // sleep for 1 second before reading back from AHB.
+    angle::Sleep(1000);
+
+    // Verify the result
+    verifyResultAHB(ahb, {{kRed, 4}});
+
+    eglDestroyImageKHR(window->getDisplay(), ahbImage);
+    destroyAndroidHardwareBuffer(ahb);
+}
+
+// Test that glDraw + glFlush on FBO with AHB attachment are applied to the AHB
+// image before detaching the AHB image from FBO
+TEST_P(ImageTestES3, AHBDrawFlushAndDetachBeforeReadBack)
+{
+    ANGLE_SKIP_TEST_IF(!kHasAHBFrontBufferUsageSupport);
+
+    EGLWindow *window = getEGLWindow();
+    ANGLE_SKIP_TEST_IF(!hasAndroidImageNativeBufferExt() || !hasAndroidHardwareBufferSupport());
+
+    // Create a GLTexture backed by the AHB.
+    AHardwareBuffer *ahb;
+    EGLImageKHR ahbImage;
+    const GLubyte kBlack[] = {0, 0, 0, 0};
+    const GLubyte kRed[]   = {255, 0, 0, 255};
+    createEGLImageAndroidHardwareBufferSource(1, 1, 1, AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM,
+                                              kDefaultAHBUsage | kAHBUsageFrontBuffer,
+                                              kDefaultAttribs, {{kBlack, 4}}, &ahb, &ahbImage);
+    GLTexture ahbTexture;
+    createEGLImageTargetTexture2D(ahbImage, ahbTexture);
+
+    // Create one framebuffer backed by the AHB-based GLTexture
+    GLFramebuffer ahbFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, ahbFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ahbTexture, 0);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Draw to the FBO and call glFlush()
+    ANGLE_GL_PROGRAM(drawColor, essl1_shaders::vs::Simple(), essl1_shaders::fs::UniformColor());
+    glUseProgram(drawColor);
+    GLint colorUniformLocation =
+        glGetUniformLocation(drawColor, angle::essl1_shaders::ColorUniform());
+    ASSERT_NE(colorUniformLocation, -1);
+
+    glUniform4f(colorUniformLocation, kRed[0] / 255.0f, kRed[1] / 255.0f, kRed[2] / 255.0f,
+                kRed[3] / 255.0f);
+    drawQuad(drawColor, essl1_shaders::PositionAttrib(), 0.5f);
+
+    glFlush();
+    // unlike glFinish(), glFlush() does not wait for commands execution to complete.
+    // sleep for 1 second before reading back from AHB.
+    angle::Sleep(1000);
+
+    // Detach the AHB image from the FBO color attachment
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+
+    // Verify the result
+    verifyResultAHB(ahb, {{kRed, 4}});
+
+    eglDestroyImageKHR(window->getDisplay(), ahbImage);
+    destroyAndroidHardwareBuffer(ahb);
+}
+
+// Test that glDraw + glFlush on FBO with AHB attachment are applied to the AHB
+// image before implicitly unbinding the AHB image from FBO
+TEST_P(ImageTestES3, AHBDrawFlushAndAttachAnotherTextureBeforeReadBack)
+{
+    ANGLE_SKIP_TEST_IF(!kHasAHBFrontBufferUsageSupport);
+
+    EGLWindow *window = getEGLWindow();
+    ANGLE_SKIP_TEST_IF(!hasAndroidImageNativeBufferExt() || !hasAndroidHardwareBufferSupport());
+
+    // Create a GLTexture backed by the AHB.
+    AHardwareBuffer *ahb;
+    EGLImageKHR ahbImage;
+    const GLubyte kBlack[] = {0, 0, 0, 0};
+    const GLubyte kRed[]   = {255, 0, 0, 255};
+    createEGLImageAndroidHardwareBufferSource(1, 1, 1, AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM,
+                                              kDefaultAHBUsage | kAHBUsageFrontBuffer,
+                                              kDefaultAttribs, {{kBlack, 4}}, &ahb, &ahbImage);
+    GLTexture ahbTexture;
+    createEGLImageTargetTexture2D(ahbImage, ahbTexture);
+
+    // Create one framebuffer backed by the AHB-based GLTexture
+    GLFramebuffer ahbFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, ahbFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ahbTexture, 0);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Draw to the FBO and call glFlush()
+    ANGLE_GL_PROGRAM(drawColor, essl1_shaders::vs::Simple(), essl1_shaders::fs::UniformColor());
+    glUseProgram(drawColor);
+    GLint colorUniformLocation =
+        glGetUniformLocation(drawColor, angle::essl1_shaders::ColorUniform());
+    ASSERT_NE(colorUniformLocation, -1);
+
+    glUniform4f(colorUniformLocation, kRed[0] / 255.0f, kRed[1] / 255.0f, kRed[2] / 255.0f,
+                kRed[3] / 255.0f);
+    drawQuad(drawColor, essl1_shaders::PositionAttrib(), 0.5f);
+
+    glFlush();
+    // unlike glFinish(), glFlush() does not wait for commands execution to complete.
+    // sleep for 1 second before reading back from AHB.
+    angle::Sleep(1000);
+
+    // Attach a random texture to the same FBO color attachment slot that AHB image was attached
+    // to, this should implicity detach the AHB image from the FBO.
+    GLTexture newTexture;
+    glBindTexture(GL_TEXTURE_2D, newTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, newTexture, 0);
+
+    // Verify the result
+    verifyResultAHB(ahb, {{kRed, 4}});
+
+    eglDestroyImageKHR(window->getDisplay(), ahbImage);
+    destroyAndroidHardwareBuffer(ahb);
+}
+
+// Test that glDraw + glFlush on FBO with AHB attachment are applied to the AHB
+// image before switching to the default FBO
+TEST_P(ImageTestES3, AHBDrawFlushAndSwitchToDefaultFBOBeforeReadBack)
+{
+    ANGLE_SKIP_TEST_IF(!kHasAHBFrontBufferUsageSupport);
+
+    EGLWindow *window = getEGLWindow();
+    ANGLE_SKIP_TEST_IF(!hasAndroidImageNativeBufferExt() || !hasAndroidHardwareBufferSupport());
+
+    // Create a GLTexture backed by the AHB.
+    AHardwareBuffer *ahb;
+    EGLImageKHR ahbImage;
+    const GLubyte kBlack[] = {0, 0, 0, 0};
+    const GLubyte kRed[]   = {255, 0, 0, 255};
+    createEGLImageAndroidHardwareBufferSource(1, 1, 1, AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM,
+                                              kDefaultAHBUsage | kAHBUsageFrontBuffer,
+                                              kDefaultAttribs, {{kBlack, 4}}, &ahb, &ahbImage);
+    GLTexture ahbTexture;
+    createEGLImageTargetTexture2D(ahbImage, ahbTexture);
+
+    // Create one framebuffer backed by the AHB-based GLTexture
+    GLFramebuffer ahbFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, ahbFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ahbTexture, 0);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Draw to the FBO and call glFlush()
+    ANGLE_GL_PROGRAM(drawColor, essl1_shaders::vs::Simple(), essl1_shaders::fs::UniformColor());
+    glUseProgram(drawColor);
+    GLint colorUniformLocation =
+        glGetUniformLocation(drawColor, angle::essl1_shaders::ColorUniform());
+    ASSERT_NE(colorUniformLocation, -1);
+
+    glUniform4f(colorUniformLocation, kRed[0] / 255.0f, kRed[1] / 255.0f, kRed[2] / 255.0f,
+                kRed[3] / 255.0f);
+    drawQuad(drawColor, essl1_shaders::PositionAttrib(), 0.5f);
+
+    glFlush();
+    // unlike glFinish(), glFlush() does not wait for commands execution to complete.
+    // sleep for 1 second before reading back from AHB.
+    angle::Sleep(1000);
+
+    // Switch to default FBO
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // Verify the result
     verifyResultAHB(ahb, {{kRed, 4}});
 
     eglDestroyImageKHR(window->getDisplay(), ahbImage);

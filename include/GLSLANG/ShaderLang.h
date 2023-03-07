@@ -26,7 +26,7 @@
 
 // Version number for shader translation API.
 // It is incremented every time the API changes.
-#define ANGLE_SH_VERSION 315
+#define ANGLE_SH_VERSION 319
 
 enum ShShaderSpec
 {
@@ -414,8 +414,8 @@ struct ShCompileOptions
     // We may want to apply it generally.
     uint64_t passHighpToPackUnormSnormBuiltins : 1;
 
-    // When clip and cull distances are used simultaneously, D3D11 can support up to four of each.
-    uint64_t limitSimultaneousClipAndCullDistanceUsage : 1;
+    // Use an integer uniform to pass a bitset of enabled clip distances.
+    uint64_t emulateClipDistanceState : 1;
 
     ShCompileOptionsMetal metal;
     ShPixelLocalStorageOptions pls;
@@ -491,6 +491,7 @@ struct ShBuiltInResources
     int EXT_texture_buffer;
     int OES_sample_variables;
     int EXT_clip_cull_distance;
+    int ANGLE_clip_cull_distance;
     int EXT_primitive_bounding_box;
     int OES_primitive_bounding_box;
     int EXT_separate_shader_objects;
@@ -661,7 +662,7 @@ struct ShBuiltInResources
     // Subpixel bits used in rasterization.
     int SubPixelBits;
 
-    // APPLE_clip_distance/EXT_clip_cull_distance constant
+    // APPLE_clip_distance / EXT_clip_cull_distance / ANGLE_clip_cull_distance constants
     int MaxClipDistances;
     int MaxCullDistances;
     int MaxCombinedClipAndCullDistances;
@@ -857,6 +858,9 @@ unsigned int GetImage2DRegisterIndex(const ShHandle handle);
 // handle: Specifies the compiler
 const std::set<std::string> *GetUsedImage2DFunctionNames(const ShHandle handle);
 
+uint8_t GetClipDistanceArraySize(const ShHandle handle);
+uint8_t GetCullDistanceArraySize(const ShHandle handle);
+bool HasClipDistanceInVertexShader(const ShHandle handle);
 bool HasDiscardInFragmentShader(const ShHandle handle);
 bool HasValidGeometryShaderInputPrimitiveType(const ShHandle handle);
 bool HasValidGeometryShaderOutputPrimitiveType(const ShHandle handle);

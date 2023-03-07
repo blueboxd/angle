@@ -124,7 +124,7 @@ angle::Result QueryVk::allocateQuery(ContextVk *contextVk)
     uint32_t queryCount = 1;
     if (IsRenderPassQuery(contextVk, mType))
     {
-        ASSERT(contextVk->hasStartedRenderPass());
+        ASSERT(contextVk->hasActiveRenderPass());
         queryCount = std::max(contextVk->getCurrentViewCount(), 1u);
     }
 
@@ -260,7 +260,7 @@ angle::Result QueryVk::setupBegin(ContextVk *contextVk)
         QueryVk *shareQuery = GetShareQuery(contextVk, mType);
 
         // If so, make the other query stash its results and continue with a new query helper.
-        if (contextVk->hasStartedRenderPass())
+        if (contextVk->hasActiveRenderPass())
         {
             if (shareQuery)
             {
@@ -403,7 +403,7 @@ angle::Result QueryVk::end(const gl::Context *context)
                 //                 QueryHelper1 stashed in PG, PG starts QueryHelper2
                 // - Draw
                 // - PG ends   <-- Results = QueryHelper1 + QueryHelper2
-                if (contextVk->hasStartedRenderPass())
+                if (contextVk->hasActiveRenderPass())
                 {
                     ANGLE_TRY(shareQuery->onRenderPassStart(contextVk));
                 }
@@ -526,7 +526,7 @@ angle::Result QueryVk::getResult(const gl::Context *context, bool wait)
         // recently. Do that now and see if the query is still busy.  If the application is
         // looping until the query results become available, there wouldn't be any forward
         // progress without this.
-        ANGLE_TRY(contextVk->checkCompletedCommands());
+        ANGLE_TRY(renderer->checkCompletedCommands(contextVk));
 
         if (isCurrentlyInUse(renderer))
         {

@@ -117,6 +117,8 @@ bool ValidateMultiDrawElementsInstancedBaseVertexBaseInstanceANGLE(const Context
                                                                    const GLuint *baseInstances,
                                                                    GLsizei drawcount);
 
+// GL_ANGLE_clip_cull_distance
+
 // GL_ANGLE_copy_texture_3d
 bool ValidateCopyTexture3DANGLE(const Context *context,
                                 angle::EntryPoint entryPoint,
@@ -957,6 +959,8 @@ bool ValidateReleaseTexturesANGLE(const Context *context,
 
 // GL_ARB_sync
 
+// GL_ARM_shader_framebuffer_fetch
+
 // GL_CHROMIUM_bind_uniform_location
 bool ValidateBindUniformLocationCHROMIUM(const Context *context,
                                          angle::EntryPoint entryPoint,
@@ -1463,6 +1467,13 @@ bool ValidateRenderbufferStorageMultisampleEXT(const Context *context,
 // GL_EXT_multisampled_render_to_texture2
 
 // GL_EXT_occlusion_query_boolean
+
+// GL_EXT_polygon_offset_clamp
+bool ValidatePolygonOffsetClampEXT(const Context *context,
+                                   angle::EntryPoint entryPoint,
+                                   GLfloat factor,
+                                   GLfloat units,
+                                   GLfloat clamp);
 
 // GL_EXT_primitive_bounding_box
 bool ValidatePrimitiveBoundingBoxEXT(const Context *context,

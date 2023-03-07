@@ -355,6 +355,7 @@ void RendererVk::ensureCapsInitialized() const
     mNativeExtensions.discardFramebufferEXT         = true;
     mNativeExtensions.textureBorderClampOES = getFeatures().supportsCustomBorderColor.enabled;
     mNativeExtensions.textureBorderClampEXT = getFeatures().supportsCustomBorderColor.enabled;
+    mNativeExtensions.polygonOffsetClampEXT = mPhysicalDeviceFeatures.depthBiasClamp == VK_TRUE;
     // Enable EXT_texture_type_2_10_10_10_REV
     mNativeExtensions.textureType2101010REVEXT = true;
 
@@ -1067,7 +1068,7 @@ void RendererVk::ensureCapsInitialized() const
         }
     }
 
-    // GL_APPLE_clip_distance/GL_EXT_clip_cull_distance
+    // GL_APPLE_clip_distance / GL_EXT_clip_cull_distance / GL_ANGLE_clip_cull_distance
     // From the EXT_clip_cull_distance extension spec:
     //
     // > Modify Section 7.2, "Built-In Constants" (p. 126)
@@ -1086,8 +1087,9 @@ void RendererVk::ensureCapsInitialized() const
     if (mPhysicalDeviceFeatures.shaderClipDistance &&
         limitsVk.maxClipDistances >= kMaxClipDistancePerSpec)
     {
-        mNativeExtensions.clipDistanceAPPLE = true;
-        mNativeCaps.maxClipDistances        = limitsVk.maxClipDistances;
+        mNativeExtensions.clipDistanceAPPLE     = true;
+        mNativeExtensions.clipCullDistanceANGLE = true;
+        mNativeCaps.maxClipDistances            = limitsVk.maxClipDistances;
 
         if (mPhysicalDeviceFeatures.shaderCullDistance &&
             limitsVk.maxCullDistances >= kMaxCullDistancePerSpec &&

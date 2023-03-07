@@ -12,7 +12,6 @@
 #       --no-warmup --steps-per-trial 1000 --trials 1)
 
 import argparse
-import fnmatch
 import logging
 import os
 import pathlib
@@ -43,7 +42,7 @@ def main():
 
     args, extra_flags = parser.parse_known_args()
 
-    logging.basicConfig(level=args.log.upper())
+    angle_test_util.SetupLogging(args.log.upper())
 
     android_helper.Initialize(args.suite)
     assert android_helper.IsAndroid()
@@ -56,7 +55,7 @@ def main():
 
     tests = angle_test_util.GetTestsFromOutput(output)
     if args.filter:
-        tests = [test for test in tests if fnmatch.fnmatch(test, args.filter)]
+        tests = angle_test_util.FilterTests(tests, args.filter)
 
     if args.list_tests:
         for test in tests:

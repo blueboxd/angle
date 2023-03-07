@@ -94,6 +94,7 @@ if (angle_build_all) {
   }
 }
 
+import("src/angle_program_serialize_data_version.gni")
 import("src/compiler.gni")
 import("src/libGLESv2.gni")
 
@@ -442,53 +443,64 @@ if (angle_has_build) {
   }
 }
 
-angle_static_library("angle_common") {
+template("angle_common_lib") {
+  angle_static_library(target_name) {
+    sources = invoker.sources
+
+    configs += [
+      ":angle_common_config",
+      ":debug_annotations_config",
+    ]
+
+    deps = [ ":xxhash" ]
+
+    public_deps = [
+      ":angle_abseil",
+      ":includes",
+    ]
+    public_configs += [ ":angle_common_config" ]
+    if (angle_has_build && use_fuzzing_engine) {
+      all_dependent_configs = [ ":angle_disable_pool_alloc" ]
+    }
+
+    if (is_linux || is_chromeos) {
+      libs = [ "dl" ]
+    }
+
+    if (is_android && (angle_enable_gl || angle_enable_vulkan)) {
+      # In API level 26 ANativeWindow APIs were moved from libandroid.so
+      # into a separate library, libnativewindow.so
+      if (ndk_api_level_at_least_26) {
+        libs = [ "nativewindow" ]
+      } else {
+        libs = [ "android" ]
+      }
+    }
+
+    if (angle_expose_non_conformant_extensions_and_versions) {
+      defines = [ "ANGLE_EXPOSE_NON_CONFORMANT_EXTENSIONS_AND_VERSIONS" ]
+    }
+
+    if (using_sanitizer && !build_with_chromium) {
+      data_deps =
+          [ "//build/config/clang:llvm-symbolizer_data($host_toolchain)" ]
+    }
+
+    if (is_apple) {
+      frameworks = [ "Metal.framework" ]
+    }
+  }
+}
+
+angle_common_lib("angle_common") {
   sources = libangle_common_sources
   if (angle_enable_cl) {
     sources += libangle_common_cl_sources
   }
+}
 
-  configs += [
-    ":angle_common_config",
-    ":debug_annotations_config",
-  ]
-
-  deps = [ ":xxhash" ]
-
-  public_deps = [
-    ":angle_abseil",
-    ":includes",
-  ]
-  public_configs += [ ":angle_common_config" ]
-  if (angle_has_build && use_fuzzing_engine) {
-    all_dependent_configs = [ ":angle_disable_pool_alloc" ]
-  }
-
-  if (is_linux || is_chromeos) {
-    libs = [ "dl" ]
-  }
-
-  if (is_android && (angle_enable_gl || angle_enable_vulkan)) {
-    # In API level 26 ANativeWindow APIs were moved from libandroid.so
-    # into a separate library, libnativewindow.so
-    if (ndk_api_level_at_least_26) {
-      libs = [ "nativewindow" ]
-    } else {
-      libs = [ "android" ]
-    }
-  }
-
-  if (angle_expose_non_conformant_extensions_and_versions) {
-    defines = [ "ANGLE_EXPOSE_NON_CONFORMANT_EXTENSIONS_AND_VERSIONS" ]
-  }
-
-  if (using_sanitizer && !build_with_chromium) {
-    data_deps = [ "//build/config/clang:llvm-symbolizer_data($host_toolchain)" ]
-  }
-
-  if (is_apple) {
-    weak_frameworks = [ "Metal.framework" ]
-  }
+angle_common_lib("angle_common_shader_state") {
+  sources = libangle_common_shader_state_sources
 }
 
 angle_source_set("angle_capture_common") {
@@ -767,6 +779,31 @@ angle_source_set("translator_fuzzer") {
   deps = [ ":translator" ]
 }
 
+config("angle_program_version_id_config") {
+  include_dirs = [ "$root_gen_dir/angle" ]
+  visibility = [ ":angle_program_version_id" ]
+}
+
+action("angle_program_version_id") {
+  response_file_contents =
+      rebase_path(angle_code_affecting_program_serialize, root_build_dir)
+
+  _program_version_header = "$root_gen_dir/angle/ANGLEShaderProgramVersion.h"
+  script = "src/program_serialize_data_version.py"
+  outputs = [ _program_version_header ]
+
+  visibility = [ ":angle_version" ]
+
+  inputs = angle_code_affecting_program_serialize
+
+  args = [
+    rebase_path(_program_version_header, root_build_dir),
+    "{{response_file_name}}",
+  ]
+
+  public_configs = [ ":angle_program_version_id_config" ]
+}
+
 config("angle_commit_id_config") {
   include_dirs = [ "$root_gen_dir/angle" ]
   visibility = [ ":angle_commit_id" ]
@@ -811,7 +848,10 @@ action("angle_commit_id") {
 
 angle_source_set("angle_version") {
   sources = [ "src/common/angle_version.h" ]
-  public_deps = [ ":angle_commit_id" ]
+  public_deps = [
+    ":angle_commit_id",
+    ":angle_program_version_id",
+  ]
   visibility = [ ":angle_version_info" ]
 
   # The version headers are used directly in Windows .RC files.
@@ -837,7 +877,10 @@ angle_source_set("angle_version_info") {
     "src/common/angle_version_info.cpp",
     "src/common/angle_version_info.h",
   ]
-  deps = [ ":angle_version" ]
+  deps = [
+    ":angle_translator_headers",
+    ":angle_version",
+  ]
 }
 
 config("angle_backend_config") {
@@ -931,6 +974,7 @@ angle_source_set("libANGLE_headers") {
   }
   public_deps = [
     ":angle_common",
+    ":angle_common_shader_state",
     ":angle_translator_headers",
   ]
   public_configs += [ ":libANGLE_config" ]
@@ -976,6 +1020,7 @@ angle_source_set("libANGLE_no_vulkan") {
   }
   public_deps = [
     ":angle_common",
+    ":angle_common_shader_state",
     ":angle_gpu_info_util",
     ":angle_image_util",
     ":angle_version_info",
@@ -1086,7 +1131,7 @@ angle_source_set("angle_gl_enum_utils") {
 
 if (angle_use_wayland) {
   config("angle_wayland_config") {
-    if (use_system_libwayland) {
+    if ("$wayland_gn_dir" == "") {
       libs = [
         "wayland-client",
         "wayland-egl",
@@ -1102,7 +1147,7 @@ if (angle_use_wayland) {
   group("angle_wayland") {
     public_configs = [ ":angle_wayland_config" ]
 
-    if (!use_system_libwayland) {
+    if ("$wayland_gn_dir" != "") {
       # Use third-party targets
       public_deps = [
         "$wayland_gn_dir:wayland_client",
@@ -1733,6 +1778,10 @@ group("angle") {
       ":libEGL_vulkan_secondaries",
       ":libGLESv2_vulkan_secondaries",
     ]
+  }
+  if (is_ios) {
+    # Need to bundle the libraries inside the .app.
+    deps = data_deps
   }
 }
 

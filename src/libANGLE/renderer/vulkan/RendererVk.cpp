@@ -48,15 +48,15 @@ constexpr bool kExposeNonConformantExtensionsAndVersions = false;
 #endif
 
 // This flag is used for memory allocation tracking using allocation size counters.
-constexpr bool kTrackMemoryAllocation = true;
+constexpr bool kTrackMemoryAllocationSizes = true;
 #if defined(ANGLE_ENABLE_MEMORY_ALLOC_LOGGING)
 // Flag used for logging memory allocations and deallocations.
-constexpr bool kDebugMemoryAllocationLogs = true;
-static_assert(kTrackMemoryAllocation,
-              "kTrackMemoryAllocation must be enabled to use kDebugMemoryAllocationLogs.");
+constexpr bool kTrackMemoryAllocationDebug = true;
+static_assert(kTrackMemoryAllocationSizes,
+              "kTrackMemoryAllocationSizes must be enabled to use kTrackMemoryAllocationDebug.");
 #else
 // Only the allocation size counters are used (if enabled).
-constexpr bool kDebugMemoryAllocationLogs = false;
+constexpr bool kTrackMemoryAllocationDebug = false;
 #endif
 }  // anonymous namespace
 
@@ -158,8 +158,6 @@ constexpr const char *kSkippedMessages[] = {
     "UNASSIGNED-CoreValidation-Shader-OutputNotConsumed",
     // http://anglebug.com/4883
     "UNASSIGNED-CoreValidation-Shader-InputNotProduced",
-    // http://anglebug.com/2796
-    "UNASSIGNED-CoreValidation-Shader-PointSizeMissing",
     // http://anglebug.com/4928
     "VUID-vkMapMemory-memory-00683",
     // http://anglebug.com/5027
@@ -169,9 +167,6 @@ constexpr const char *kSkippedMessages[] = {
     "VUID-vkCmdDrawIndexed-magFilter-04553",
     // http://anglebug.com/5309
     "VUID-VkImageViewCreateInfo-usage-02652",
-    // http://anglebug.com/5331
-    "VUID-VkSubpassDescriptionDepthStencilResolve-depthResolveMode-parameter",
-    "VUID-VkSubpassDescriptionDepthStencilResolve-stencilResolveMode-parameter",
     // http://issuetracker.google.com/175584609
     "VUID-vkCmdDraw-None-04584",
     "VUID-vkCmdDrawIndexed-None-04584",
@@ -199,16 +194,6 @@ constexpr const char *kSkippedMessages[] = {
     "VUID-vkCmdDrawIndexed-None-06538",
     // http://anglebug.com/7325
     "VUID-vkCmdBindVertexBuffers2-pStrides-06209",
-    // http://anglebug.com/7513
-    "VUID-VkGraphicsPipelineCreateInfo-pStages-06896",
-    // http://anglebug.com/7685
-    "UNASSIGNED-input-attachment-descriptor-not-in-subpass",
-    "VUID-vkCmdDraw-None-02686",
-    "VUID-vkCmdDrawIndexed-None-02686",
-    "VUID-vkCmdDrawIndirect-None-02686",
-    "VUID-vkCmdDrawIndirectCount-None-02686",
-    "VUID-vkCmdDrawIndexedIndirect-None-02686",
-    "VUID-vkCmdDrawIndexedIndirectCount-None-02686",
     // http://anglebug.com/7729
     "VUID-vkDestroySemaphore-semaphore-01137",
     // http://anglebug.com/7843
@@ -240,77 +225,18 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessages[] = {
         "write_barriers: 0, command: vkCmdEndRenderPass",
     },
     // These errors are caused by a feedback loop tests that don't produce correct Vulkan to begin
-    // with.  The message to check is made more specific (by checking the exact set/binding and part
-    // of seq_no) to reduce the chances of it suppressing a bug in other valid tests.
+    // with.
     // http://anglebug.com/6417
+    // http://anglebug.com/7070
     //
-    // From: Texture2DBaseMaxTestES3.Fuzz545ImmutableTexRenderFeedback/ES3_Vulkan
+    // Occassionally, this is due to VVL's lack of support for some extensions.  For example,
+    // syncval doesn't properly account for VK_EXT_fragment_shader_interlock, which gives
+    // synchronization guarantees without the need for an image barrier.
+    // https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/4387
     {
         "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 6",
-    },
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 7",
-    },
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdDraw",
-    },
-    // From: FramebufferTest_ES3.FramebufferBindToNewLevelAfterMaxIncreaseShouldntCrash/ES3_Vulkan
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 10,",
-    },
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 2,",
-    },
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 9,",
-    },
-    // From: FramebufferTest_ES3.SampleFromAttachedTextureWithDifferentLOD/ES3_Vulkan
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 8,",
-    },
-    // With Vulkan secondary command buffers:
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "Recorded access info (recorded_usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, command: "
-        "vkCmdDraw, seq_no: 1, reset_no: 1). Access info (prior_usage: "
-        "SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, command: "
-        "vkCmdBeginRenderPass, seq_no:",
-    },
-    // From: TraceTest.vulkan_aztec_ruins
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass, seq_no: 11",
+        "imageLayout: VK_IMAGE_LAYOUT_GENERAL",
+        "usage: SYNC_FRAGMENT_SHADER_SHADER_",
     },
     // http://anglebug.com/6551
     {
@@ -433,14 +359,6 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessages[] = {
      "VK_IMAGE_LAYOUT_GENERAL). Access info (usage: SYNC_IMAGE_LAYOUT_TRANSITION, prior_usage: "
      "SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers:",
      true},
-    // http://anglebug.com/7070
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: VK_IMAGE_LAYOUT_GENERAL, "
-        "binding #0, index 0. Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, write_barriers: 0, "
-        "command: vkCmdBeginRenderPass",
-    },
     // From: TraceTest.car_chase http://anglebug.com/7125
     {
         "SYNC-HAZARD-WRITE-AFTER-READ",
@@ -457,82 +375,32 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessages[] = {
     {
         "SYNC-HAZARD-WRITE-AFTER-READ",
         "Access info (usage: SYNC_IMAGE_LAYOUT_TRANSITION, prior_usage: "
-        "SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, read_barriers: "
-        "VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, command: vkCmdDrawIndexed",
+        "SYNC_FRAGMENT_SHADER_SHADER_",
     },
     // http://anglebug.com/7031
     {"SYNC-HAZARD-READ-AFTER-WRITE",
      "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: "
      "VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, binding #0, index 0. Access info (usage: "
-     "SYNC_COMPUTE_SHADER_SHADER_STORAGE_READ, prior_usage: SYNC_IMAGE_LAYOUT_TRANSITION, "
-     "write_barriers: "
-     "SYNC_VERTEX_ATTRIBUTE_INPUT_VERTEX_ATTRIBUTE_READ|SYNC_VERTEX_SHADER_SHADER_SAMPLED_READ|"
-     "SYNC_VERTEX_SHADER_SHADER_STORAGE_READ|SYNC_VERTEX_SHADER_UNIFORM_READ|SYNC_TESSELLATION_"
-     "CONTROL_SHADER_SHADER_SAMPLED_READ|SYNC_TESSELLATION_CONTROL_SHADER_SHADER_STORAGE_READ|"
-     "SYNC_TESSELLATION_CONTROL_SHADER_UNIFORM_READ|SYNC_TESSELLATION_EVALUATION_SHADER_SHADER_"
-     "SAMPLED_READ|SYNC_TESSELLATION_EVALUATION_SHADER_SHADER_STORAGE_READ|SYNC_TESSELLATION_EV"
-     "ALUATION_SHADER_UNIFORM_READ|SYNC_GEOMETRY_SHADER_SHADER_SAMPLED_READ|SYNC_GEOMETRY_SHADER"
-     "_SHADER_STORAGE_READ|SYNC_GEOMETRY_SHADER_UNIFORM_READ|SYNC_FRAGMENT_SHADER_SHADER_SAMPLED_"
-     "READ"
-     "|SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ|SYNC_FRAGMENT_SHADER_UNIFORM_READ, "
-     "command: vkCmdPipelineBarrier, seq_no: 4,",
-     "", false},
-    // On SwiftShader, http://anglebug.com/7031
-    {"SYNC-HAZARD-READ-AFTER-WRITE",
-     "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: "
-     "VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, binding #0, index 0. Access info (usage: "
-     "SYNC_COMPUTE_SHADER_SHADER_STORAGE_READ, prior_usage: SYNC_IMAGE_LAYOUT_TRANSITION, "
-     "write_barriers: "
-     "SYNC_FRAGMENT_SHADER_SHADER_SAMPLED_READ|SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ|SYNC_"
-     "FRAGMENT_SHADER_UNIFORM_READ, "
-     "command: vkCmdPipelineBarrier, seq_no: 3,",
+     "SYNC_COMPUTE_SHADER_SHADER_",
      "", false},
     // http://anglebug.com/7456
     {
         "SYNC-HAZARD-READ-AFTER-WRITE",
         "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, "
         "imageLayout: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL",
-        "Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_IMAGE_LAYOUT_TRANSITION, "
-        "write_barriers: SYNC_VERTEX_SHADER_SHADER_SAMPLED_READ|"
-        "SYNC_VERTEX_SHADER_SHADER_STORAGE_READ|SYNC_VERTEX_SHADER_UNIFORM_READ, "
-        "command: vkCmdPipelineBarrier",
+        "Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_",
     },
-    {
-        "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, "
-        "imageLayout: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL",
-        "Access info (usage: SYNC_COMPUTE_SHADER_SHADER_STORAGE_READ, "
-        "prior_usage: SYNC_IMAGE_LAYOUT_TRANSITION, "
-        "write_barriers: SYNC_VERTEX_ATTRIBUTE_INPUT_VERTEX_ATTRIBUTE_READ|"
-        "SYNC_FRAGMENT_SHADER_SHADER_SAMPLED_READ|SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ|"
-        "SYNC_FRAGMENT_SHADER_UNIFORM_READ, "
-        "command: vkCmdPipelineBarrier",
-    },
-    // The validation layers don't properly account for VK_EXT_fragment_shader_interlock, which
-    // gives synchronization guarantees without the need for an image barrier. Suppress these
-    // syncval errors globally until it's fixed.
-    // https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/4387
-    {"SYNC-HAZARD-READ-AFTER-WRITE",
-     "type: VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, "
-     "imageLayout: VK_IMAGE_LAYOUT_GENERAL",
-     "Access info (usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-     "prior_usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_WRITE, "
-     "write_barriers: 0"},
     // From: TraceTest.life_is_strange http://anglebug.com/7711
     {"SYNC-HAZARD-WRITE-AFTER-READ",
      "vkCmdEndRenderPass: Hazard WRITE_AFTER_READ in subpass 0 for attachment 1 "
      "depth aspect during store with storeOp VK_ATTACHMENT_STORE_OP_DONT_CARE. "
      "Access info (usage: SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, "
-     "prior_usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-     "read_barriers: VK_PIPELINE_STAGE_2_NONE, command: vkCmdDrawIndexed,"},
+     "prior_usage: SYNC_FRAGMENT_SHADER_SHADER_"},
     // From: TraceTest.life_is_strange http://anglebug.com/7711
     {"SYNC-HAZARD-READ-AFTER-WRITE",
      "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, "
      "imageLayout: VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL",
-     "usage: SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, "
-     "prior_usage: SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, "
-     "write_barriers: 0, command: vkCmdEndRenderPass"},
+     "usage: SYNC_FRAGMENT_SHADER_SHADER_"},
     // From: TraceTest.diablo_immortal http://anglebug.com/7837
     {"SYNC-HAZARD-WRITE-AFTER-WRITE", "vkCmdDrawIndexed: Hazard WRITE_AFTER_WRITE for VkImageView ",
      "Subpass #0, and pColorAttachments #0. Access info (usage: "
@@ -540,13 +408,14 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessages[] = {
      "SYNC_IMAGE_LAYOUT_TRANSITION, write_barriers: 0, command: vkCmdEndRenderPass"},
     // From: TraceTest.diablo_immortal http://anglebug.com/7837
     {"SYNC-HAZARD-WRITE-AFTER-READ",
-     "vkCmdBeginRenderPass: Hazard WRITE_AFTER_READ in subpass 0 for attachment 1 aspect depth "
-     "during load with loadOp VK_ATTACHMENT_LOAD_OP_DONT_CARE. Access info (usage: "
+     "load with loadOp VK_ATTACHMENT_LOAD_OP_DONT_CARE. Access info (usage: "
      "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, prior_usage: "
-     "SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, read_barriers: "
-     "VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT|VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT|VK_"
-     "PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, "
-     "command: vkCmdDraw"},
+     "SYNC_FRAGMENT_SHADER_SHADER_"},
+    // From: TraceTest.catalyst_black http://anglebug.com/7924
+    {"SYNC-HAZARD-WRITE-AFTER-READ",
+     "store with storeOp VK_ATTACHMENT_STORE_OP_STORE. Access info (usage: "
+     "SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, prior_usage: "
+     "SYNC_FRAGMENT_SHADER_SHADER_"},
 };
 
 // Messages that shouldn't be generated if storeOp=NONE is supported, otherwise they are expected.
@@ -565,31 +434,25 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessagesWithoutStoreOpNone[] 
     {
         "SYNC-HAZARD-WRITE-AFTER-READ",
         "depth aspect during store with storeOp VK_ATTACHMENT_STORE_OP_STORE. Access info (usage: "
-        "SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, prior_usage: "
-        "SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, read_barriers: VK_PIPELINE_STAGE_2_NONE, "
-        "command: vkCmdDraw",
-        "",
+        "SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE",
+        "usage: SYNC_FRAGMENT_SHADER_SHADER_",
+    },
+    {
+        "SYNC-HAZARD-WRITE-AFTER-READ",
+        "stencil aspect during store with stencilStoreOp VK_ATTACHMENT_STORE_OP_STORE. Access info "
+        "(usage: SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE",
+        "usage: SYNC_FRAGMENT_SHADER_SHADER_",
     },
     {
         "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: "
-        "VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, binding ",
-        "Access info (usage: "
-        "SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, prior_usage: "
-        "SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, write_barriers: 0, command: "
-        "vkCmdEndRenderPass",
+        "imageLayout: VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL",
+        "usage: SYNC_FRAGMENT_SHADER_SHADER_",
     },
+    // From: TraceTest.antutu_refinery http://anglebug.com/6663
     {
         "SYNC-HAZARD-READ-AFTER-WRITE",
-        "type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageLayout: "
-        "VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, binding ",
-        "Access info (usage: "
-        "SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ, prior_usage: "
-        "SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, write_barriers: "
-        "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_READ|SYNC_EARLY_FRAGMENT_TESTS_DEPTH_"
-        "STENCIL_ATTACHMENT_WRITE|SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_READ|SYNC_LATE_"
-        "FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, command: "
-        "vkCmdEndRenderPass",
+        "imageLayout: VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL",
+        "usage: SYNC_COMPUTE_SHADER_SHADER_SAMPLED_READ",
     },
 };
 
@@ -605,38 +468,20 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessagesWithoutLoadStoreOpNon
         "Access info (usage: SYNC_IMAGE_LAYOUT_TRANSITION, prior_usage: "
         "SYNC_LATE_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, write_barriers: 0, command: "
         "vkCmdEndRenderPass",
-        "",
     },
     // http://anglebug.com/6411
-    {
-        "SYNC-HAZARD-WRITE-AFTER-WRITE",
-        "aspect depth during load with loadOp VK_ATTACHMENT_LOAD_OP_DONT_CARE. Access info (usage: "
-        "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, prior_usage: "
-        "SYNC_IMAGE_LAYOUT_TRANSITION, write_barriers: "
-        "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_READ|SYNC_LATE_FRAGMENT_TESTS_DEPTH_"
-        "STENCIL_ATTACHMENT_READ, command: vkCmdPipelineBarrier",
-        "",
-    },
-    {
-        "SYNC-HAZARD-WRITE-AFTER-WRITE",
-        "aspect stencil during load with loadOp VK_ATTACHMENT_LOAD_OP_DONT_CARE. Access info "
-        "(usage: "
-        "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, prior_usage: "
-        "SYNC_IMAGE_LAYOUT_TRANSITION, write_barriers: "
-        "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_READ|SYNC_LATE_FRAGMENT_TESTS_DEPTH_"
-        "STENCIL_ATTACHMENT_READ, command: vkCmdPipelineBarrier",
-        "",
-    },
     // http://anglebug.com/6584
     {
         "SYNC-HAZARD-WRITE-AFTER-WRITE",
         "aspect depth during load with loadOp VK_ATTACHMENT_LOAD_OP_DONT_CARE. Access info (usage: "
         "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, prior_usage: "
-        "SYNC_IMAGE_LAYOUT_TRANSITION, write_barriers: "
-        "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_READ|SYNC_LATE_FRAGMENT_TESTS_DEPTH_"
-        "STENCIL_ATTACHMENT_READ|SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_READ|SYNC_COLOR_"
-        "ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, command: vkCmdPipelineBarrier",
-        "",
+        "SYNC_IMAGE_LAYOUT_TRANSITION",
+    },
+    {
+        "SYNC-HAZARD-WRITE-AFTER-WRITE",
+        "aspect stencil during load with loadOp VK_ATTACHMENT_LOAD_OP_DONT_CARE. Access info "
+        "(usage: "
+        "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE",
     },
     // http://anglebug.com/5962
     {
@@ -644,23 +489,14 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessagesWithoutLoadStoreOpNon
         "aspect stencil during load with loadOp VK_ATTACHMENT_LOAD_OP_DONT_CARE. Access info "
         "(usage: "
         "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, prior_usage: "
-        "SYNC_IMAGE_LAYOUT_TRANSITION, write_barriers: "
-        "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_READ|SYNC_FRAGMENT_SHADER_SHADER_"
-        "SAMPLED_"
-        "READ|SYNC_FRAGMENT_SHADER_SHADER_STORAGE_READ|SYNC_FRAGMENT_SHADER_UNIFORM_READ|SYNC_LATE_"
-        "FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_READ, command: vkCmdPipelineBarrier",
-        "",
+        "SYNC_IMAGE_LAYOUT_TRANSITION",
     },
     {
         "SYNC-HAZARD-WRITE-AFTER-WRITE",
         "aspect stencil during load with loadOp VK_ATTACHMENT_LOAD_OP_DONT_CARE. Access info "
         "(usage: "
         "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_WRITE, prior_usage: "
-        "SYNC_IMAGE_LAYOUT_TRANSITION, write_barriers: "
-        "SYNC_EARLY_FRAGMENT_TESTS_DEPTH_STENCIL_ATTACHMENT_READ|SYNC_LATE_FRAGMENT_TESTS_DEPTH_"
-        "STENCIL_ATTACHMENT_READ|SYNC_COLOR_ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_READ|SYNC_COLOR_"
-        "ATTACHMENT_OUTPUT_COLOR_ATTACHMENT_WRITE, command: vkCmdPipelineBarrier",
-        "",
+        "SYNC_IMAGE_LAYOUT_TRANSITION",
     },
 };
 
@@ -806,8 +642,6 @@ const char *GetVkObjectTypeName(VkObjectType type)
             return "Display";
         case VK_OBJECT_TYPE_DISPLAY_MODE_KHR:
             return "Display Mode";
-        case VK_OBJECT_TYPE_DEBUG_REPORT_CALLBACK_EXT:
-            return "Debug Report Callback";
         case VK_OBJECT_TYPE_INDIRECT_COMMANDS_LAYOUT_NV:
             return "Indirect Commands Layout";
         case VK_OBJECT_TYPE_DEBUG_UTILS_MESSENGER_EXT:
@@ -904,42 +738,6 @@ DebugUtilsMessenger(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     else
     {
         WARN() << msg;
-    }
-
-    return VK_FALSE;
-}
-
-VKAPI_ATTR VkBool32 VKAPI_CALL DebugReportCallback(VkDebugReportFlagsEXT flags,
-                                                   VkDebugReportObjectTypeEXT objectType,
-                                                   uint64_t object,
-                                                   size_t location,
-                                                   int32_t messageCode,
-                                                   const char *layerPrefix,
-                                                   const char *message,
-                                                   void *userData)
-{
-    RendererVk *rendererVk = static_cast<RendererVk *>(userData);
-
-    if (ShouldReportDebugMessage(rendererVk, message, message) == DebugMessageReport::Ignore)
-    {
-        return VK_FALSE;
-    }
-    if ((flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) != 0)
-    {
-        ERR() << message;
-#if !defined(NDEBUG)
-        // Abort the call in Debug builds.
-        return VK_TRUE;
-#endif
-    }
-    else if ((flags & VK_DEBUG_REPORT_WARNING_BIT_EXT) != 0)
-    {
-        WARN() << message;
-    }
-    else
-    {
-        // Uncomment this if you want Vulkan spam.
-        // WARN() << message;
     }
 
     return VK_FALSE;
@@ -1251,24 +1049,247 @@ ANGLE_INLINE gl::ShadingRate GetShadingRateFromVkExtent(const VkExtent2D &extent
     return gl::ShadingRate::_1x1;
 }
 
-// Check for remaining memory allocations at the end of the renderer object.
-void checkForRemainingMemoryAllocations(RendererVk *renderer)
+// Check for currently allocated memory. It is used at the end of the renderer object and when there
+// is an allocation error (from ANGLE_VK_TRY()).
+void checkForCurrentMemoryAllocations(RendererVk *renderer)
 {
-    if (kDebugMemoryAllocationLogs)
+    if (kTrackMemoryAllocationDebug)
     {
         for (uint32_t i = 0; i < vk::kMemoryAllocationTypeCount; i++)
         {
-            if (renderer->getActiveMemoryAllocationsSize(i) != 0)
+            if (renderer->getMemoryAllocationTracker()->getActiveMemoryAllocationsSize(i) == 0)
             {
-                INFO() << "Remaining allocated size for memory allocation type ("
-                       << vk::kMemoryAllocationTypeMessage[i]
-                       << "): " << renderer->getActiveMemoryAllocationsSize(i)
-                       << " | Count: " << renderer->getActiveMemoryAllocationsCount(i);
+                continue;
             }
+
+            std::stringstream outStream;
+            outStream.imbue(std::locale(renderer->getMemoryAllocationTracker()->getLocale()));
+
+            outStream << "Currently allocated size for memory allocation type ("
+                      << vk::kMemoryAllocationTypeMessage[i] << "): "
+                      << renderer->getMemoryAllocationTracker()->getActiveMemoryAllocationsSize(i)
+                      << " | Count: "
+                      << renderer->getMemoryAllocationTracker()->getActiveMemoryAllocationsCount(i)
+                      << std::endl;
+
+            for (uint32_t heapIndex = 0;
+                 heapIndex < renderer->getMemoryProperties().getMemoryHeapCount(); heapIndex++)
+            {
+                outStream
+                    << "--> Heap index " << heapIndex << ": "
+                    << renderer->getMemoryAllocationTracker()->getActiveHeapMemoryAllocationsSize(
+                           i, heapIndex)
+                    << " | Count: "
+                    << renderer->getMemoryAllocationTracker()->getActiveHeapMemoryAllocationsCount(
+                           i, heapIndex)
+                    << std::endl;
+            }
+
+            INFO() << outStream.str();
+        }
+    }
+    else if (kTrackMemoryAllocationSizes)
+    {
+        for (uint32_t i = 0; i < vk::kMemoryAllocationTypeCount; i++)
+        {
+            if (renderer->getMemoryAllocationTracker()->getActiveMemoryAllocationsSize(i) == 0)
+            {
+                continue;
+            }
+
+            std::stringstream outStream;
+            outStream.imbue(std::locale(renderer->getMemoryAllocationTracker()->getLocale()));
+
+            outStream << "Currently allocated size for memory allocation type ("
+                      << vk::kMemoryAllocationTypeMessage[i] << "): "
+                      << renderer->getMemoryAllocationTracker()->getActiveMemoryAllocationsSize(i)
+                      << std::endl;
+
+            for (uint32_t heapIndex = 0;
+                 heapIndex < renderer->getMemoryProperties().getMemoryHeapCount(); heapIndex++)
+            {
+                outStream << "--> Heap index " << heapIndex << ": "
+                          << renderer->getMemoryAllocationTracker()
+                                 ->getActiveHeapMemoryAllocationsSize(i, heapIndex)
+                          << std::endl;
+            }
+
+            INFO() << outStream.str();
         }
     }
 }
+
+// In case of an allocation error, log pending memory allocation if the size in non-zero.
+void logPendingMemoryAllocation(RendererVk *renderer)
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return;
+    }
+
+    vk::MemoryAllocationType allocInfo =
+        renderer->getMemoryAllocationTracker()->getPendingMemoryAllocationType();
+    VkDeviceSize allocSize =
+        renderer->getMemoryAllocationTracker()->getPendingMemoryAllocationSize();
+    uint32_t memoryHeapIndex = renderer->getMemoryProperties().getHeapIndexForMemoryType(
+        renderer->getMemoryAllocationTracker()->getPendingMemoryTypeIndex());
+
+    if (allocSize != 0)
+    {
+        std::stringstream outStream;
+        outStream.imbue(std::locale(renderer->getMemoryAllocationTracker()->getLocale()));
+
+        outStream << "Pending allocation size for memory allocation type ("
+                  << vk::kMemoryAllocationTypeMessage[ToUnderlying(allocInfo)]
+                  << ") for heap index " << memoryHeapIndex << ": " << allocSize;
+        WARN() << outStream.str();
+    }
+}
+
+// Output memory log stream based on level of severity.
+void outputMemoryLogStream(std::stringstream &outStream, vk::MemoryLogSeverity severity)
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return;
+    }
+
+    switch (severity)
+    {
+        case vk::MemoryLogSeverity::INFO:
+            INFO() << outStream.str();
+            break;
+        case vk::MemoryLogSeverity::WARN:
+            WARN() << outStream.str();
+            break;
+        default:
+            UNREACHABLE();
+            break;
+    }
+}
+
+void logMemoryHeapStats(RendererVk *renderer, vk::MemoryLogSeverity severity)
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return;
+    }
+
+    // Log stream for the heap information.
+    std::stringstream outStream;
+    outStream.imbue(std::locale(renderer->getMemoryAllocationTracker()->getLocale()));
+
+    // VkPhysicalDeviceMemoryProperties2 enables the use of memory budget properties if supported.
+    VkPhysicalDeviceMemoryProperties2KHR memoryProperties;
+    memoryProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2_KHR;
+    memoryProperties.pNext = nullptr;
+
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT memoryBudgetProperties;
+    memoryBudgetProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    memoryBudgetProperties.pNext = nullptr;
+
+    if (renderer->getFeatures().supportsMemoryBudget.enabled)
+    {
+        vk::AddToPNextChain(&memoryProperties, &memoryBudgetProperties);
+    }
+
+    vkGetPhysicalDeviceMemoryProperties2KHR(renderer->getPhysicalDevice(), &memoryProperties);
+
+    // Add memory heap information to the stream.
+    outStream << "Memory heap info" << std::endl;
+
+    outStream << std::endl << "* Available memory heaps:" << std::endl;
+    for (uint32_t i = 0; i < memoryProperties.memoryProperties.memoryHeapCount; i++)
+    {
+        outStream << std::dec << i
+                  << " | Heap size: " << memoryProperties.memoryProperties.memoryHeaps[i].size
+                  << " | Flags: 0x" << std::hex
+                  << memoryProperties.memoryProperties.memoryHeaps[i].flags << std::endl;
+    }
+
+    if (renderer->getFeatures().supportsMemoryBudget.enabled)
+    {
+        outStream << std::endl << "* Available memory budget and usage per heap:" << std::endl;
+        for (uint32_t i = 0; i < memoryProperties.memoryProperties.memoryHeapCount; i++)
+        {
+            outStream << std::dec << i << " | Heap budget: " << memoryBudgetProperties.heapBudget[i]
+                      << " | Heap usage: " << memoryBudgetProperties.heapUsage[i] << std::endl;
+        }
+    }
+
+    outStream << std::endl << "* Available memory types:" << std::endl;
+    for (uint32_t i = 0; i < memoryProperties.memoryProperties.memoryTypeCount; i++)
+    {
+        outStream << std::dec << i
+                  << " | Heap index: " << memoryProperties.memoryProperties.memoryTypes[i].heapIndex
+                  << " | Property flags: 0x" << std::hex
+                  << memoryProperties.memoryProperties.memoryTypes[i].propertyFlags << std::endl;
+    }
+
+    // Output the log stream based on the level of severity.
+    outputMemoryLogStream(outStream, severity);
+}
 }  // namespace
+
+// OneOffCommandPool implementation.
+void OneOffCommandPool::destroy(VkDevice device)
+{
+    std::unique_lock<std::mutex> lock(mMutex);
+    for (PendingOneOffCommands &pending : mPendingCommands)
+    {
+        pending.commandBuffer.releaseHandle();
+    }
+    mCommandPool.destroy(device);
+}
+
+angle::Result OneOffCommandPool::getCommandBuffer(vk::Context *context,
+                                                  bool hasProtectedContent,
+                                                  vk::PrimaryCommandBuffer *commandBufferOut)
+{
+    std::unique_lock<std::mutex> lock(mMutex);
+
+    if (!mPendingCommands.empty() &&
+        !context->getRenderer()->hasUnfinishedUse(mPendingCommands.front().use))
+    {
+        *commandBufferOut = std::move(mPendingCommands.front().commandBuffer);
+        mPendingCommands.pop_front();
+        ANGLE_VK_TRY(context, commandBufferOut->reset());
+    }
+    else
+    {
+        if (!mCommandPool.valid())
+        {
+            VkCommandPoolCreateInfo createInfo = {};
+            createInfo.sType                   = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            createInfo.flags                   = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
+                               (hasProtectedContent ? VK_COMMAND_POOL_CREATE_PROTECTED_BIT : 0);
+            ANGLE_VK_TRY(context, mCommandPool.init(context->getDevice(), createInfo));
+        }
+
+        VkCommandBufferAllocateInfo allocInfo = {};
+        allocInfo.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.level                       = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount          = 1;
+        allocInfo.commandPool                 = mCommandPool.getHandle();
+
+        ANGLE_VK_TRY(context, commandBufferOut->init(context->getDevice(), allocInfo));
+    }
+
+    VkCommandBufferBeginInfo beginInfo = {};
+    beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    beginInfo.pInheritanceInfo         = nullptr;
+    ANGLE_VK_TRY(context, commandBufferOut->begin(beginInfo));
+
+    return angle::Result::Continue;
+}
+
+void OneOffCommandPool::releaseCommandBuffer(const QueueSerial &submitQueueSerial,
+                                             vk::PrimaryCommandBuffer &&primary)
+{
+    std::unique_lock<std::mutex> lock(mMutex);
+    mPendingCommands.push_back({vk::ResourceUse(submitQueueSerial), std::move(primary)});
+}
 
 // RendererVk implementation.
 RendererVk::RendererVk()
@@ -1282,7 +1303,6 @@ RendererVk::RendererVk()
       mAngleDebuggerMode(false),
       mEnabledICD(angle::vk::ICD::Default),
       mDebugUtilsMessenger(VK_NULL_HANDLE),
-      mDebugReportCallback(VK_NULL_HANDLE),
       mPhysicalDevice(VK_NULL_HANDLE),
       mMaxVertexAttribDivisor(1),
       mCurrentQueueFamilyIndex(std::numeric_limits<uint32_t>::max()),
@@ -1307,7 +1327,7 @@ RendererVk::RendererVk()
       mCommandProcessor(this),
       mSupportedVulkanPipelineStageMask(0),
       mSupportedVulkanShaderStageMask(0),
-      mMemoryAllocationID(0)
+      mMemoryAllocationTracker(MemoryAllocationTracker(this))
 {
     VkFormatProperties invalid = {0, 0, kInvalidFormatFeatureFlags};
     mFormatProperties.fill(invalid);
@@ -1316,13 +1336,6 @@ RendererVk::RendererVk()
     // a number of places in the Vulkan backend that make this assumption.  This assertion is made
     // early to fail immediately on big-endian platforms.
     ASSERT(IsLittleEndian());
-
-    // Allocation counters are initialized here to keep track of the size of the memory allocations.
-    for (uint32_t i = 0; i < mActiveMemoryAllocationsSize.size(); i++)
-    {
-        mActiveMemoryAllocationsSize[i]  = 0;
-        mActiveMemoryAllocationsCount[i] = 0;
-    }
 }
 
 RendererVk::~RendererVk()
@@ -1358,26 +1371,18 @@ void RendererVk::onDestroy(vk::Context *context)
     }
     mOrphanedBufferBlocks.clear();
 
+    if (isAsyncCommandQueueEnabled())
     {
-        std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-        if (isAsyncCommandQueueEnabled())
-        {
-            mCommandProcessor.destroy(context);
-        }
-        else
-        {
-            mCommandQueue.destroy(context);
-        }
+        mCommandProcessor.destroy(context);
+    }
+    else
+    {
+        mCommandQueue.destroy(context);
     }
 
     // mCommandQueue.destroy should already set "last completed" serials to infinite.
     cleanupGarbage();
     ASSERT(!hasSharedGarbage());
-
-    for (PendingOneOffCommands &pending : mPendingOneOffCommands)
-    {
-        pending.commandBuffer.releaseHandle();
-    }
 
     mOneOffCommandPool.destroy(mDevice);
 
@@ -1393,7 +1398,10 @@ void RendererVk::onDestroy(vk::Context *context)
 
     // When the renderer is being destroyed, it is possible to check if all the allocated memory
     // throughout the execution has been freed.
-    checkForRemainingMemoryAllocations(this);
+    if (kTrackMemoryAllocationDebug)
+    {
+        checkForCurrentMemoryAllocations(this);
+    }
 
     if (mDevice)
     {
@@ -1404,12 +1412,6 @@ void RendererVk::onDestroy(vk::Context *context)
     if (mDebugUtilsMessenger)
     {
         vkDestroyDebugUtilsMessengerEXT(mInstance, mDebugUtilsMessenger, nullptr);
-
-        ASSERT(mDebugReportCallback == VK_NULL_HANDLE);
-    }
-    else if (mDebugReportCallback)
-    {
-        vkDestroyDebugReportCallbackEXT(mInstance, mDebugReportCallback, nullptr);
     }
 
     logCacheStats();
@@ -1587,17 +1589,9 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
     mEnableDebugUtils = canLoadDebugUtils && mEnableValidationLayers &&
                         ExtensionFound(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, instanceExtensionNames);
 
-    bool enableDebugReport =
-        mEnableValidationLayers && !mEnableDebugUtils &&
-        ExtensionFound(VK_EXT_DEBUG_REPORT_EXTENSION_NAME, instanceExtensionNames);
-
     if (mEnableDebugUtils)
     {
         mEnabledInstanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-    }
-    else if (enableDebugReport)
-    {
-        mEnabledInstanceExtensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
     }
 
     if (ExtensionFound(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME, instanceExtensionNames))
@@ -1627,6 +1621,11 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
     {
         mEnabledInstanceExtensions.push_back(
             VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+    }
+
+    if (ExtensionFound(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME, instanceExtensionNames))
+    {
+        mEnabledInstanceExtensions.push_back(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
     }
 
     if (ExtensionFound(VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME, instanceExtensionNames))
@@ -1745,23 +1744,6 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
         ANGLE_VK_TRY(displayVk, vkCreateDebugUtilsMessengerEXT(mInstance, &messengerInfo, nullptr,
                                                                &mDebugUtilsMessenger));
     }
-    else if (enableDebugReport)
-    {
-        // Fallback to EXT_debug_report.
-#if !defined(ANGLE_SHARED_LIBVULKAN)
-        InitDebugReportEXTFunctions(mInstance);
-#endif  // !defined(ANGLE_SHARED_LIBVULKAN)
-
-        VkDebugReportCallbackCreateInfoEXT debugReportInfo = {};
-
-        debugReportInfo.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CREATE_INFO_EXT;
-        debugReportInfo.flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
-        debugReportInfo.pfnCallback = &DebugReportCallback;
-        debugReportInfo.pUserData   = this;
-
-        ANGLE_VK_TRY(displayVk, vkCreateDebugReportCallbackEXT(mInstance, &debugReportInfo, nullptr,
-                                                               &mDebugReportCallback));
-    }
 
     if (std::find(mEnabledInstanceExtensions.begin(), mEnabledInstanceExtensions.end(),
                   VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) !=
@@ -1823,6 +1805,12 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
     mMemoryProperties.init(mPhysicalDevice);
     ANGLE_VK_CHECK(displayVk, mMemoryProperties.getMemoryTypeCount() > 0,
                    VK_ERROR_INITIALIZATION_FAILED);
+
+    // The counters for the memory allocation tracker should be initialized.
+    // Each memory allocation could be made in one of the available memory heaps. We initialize the
+    // per-heap memory allocation trackers for MemoryAllocationType objects here, after
+    // mMemoryProperties has been set up.
+    mMemoryAllocationTracker.initMemoryTrackers();
 
     // If only one queue family, go ahead and initialize the device. If there is more than one
     // queue, we'll have to wait until we see a WindowSurface to know which supports present.
@@ -2094,6 +2082,10 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
     mRasterizationOrderAttachmentAccessFeatures.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_FEATURES_EXT;
 
+    mSwapchainMaintenance1FeaturesEXT = {};
+    mSwapchainMaintenance1FeaturesEXT.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
+
     mDrmProperties       = {};
     mDrmProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT;
 
@@ -2307,6 +2299,11 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
         vk::AddToPNextChain(&deviceFeatures, &mRasterizationOrderAttachmentAccessFeatures);
     }
 
+    if (ExtensionFound(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME, deviceExtensionNames))
+    {
+        vk::AddToPNextChain(&deviceFeatures, &mSwapchainMaintenance1FeaturesEXT);
+    }
+
     if (ExtensionFound(VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME, deviceExtensionNames))
     {
         vk::AddToPNextChain(&deviceProperties, &mDrmProperties);
@@ -2354,6 +2351,7 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
     mPipelineRobustnessFeatures.pNext                       = nullptr;
     mPipelineProtectedAccessFeatures.pNext                  = nullptr;
     mRasterizationOrderAttachmentAccessFeatures.pNext       = nullptr;
+    mSwapchainMaintenance1FeaturesEXT.pNext                 = nullptr;
     mDrmProperties.pNext                                    = nullptr;
 }
 
@@ -2461,6 +2459,12 @@ angle::Result RendererVk::initializeDevice(DisplayVk *displayVk, uint32_t queueF
     {
         mEnabledDeviceExtensions.push_back(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME);
         hasGetMemoryRequirements2KHR = true;
+    }
+
+    // Enable VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, if supported
+    if (ExtensionFound(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, deviceExtensionNames))
+    {
+        mEnabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
     }
 
     if (ExtensionFound(VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME, deviceExtensionNames))
@@ -2647,6 +2651,8 @@ angle::Result RendererVk::initializeDevice(DisplayVk *displayVk, uint32_t queueF
     mEnabledFeatures.features.sampleRateShading = mPhysicalDeviceFeatures.sampleRateShading;
     // Used to support depth clears through draw calls.
     mEnabledFeatures.features.depthClamp = mPhysicalDeviceFeatures.depthClamp;
+    // Used to support EXT_polygon_offset_clamp
+    mEnabledFeatures.features.depthBiasClamp = mPhysicalDeviceFeatures.depthBiasClamp;
     // Used to support EXT_clip_cull_distance
     mEnabledFeatures.features.shaderCullDistance = mPhysicalDeviceFeatures.shaderCullDistance;
     // Used to support tessellation Shader:
@@ -2923,6 +2929,11 @@ angle::Result RendererVk::initializeDevice(DisplayVk *displayVk, uint32_t queueF
         vk::AddToPNextChain(&mEnabledFeatures, &mRasterizationOrderAttachmentAccessFeatures);
     }
 
+    if (getFeatures().supportsSwapchainMaintenance1.enabled)
+    {
+        vk::AddToPNextChain(&mEnabledFeatures, &mSwapchainMaintenance1FeaturesEXT);
+    }
+
     mCurrentQueueFamilyIndex = queueFamilyIndex;
 
     vk::QueueFamily queueFamily;
@@ -3088,6 +3099,12 @@ angle::Result RendererVk::initializeDevice(DisplayVk *displayVk, uint32_t queueF
         mSupportedVulkanShaderStageMask |= VK_SHADER_STAGE_GEOMETRY_BIT;
     }
     mSupportedVulkanPipelineStageMask = ~unsupportedStages;
+
+    // Log the memory heap stats when the device has been initialized (when debugging).
+    if (kTrackMemoryAllocationDebug)
+    {
+        logMemoryHeapStats(this, vk::MemoryLogSeverity::INFO);
+    }
 
     return angle::Result::Continue;
 }
@@ -3552,6 +3569,13 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsHostQueryReset,
                             mHostQueryResetFeatures.hostQueryReset == VK_TRUE);
 
+    // VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL and
+    // VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL are introduced by
+    // VK_KHR_maintenance2 and promoted to Vulkan 1.1.  For simplicity, this feature is only enabled
+    // on Vulkan 1.1.
+    ANGLE_FEATURE_CONDITION(&mFeatures, supportsMixedReadWriteDepthStencilLayouts,
+                            mPhysicalDeviceProperties.apiVersion >= VK_API_VERSION_1_1);
+
     // VK_EXT_pipeline_creation_feedback is promoted to core in Vulkan 1.3.
     ANGLE_FEATURE_CONDITION(
         &mFeatures, supportsPipelineCreationFeedback,
@@ -3926,6 +3950,9 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, exposeNonConformantExtensionsAndVersions,
                             kExposeNonConformantExtensionsAndVersions);
 
+    // Memory budget extension is disabled for Swiftshader due to lack of support.
+    ANGLE_FEATURE_CONDITION(&mFeatures, supportsMemoryBudget, !isSwiftShader);
+
     // Disabled by default. Only enable it for experimental purpose, as this will cause various
     // tests to fail.
     ANGLE_FEATURE_CONDITION(&mFeatures, forceFragmentShaderPrecisionHighpToMediump, false);
@@ -3963,6 +3990,16 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
         !isQualcomm &&
             mRasterizationOrderAttachmentAccessFeatures.rasterizationOrderColorAttachmentAccess ==
                 VK_TRUE);
+
+    // The VK_EXT_surface_maintenance1 and VK_EXT_swapchain_maintenance1 extensions are used for a
+    // variety of improvements:
+    //
+    // - Recycling present semaphores
+    // - Avoiding swapchain recreation when present modes change
+    // - Amortizing the cost of memory allocation for swapchain creation over multiple frames
+    //
+    ANGLE_FEATURE_CONDITION(&mFeatures, supportsSwapchainMaintenance1,
+                            mSwapchainMaintenance1FeaturesEXT.swapchainMaintenance1 == VK_TRUE);
 
     // http://anglebug.com/6872
     // On ARM hardware, framebuffer-fetch-like behavior on Vulkan is already coherent, so we can
@@ -4513,9 +4550,6 @@ angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
                                             QueueSerial *queueSerialOut)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::queueSubmitOneOff");
-
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
     // Allocate a oneoff submitQueueSerial and generate a serial and then use it and release the
     // index.
     SerialIndex queueIndex;
@@ -4542,7 +4576,7 @@ angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
     *queueSerialOut = submitQueueSerial;
     if (primary.valid())
     {
-        mPendingOneOffCommands.push_back({vk::ResourceUse(submitQueueSerial), std::move(primary)});
+        mOneOffCommandPool.releaseCommandBuffer(submitQueueSerial, std::move(primary));
     }
 
     return angle::Result::Continue;
@@ -4671,11 +4705,6 @@ void RendererVk::cleanupGarbage()
     // Cache the value with atomic variable for access without mGarbageMutex lock.
     mSuballocationGarbageSizeInBytesCachedAtomic.store(mSuballocationGarbageSizeInBytes,
                                                        std::memory_order_release);
-}
-
-void RendererVk::cleanupCompletedCommandsGarbage()
-{
-    cleanupGarbage();
 }
 
 void RendererVk::cleanupPendingSubmissionGarbage()
@@ -4813,45 +4842,6 @@ void RendererVk::reloadVolkIfNeeded() const
 #endif  // defined(ANGLE_SHARED_LIBVULKAN)
 }
 
-angle::Result RendererVk::getCommandBufferOneOff(vk::Context *context,
-                                                 bool hasProtectedContent,
-                                                 vk::PrimaryCommandBuffer *commandBufferOut)
-{
-    if (!mOneOffCommandPool.valid())
-    {
-        VkCommandPoolCreateInfo createInfo = {};
-        createInfo.sType                   = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        createInfo.flags                   = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
-                           (hasProtectedContent ? VK_COMMAND_POOL_CREATE_PROTECTED_BIT : 0);
-        ANGLE_VK_TRY(context, mOneOffCommandPool.init(mDevice, createInfo));
-    }
-
-    if (!mPendingOneOffCommands.empty() && !hasUnfinishedUse(mPendingOneOffCommands.front().use))
-    {
-        *commandBufferOut = std::move(mPendingOneOffCommands.front().commandBuffer);
-        mPendingOneOffCommands.pop_front();
-        ANGLE_VK_TRY(context, commandBufferOut->reset());
-    }
-    else
-    {
-        VkCommandBufferAllocateInfo allocInfo = {};
-        allocInfo.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.level                       = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandBufferCount          = 1;
-        allocInfo.commandPool                 = mOneOffCommandPool.getHandle();
-
-        ANGLE_VK_TRY(context, commandBufferOut->init(context->getDevice(), allocInfo));
-    }
-
-    VkCommandBufferBeginInfo beginInfo = {};
-    beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    beginInfo.pInheritanceInfo         = nullptr;
-    ANGLE_VK_TRY(context, commandBufferOut->begin(beginInfo));
-
-    return angle::Result::Continue;
-}
-
 angle::Result RendererVk::submitCommands(
     vk::Context *context,
     bool hasProtectedContent,
@@ -4859,16 +4849,14 @@ angle::Result RendererVk::submitCommands(
     std::vector<VkSemaphore> &&waitSemaphores,
     std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks,
     const vk::Semaphore *signalSemaphore,
-    vk::GarbageList &&currentGarbage,
     vk::SecondaryCommandPools *commandPools,
     const QueueSerial &submitQueueSerial)
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
-    vk::SecondaryCommandBufferList commandBuffersToReset = {
-        std::move(mOutsideRenderPassCommandBufferRecycler.releaseCommandBuffersToReset()),
-        std::move(mRenderPassCommandBufferRecycler.releaseCommandBuffersToReset()),
-    };
+    vk::SecondaryCommandBufferList commandBuffersToReset;
+    mOutsideRenderPassCommandBufferRecycler.releaseCommandBuffersToReset(
+        &commandBuffersToReset.outsideRenderPassCommandBuffers);
+    mRenderPassCommandBufferRecycler.releaseCommandBuffersToReset(
+        &commandBuffersToReset.renderPassCommandBuffers);
 
     const VkSemaphore signalVkSemaphore =
         signalSemaphore ? signalSemaphore->getHandle() : VK_NULL_HANDLE;
@@ -4877,15 +4865,13 @@ angle::Result RendererVk::submitCommands(
     {
         ANGLE_TRY(mCommandProcessor.submitCommands(
             context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
-            signalVkSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
-            commandPools, submitQueueSerial));
+            signalVkSemaphore, std::move(commandBuffersToReset), commandPools, submitQueueSerial));
     }
     else
     {
         ANGLE_TRY(mCommandQueue.submitCommands(
             context, hasProtectedContent, contextPriority, waitSemaphores, waitSemaphoreStageMasks,
-            signalVkSemaphore, std::move(currentGarbage), std::move(commandBuffersToReset),
-            commandPools, submitQueueSerial));
+            signalVkSemaphore, std::move(commandBuffersToReset), commandPools, submitQueueSerial));
     }
 
     waitSemaphores.clear();
@@ -4896,7 +4882,6 @@ angle::Result RendererVk::submitCommands(
 
 void RendererVk::handleDeviceLost()
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
     if (isAsyncCommandQueueEnabled())
     {
         mCommandProcessor.handleDeviceLost(this);
@@ -4909,8 +4894,6 @@ void RendererVk::handleDeviceLost()
 
 angle::Result RendererVk::finishResourceUse(vk::Context *context, const vk::ResourceUse &use)
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.finishResourceUse(context, use, getMaxFenceWaitTimeNs()));
@@ -4926,7 +4909,6 @@ angle::Result RendererVk::finishResourceUse(vk::Context *context, const vk::Reso
 angle::Result RendererVk::finishQueueSerial(vk::Context *context, const QueueSerial &queueSerial)
 {
     ASSERT(queueSerial.valid());
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(
@@ -4946,9 +4928,6 @@ angle::Result RendererVk::waitForResourceUseToFinishWithUserTimeout(vk::Context 
                                                                     VkResult *result)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::waitForResourceUseToFinishWithUserTimeout");
-
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.waitForResourceUseToFinishWithUserTimeout(context, use, timeout,
@@ -4965,8 +4944,6 @@ angle::Result RendererVk::waitForResourceUseToFinishWithUserTimeout(vk::Context 
 
 angle::Result RendererVk::finish(vk::Context *context, bool hasProtectedContent)
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.waitIdle(context, getMaxFenceWaitTimeNs()));
@@ -4981,7 +4958,6 @@ angle::Result RendererVk::finish(vk::Context *context, bool hasProtectedContent)
 
 angle::Result RendererVk::checkCompletedCommands(vk::Context *context)
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
     // TODO: https://issuetracker.google.com/169788986 - would be better if we could just wait
     // for the work we need but that requires QueryHelper to use the actual serial for the
     // query.
@@ -5004,8 +4980,6 @@ angle::Result RendererVk::flushRenderPassCommands(
     vk::RenderPassCommandBufferHelper **renderPassCommands)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::flushRenderPassCommands");
-
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.flushRenderPassCommands(context, hasProtectedContent,
@@ -5026,8 +5000,6 @@ angle::Result RendererVk::flushOutsideRPCommands(
     vk::OutsideRenderPassCommandBufferHelper **outsideRPCommands)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::flushOutsideRPCommands");
-
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
     if (isAsyncCommandQueueEnabled())
     {
         ANGLE_TRY(mCommandProcessor.flushOutsideRPCommands(context, hasProtectedContent,
@@ -5046,8 +5018,6 @@ VkResult RendererVk::queuePresent(vk::Context *context,
                                   egl::ContextPriority priority,
                                   const VkPresentInfoKHR &presentInfo)
 {
-    std::unique_lock<std::mutex> lock(mCommandQueueMutex);
-
     VkResult result = VK_SUCCESS;
     if (isAsyncCommandQueueEnabled())
     {
@@ -5074,7 +5044,6 @@ angle::Result RendererVk::getCommandBufferImpl(
     RecyclerT *recycler,
     CommandBufferHelperT **commandBufferHelperOut)
 {
-    std::unique_lock<std::mutex> lock(mCommandBufferRecyclerMutex);
     return recycler->getCommandBufferHelper(context, commandPool, commandsAllocator,
                                             commandBufferHelperOut);
 }
@@ -5106,7 +5075,6 @@ void RendererVk::recycleOutsideRenderPassCommandBufferHelper(
     vk::OutsideRenderPassCommandBufferHelper **commandBuffer)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::recycleOutsideRenderPassCommandBufferHelper");
-    std::unique_lock<std::mutex> lock(mCommandBufferRecyclerMutex);
     mOutsideRenderPassCommandBufferRecycler.recycleCommandBufferHelper(device, commandBuffer);
 }
 
@@ -5115,7 +5083,6 @@ void RendererVk::recycleRenderPassCommandBufferHelper(
     vk::RenderPassCommandBufferHelper **commandBuffer)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::recycleRenderPassCommandBufferHelper");
-    std::unique_lock<std::mutex> lock(mCommandBufferRecyclerMutex);
     mRenderPassCommandBufferRecycler.recycleCommandBufferHelper(device, commandBuffer);
 }
 
@@ -5136,113 +5103,11 @@ void RendererVk::logCacheStats() const
     }
 }
 
-void RendererVk::onMemoryAllocImpl(vk::MemoryAllocationType allocType,
-                                   VkDeviceSize size,
-                                   void *handle)
+void RendererVk::logMemoryStatsOnError()
 {
-    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
-
-    if (kDebugMemoryAllocationLogs)
-    {
-        // If enabled (debug layers), we keep more details in the memory tracker, such as handle,
-        // and log the action to the output.
-        std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
-
-        uint32_t allocTypeIndex = ToUnderlying(allocType);
-        mActiveMemoryAllocationsCount[allocTypeIndex]++;
-        mActiveMemoryAllocationsSize[allocTypeIndex] += size;
-
-        // Add the new allocation to the memory tracker.
-        vk::MemoryAllocationInfo memAllocLogInfo;
-        memAllocLogInfo.id        = ++mMemoryAllocationID;
-        memAllocLogInfo.allocType = allocType;
-        memAllocLogInfo.size      = size;
-        memAllocLogInfo.handle    = handle;
-
-        vk::MemoryAllocInfoMapKey memoryAllocInfoMapKey(memAllocLogInfo.handle);
-        mMemoryAllocationTracker[angle::getBacktraceInfo()].insert(
-            std::make_pair(memoryAllocInfoMapKey, memAllocLogInfo));
-
-        INFO() << "Memory allocation: (id " << memAllocLogInfo.id << ") for object "
-               << memAllocLogInfo.handle << " | Size: " << memAllocLogInfo.size
-               << " | Type: " << vk::kMemoryAllocationTypeMessage[allocTypeIndex];
-    }
-    else if (kTrackMemoryAllocation)
-    {
-        // Add the new allocation size to the allocation counter.
-        uint32_t allocTypeIndex = ToUnderlying(allocType);
-        mActiveMemoryAllocationsSize[allocTypeIndex] += size;
-    }
-}
-
-void RendererVk::onMemoryDeallocImpl(vk::MemoryAllocationType allocType,
-                                     VkDeviceSize size,
-                                     void *handle)
-{
-    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
-
-    if (kDebugMemoryAllocationLogs)
-    {
-        // If enabled (debug layers), we keep more details in the memory tracker, such as handle,
-        // and log the action to the output. The memory allocation tracker uses the backtrace info
-        // as key, if available.
-        for (auto &memInfoPerBacktrace : mMemoryAllocationTracker)
-        {
-            vk::MemoryAllocInfoMapKey memoryAllocInfoMapKey(handle);
-            MemoryAllocInfoMap &memInfoMap = memInfoPerBacktrace.second;
-            std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
-
-            if (memInfoMap.find(memoryAllocInfoMapKey) != memInfoMap.end())
-            {
-                // Object found; remove it from the allocation tracker.
-                vk::MemoryAllocationInfo *memInfoEntry = &memInfoMap[memoryAllocInfoMapKey];
-                ASSERT(memInfoEntry->allocType == allocType && memInfoEntry->size == size);
-
-                uint32_t allocTypeIndex = ToUnderlying(memInfoEntry->allocType);
-                ASSERT(mActiveMemoryAllocationsCount[allocTypeIndex] != 0 &&
-                       mActiveMemoryAllocationsSize[allocTypeIndex] >= size);
-                mActiveMemoryAllocationsCount[allocTypeIndex]--;
-                mActiveMemoryAllocationsSize[allocTypeIndex] -= size;
-
-                INFO() << "Memory deallocation: (id " << memInfoEntry->id << ") for object "
-                       << memInfoEntry->handle << " | Size: " << memInfoEntry->size
-                       << " | Type: " << vk::kMemoryAllocationTypeMessage[allocTypeIndex];
-
-                memInfoMap.erase(memoryAllocInfoMapKey);
-            }
-        }
-    }
-    else if (kTrackMemoryAllocation)
-    {
-        // Remove the allocation size from the allocation counter.
-        uint32_t allocTypeIndex = ToUnderlying(allocType);
-        ASSERT(mActiveMemoryAllocationsSize[allocTypeIndex] >= size);
-        mActiveMemoryAllocationsSize[allocTypeIndex] -= size;
-    }
-}
-
-VkDeviceSize RendererVk::getActiveMemoryAllocationsSize(uint32_t allocTypeIndex)
-{
-    if (kDebugMemoryAllocationLogs)
-    {
-        return mActiveMemoryAllocationsSize[allocTypeIndex];
-    }
-    else
-    {
-        return 0;
-    }
-}
-
-VkDeviceSize RendererVk::getActiveMemoryAllocationsCount(uint32_t allocTypeIndex)
-{
-    if (kDebugMemoryAllocationLogs)
-    {
-        return mActiveMemoryAllocationsCount[allocTypeIndex];
-    }
-    else
-    {
-        return 0;
-    }
+    checkForCurrentMemoryAllocations(this);
+    logPendingMemoryAllocation(this);
+    logMemoryHeapStats(this, vk::MemoryLogSeverity::WARN);
 }
 
 angle::Result RendererVk::getFormatDescriptorCountForVkFormat(ContextVk *contextVk,
@@ -5335,6 +5200,254 @@ angle::Result RendererVk::allocateQueueSerialIndex(SerialIndex *indexOut, Serial
 void RendererVk::releaseQueueSerialIndex(SerialIndex index)
 {
     mQueueSerialIndexAllocator.release(index);
+}
+
+MemoryAllocationTracker::MemoryAllocationTracker(RendererVk *renderer)
+    : mRenderer(renderer),
+      mMemoryAllocationID(0),
+      mLocale(std::locale(std::locale(), new vk::MemoryAllocationLogNumberFormat()))
+{}
+
+void MemoryAllocationTracker::initMemoryTrackers()
+{
+    // Allocation counters are initialized here to keep track of the size and count of the memory
+    // allocations.
+    for (uint32_t i = 0; i < mActiveMemoryAllocationsSize.size(); i++)
+    {
+        mActiveMemoryAllocationsSize[i]  = 0;
+        mActiveMemoryAllocationsCount[i] = 0;
+    }
+
+    // Per-heap allocation counters are initialized here.
+    for (size_t i = 0; i < vk::kMemoryAllocationTypeCount; i++)
+    {
+        mActivePerHeapMemoryAllocationsSize[i].resize(
+            mRenderer->getMemoryProperties().getMemoryHeapCount());
+        mActivePerHeapMemoryAllocationsCount[i].resize(
+            mRenderer->getMemoryProperties().getMemoryHeapCount());
+    }
+
+    resetPendingMemoryAlloc();
+}
+
+void MemoryAllocationTracker::onMemoryAllocImpl(vk::MemoryAllocationType allocType,
+                                                VkDeviceSize size,
+                                                uint32_t memoryTypeIndex,
+                                                void *handle)
+{
+    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
+
+    if (kTrackMemoryAllocationDebug)
+    {
+        // If enabled (debug layers), we keep more details in the memory tracker, such as handle,
+        // and log the action to the output.
+        std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
+
+        uint32_t allocTypeIndex = ToUnderlying(allocType);
+        uint32_t memoryHeapIndex =
+            mRenderer->getMemoryProperties().getHeapIndexForMemoryType(memoryTypeIndex);
+        mActiveMemoryAllocationsCount[allocTypeIndex]++;
+        mActiveMemoryAllocationsSize[allocTypeIndex] += size;
+        mActivePerHeapMemoryAllocationsCount[allocTypeIndex][memoryHeapIndex]++;
+        mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] += size;
+
+        // Add the new allocation to the memory tracker.
+        vk::MemoryAllocationInfo memAllocLogInfo;
+        memAllocLogInfo.id              = ++mMemoryAllocationID;
+        memAllocLogInfo.allocType       = allocType;
+        memAllocLogInfo.memoryHeapIndex = memoryHeapIndex;
+        memAllocLogInfo.size            = size;
+        memAllocLogInfo.handle          = handle;
+
+        vk::MemoryAllocInfoMapKey memoryAllocInfoMapKey(memAllocLogInfo.handle);
+        mMemoryAllocationRecord[angle::getBacktraceInfo()].insert(
+            std::make_pair(memoryAllocInfoMapKey, memAllocLogInfo));
+
+        INFO() << "Memory allocation: (id " << memAllocLogInfo.id << ") for object "
+               << memAllocLogInfo.handle << " | Size: " << memAllocLogInfo.size
+               << " | Type: " << vk::kMemoryAllocationTypeMessage[allocTypeIndex]
+               << " | Heap index: " << memAllocLogInfo.memoryHeapIndex;
+
+        resetPendingMemoryAlloc();
+    }
+    else if (kTrackMemoryAllocationSizes)
+    {
+        // Add the new allocation size to the allocation counter.
+        uint32_t allocTypeIndex = ToUnderlying(allocType);
+        mActiveMemoryAllocationsSize[allocTypeIndex] += size;
+
+        {
+            std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
+            uint32_t memoryHeapIndex =
+                mRenderer->getMemoryProperties().getHeapIndexForMemoryType(memoryTypeIndex);
+            mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] += size;
+        }
+
+        resetPendingMemoryAlloc();
+    }
+}
+
+void MemoryAllocationTracker::onMemoryDeallocImpl(vk::MemoryAllocationType allocType,
+                                                  VkDeviceSize size,
+                                                  uint32_t memoryTypeIndex,
+                                                  void *handle)
+{
+    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
+
+    if (kTrackMemoryAllocationDebug)
+    {
+        // If enabled (debug layers), we keep more details in the memory tracker, such as handle,
+        // and log the action to the output. The memory allocation tracker uses the backtrace info
+        // as key, if available.
+        for (auto &memInfoPerBacktrace : mMemoryAllocationRecord)
+        {
+            vk::MemoryAllocInfoMapKey memoryAllocInfoMapKey(handle);
+            MemoryAllocInfoMap &memInfoMap = memInfoPerBacktrace.second;
+            std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
+
+            if (memInfoMap.find(memoryAllocInfoMapKey) != memInfoMap.end())
+            {
+                // Object found; remove it from the allocation tracker.
+                vk::MemoryAllocationInfo *memInfoEntry = &memInfoMap[memoryAllocInfoMapKey];
+                ASSERT(memInfoEntry->allocType == allocType && memInfoEntry->size == size);
+
+                uint32_t allocTypeIndex = ToUnderlying(memInfoEntry->allocType);
+                uint32_t memoryHeapIndex =
+                    mRenderer->getMemoryProperties().getHeapIndexForMemoryType(memoryTypeIndex);
+                ASSERT(mActiveMemoryAllocationsCount[allocTypeIndex] != 0 &&
+                       mActiveMemoryAllocationsSize[allocTypeIndex] >= size);
+                ASSERT(memoryHeapIndex == memInfoEntry->memoryHeapIndex &&
+                       mActivePerHeapMemoryAllocationsCount[allocTypeIndex][memoryHeapIndex] != 0 &&
+                       mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] >=
+                           size);
+                mActiveMemoryAllocationsCount[allocTypeIndex]--;
+                mActiveMemoryAllocationsSize[allocTypeIndex] -= size;
+                mActivePerHeapMemoryAllocationsCount[allocTypeIndex][memoryHeapIndex]--;
+                mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] -= size;
+
+                INFO() << "Memory deallocation: (id " << memInfoEntry->id << ") for object "
+                       << memInfoEntry->handle << " | Size: " << memInfoEntry->size
+                       << " | Type: " << vk::kMemoryAllocationTypeMessage[allocTypeIndex]
+                       << " | Heap index: " << memInfoEntry->memoryHeapIndex;
+
+                memInfoMap.erase(memoryAllocInfoMapKey);
+            }
+        }
+    }
+    else if (kTrackMemoryAllocationSizes)
+    {
+        // Remove the allocation size from the allocation counter.
+        uint32_t allocTypeIndex = ToUnderlying(allocType);
+        ASSERT(mActiveMemoryAllocationsSize[allocTypeIndex] >= size);
+        mActiveMemoryAllocationsSize[allocTypeIndex] -= size;
+
+        {
+            std::unique_lock<std::mutex> lock(mMemoryAllocationMutex);
+            uint32_t memoryHeapIndex =
+                mRenderer->getMemoryProperties().getHeapIndexForMemoryType(memoryTypeIndex);
+            ASSERT(mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] >= size);
+            mActivePerHeapMemoryAllocationsSize[allocTypeIndex][memoryHeapIndex] -= size;
+        }
+    }
+}
+
+VkDeviceSize MemoryAllocationTracker::getActiveMemoryAllocationsSize(uint32_t allocTypeIndex) const
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return 0;
+    }
+
+    return mActiveMemoryAllocationsSize[allocTypeIndex];
+}
+
+VkDeviceSize MemoryAllocationTracker::getActiveHeapMemoryAllocationsSize(uint32_t allocTypeIndex,
+                                                                         uint32_t heapIndex) const
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return 0;
+    }
+
+    return mActivePerHeapMemoryAllocationsSize[allocTypeIndex][heapIndex];
+}
+
+uint64_t MemoryAllocationTracker::getActiveMemoryAllocationsCount(uint32_t allocTypeIndex) const
+{
+    if (!kTrackMemoryAllocationDebug)
+    {
+        return 0;
+    }
+
+    return mActiveMemoryAllocationsCount[allocTypeIndex];
+}
+
+uint64_t MemoryAllocationTracker::getActiveHeapMemoryAllocationsCount(uint32_t allocTypeIndex,
+                                                                      uint32_t heapIndex) const
+{
+    if (!kTrackMemoryAllocationDebug)
+    {
+        return 0;
+    }
+
+    return mActivePerHeapMemoryAllocationsCount[allocTypeIndex][heapIndex];
+}
+
+VkDeviceSize MemoryAllocationTracker::getPendingMemoryAllocationSize() const
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return 0;
+    }
+
+    return mPendingMemoryAllocationSize;
+}
+
+vk::MemoryAllocationType MemoryAllocationTracker::getPendingMemoryAllocationType() const
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return vk::MemoryAllocationType::Unspecified;
+    }
+
+    return mPendingMemoryAllocationType;
+}
+
+uint32_t MemoryAllocationTracker::getPendingMemoryTypeIndex() const
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return 0;
+    }
+
+    return mPendingMemoryTypeIndex;
+}
+
+void MemoryAllocationTracker::setPendingMemoryAlloc(vk::MemoryAllocationType allocType,
+                                                    VkDeviceSize size,
+                                                    uint32_t memoryTypeIndex)
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return;
+    }
+
+    ASSERT(allocType != vk::MemoryAllocationType::InvalidEnum && size != 0);
+    mPendingMemoryAllocationType = allocType;
+    mPendingMemoryAllocationSize = size;
+    mPendingMemoryTypeIndex      = memoryTypeIndex;
+}
+
+void MemoryAllocationTracker::resetPendingMemoryAlloc()
+{
+    if (!kTrackMemoryAllocationSizes)
+    {
+        return;
+    }
+
+    mPendingMemoryAllocationType = vk::MemoryAllocationType::Unspecified;
+    mPendingMemoryAllocationSize = 0;
+    mPendingMemoryTypeIndex      = kInvalidMemoryTypeIndex;
 }
 
 namespace vk

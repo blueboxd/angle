@@ -1132,11 +1132,12 @@ void State::setPolygonOffsetFill(bool enabled)
     }
 }
 
-void State::setPolygonOffsetParams(GLfloat factor, GLfloat units)
+void State::setPolygonOffsetParams(GLfloat factor, GLfloat units, GLfloat clamp)
 {
     // An application can pass NaN values here, so handle this gracefully
     mRasterizer.polygonOffsetFactor = factor != factor ? 0.0f : factor;
     mRasterizer.polygonOffsetUnits  = units != units ? 0.0f : units;
+    mRasterizer.polygonOffsetClamp  = clamp != clamp ? 0.0f : clamp;
     mDirtyBits.set(DIRTY_BIT_POLYGON_OFFSET);
 }
 
@@ -1346,7 +1347,7 @@ void State::setEnableFeature(GLenum feature, bool enabled)
         case GL_SAMPLE_SHADING:
             setSampleShading(enabled);
             return;
-        // GL_APPLE_clip_distance/GL_EXT_clip_cull_distance
+        // GL_APPLE_clip_distance / GL_EXT_clip_cull_distance / GL_ANGLE_clip_cull_distance
         case GL_CLIP_DISTANCE0_EXT:
         case GL_CLIP_DISTANCE1_EXT:
         case GL_CLIP_DISTANCE2_EXT:
@@ -1502,7 +1503,7 @@ bool State::getEnableFeature(GLenum feature) const
             return mTextureRectangleEnabled;
         case GL_SAMPLE_SHADING:
             return isSampleShadingEnabled();
-        // GL_APPLE_clip_distance/GL_EXT_clip_cull_distance
+        // GL_APPLE_clip_distance / GL_EXT_clip_cull_distance / GL_ANGLE_clip_cull_distance
         case GL_CLIP_DISTANCE0_EXT:
         case GL_CLIP_DISTANCE1_EXT:
         case GL_CLIP_DISTANCE2_EXT:
@@ -2541,6 +2542,22 @@ void State::getBooleanv(GLenum pname, GLboolean *params) const
         case GL_ROBUST_FRAGMENT_SHADER_OUTPUT_ANGLE:
             *params = mExtensions.robustFragmentShaderOutputANGLE ? GL_TRUE : GL_FALSE;
             break;
+        // GL_APPLE_clip_distance / GL_EXT_clip_cull_distance / GL_ANGLE_clip_cull_distance
+        case GL_CLIP_DISTANCE0_EXT:
+        case GL_CLIP_DISTANCE1_EXT:
+        case GL_CLIP_DISTANCE2_EXT:
+        case GL_CLIP_DISTANCE3_EXT:
+        case GL_CLIP_DISTANCE4_EXT:
+        case GL_CLIP_DISTANCE5_EXT:
+        case GL_CLIP_DISTANCE6_EXT:
+        case GL_CLIP_DISTANCE7_EXT:
+            if (mClientVersion.major >= 2)
+            {
+                // If GLES version is 1, the GL_CLIP_DISTANCE0_EXT enum will be used as
+                // GL_CLIP_PLANE0 instead.
+                *params = mClipDistancesEnabled.test(pname - GL_CLIP_DISTANCE0_EXT);
+            }
+            break;
         default:
             UNREACHABLE();
             break;
@@ -2569,6 +2586,9 @@ void State::getFloatv(GLenum pname, GLfloat *params) const
             break;
         case GL_POLYGON_OFFSET_UNITS:
             *params = mRasterizer.polygonOffsetUnits;
+            break;
+        case GL_POLYGON_OFFSET_CLAMP_EXT:
+            *params = mRasterizer.polygonOffsetClamp;
             break;
         case GL_DEPTH_RANGE:
             params[0] = mNearZ;

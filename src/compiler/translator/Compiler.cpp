@@ -55,6 +55,7 @@
 #include "compiler/translator/tree_util/BuiltIn.h"
 #include "compiler/translator/tree_util/IntermNodePatternMatcher.h"
 #include "compiler/translator/tree_util/ReplaceShadowingVariables.h"
+#include "compiler/translator/tree_util/ReplaceVariable.h"
 #include "compiler/translator/util.h"
 
 // #define ANGLE_FUZZER_CORPUS_OUTPUT_DIR "corpus/"
@@ -841,13 +842,19 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
         return false;
     }
 
-    if (parseContext.isExtensionEnabled(TExtension::EXT_clip_cull_distance) ||
+    if (parseContext.isExtensionEnabled(TExtension::ANGLE_clip_cull_distance) ||
+        parseContext.isExtensionEnabled(TExtension::EXT_clip_cull_distance) ||
         parseContext.isExtensionEnabled(TExtension::APPLE_clip_distance))
     {
         if (!ValidateClipCullDistance(
-                root, &mDiagnostics, mResources.MaxCombinedClipAndCullDistances,
-                compileOptions.limitSimultaneousClipAndCullDistanceUsage, &mClipDistanceSize,
-                &mCullDistanceSize, &mClipDistanceMaxIndex, &mCullDistanceMaxIndex))
+                root, &mDiagnostics, mResources.MaxCullDistances,
+                mResources.MaxCombinedClipAndCullDistances, &mClipDistanceSize, &mCullDistanceSize,
+                &mClipDistanceRedeclared, &mCullDistanceRedeclared, &mClipDistanceUsed))
+        {
+            return false;
+        }
+
+        if (!resizeClipAndCullDistanceBuiltins(root))
         {
             return false;
         }
@@ -1161,6 +1168,39 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
     return true;
 }
 
+bool TCompiler::resizeClipAndCullDistanceBuiltins(TIntermBlock *root)
+{
+    auto resizeVariable = [=](const ImmutableString &name, uint32_t size, uint32_t maxSize) {
+        // Skip if the variable is not used or implicitly has the maximum size
+        if (size == 0 || size == maxSize)
+            return true;
+        ASSERT(size < maxSize);
+        const TVariable *builtInVar =
+            static_cast<const TVariable *>(mSymbolTable.findBuiltIn(name, getShaderVersion()));
+        TType *resizedType = new TType(builtInVar->getType());
+        resizedType->setArraySize(0, size);
+
+        TVariable *resizedVar =
+            new TVariable(&mSymbolTable, name, resizedType, SymbolType::BuiltIn);
+
+        return ReplaceVariable(this, root, builtInVar, resizedVar);
+    };
+
+    if (!mClipDistanceRedeclared && !resizeVariable(ImmutableString("gl_ClipDistance"),
+                                                    mClipDistanceSize, mResources.MaxClipDistances))
+    {
+        return false;
+    }
+
+    if (!mCullDistanceRedeclared && !resizeVariable(ImmutableString("gl_CullDistance"),
+                                                    mCullDistanceSize, mResources.MaxCullDistances))
+    {
+        return false;
+    }
+
+    return true;
+}
+
 bool TCompiler::postParseChecks(const TParseContext &parseContext)
 {
     std::stringstream errorMessage;
@@ -1343,6 +1383,7 @@ void TCompiler::setResourceString()
         << ":EXT_texture_buffer:" << mResources.EXT_texture_buffer
         << ":OES_sample_variables:" << mResources.OES_sample_variables
         << ":EXT_clip_cull_distance:" << mResources.EXT_clip_cull_distance
+        << ":ANGLE_clip_cull_distance:" << mResources.ANGLE_clip_cull_distance
         << ":MinProgramTextureGatherOffset:" << mResources.MinProgramTextureGatherOffset
         << ":MaxProgramTextureGatherOffset:" << mResources.MaxProgramTextureGatherOffset
         << ":MaxImageUnits:" << mResources.MaxImageUnits
@@ -1438,10 +1479,11 @@ void TCompiler::clearResults()
 
     mNumViews = -1;
 
-    mClipDistanceSize     = 0;
-    mCullDistanceSize     = 0;
-    mClipDistanceMaxIndex = -1;
-    mCullDistanceMaxIndex = -1;
+    mClipDistanceSize       = 0;
+    mCullDistanceSize       = 0;
+    mClipDistanceRedeclared = false;
+    mCullDistanceRedeclared = false;
+    mClipDistanceUsed       = false;
 
     mGeometryShaderInputPrimitiveType  = EptUndefined;
     mGeometryShaderOutputPrimitiveType = EptUndefined;

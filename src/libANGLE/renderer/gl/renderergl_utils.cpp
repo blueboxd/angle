@@ -1470,6 +1470,7 @@ void GenerateCaps(const FunctionsGL *functions,
                                       functions->hasGLESExtension("GL_EXT_shader_texture_lod");
     extensions->fragDepthEXT = functions->standard == STANDARD_GL_DESKTOP ||
                                functions->hasGLESExtension("GL_EXT_frag_depth");
+    extensions->polygonOffsetClampEXT = functions->hasExtension("GL_EXT_polygon_offset_clamp");
 
     // Support video texture extension on non Android backends.
     // TODO(crbug.com/776222): support Android and Apple devices.
@@ -1943,12 +1944,11 @@ void GenerateCaps(const FunctionsGL *functions,
 
     // GL_EXT_clip_cull_distance spec requires shader interface blocks to support
     // built-in array redeclarations on OpenGL ES.
-    extensions->clipCullDistanceEXT = !features.disableClipCullDistance.enabled &&
-                                      (functions->isAtLeastGL(gl::Version(4, 5)) ||
-                                       (functions->isAtLeastGL(gl::Version(3, 0)) &&
-                                        functions->hasGLExtension("GL_ARB_cull_distance")) ||
-                                       (extensions->shaderIoBlocksEXT &&
-                                        functions->hasGLESExtension("GL_EXT_clip_cull_distance")));
+    extensions->clipCullDistanceEXT =
+        functions->isAtLeastGL(gl::Version(4, 5)) ||
+        (functions->isAtLeastGL(gl::Version(3, 0)) &&
+         functions->hasGLExtension("GL_ARB_cull_distance")) ||
+        (extensions->shaderIoBlocksEXT && functions->hasGLESExtension("GL_EXT_clip_cull_distance"));
     if (extensions->clipCullDistanceEXT)
     {
         caps->maxClipDistances = QuerySingleGLInt(functions, GL_MAX_CLIP_DISTANCES_EXT);
@@ -1956,6 +1956,11 @@ void GenerateCaps(const FunctionsGL *functions,
         caps->maxCombinedClipAndCullDistances =
             QuerySingleGLInt(functions, GL_MAX_COMBINED_CLIP_AND_CULL_DISTANCES_EXT);
     }
+
+    // Same as GL_EXT_clip_cull_distance but with cull distance support being optional.
+    extensions->clipCullDistanceANGLE =
+        functions->isAtLeastGL(gl::Version(3, 0)) || extensions->clipCullDistanceEXT;
+    ASSERT(!extensions->clipCullDistanceANGLE || caps->maxClipDistances > 0);
 
     // GL_OES_shader_image_atomic
     //
@@ -2437,8 +2442,8 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     // https://anglebug.com/7527
     ANGLE_FEATURE_CONDITION(features, passHighpToPackUnormSnormBuiltins, isQualcomm);
 
-    // https://anglebug.com/7763
-    ANGLE_FEATURE_CONDITION(features, disableClipCullDistance, isQualcomm);
+    // https://anglebug.com/7880
+    ANGLE_FEATURE_CONDITION(features, emulateClipDistanceState, isQualcomm);
 
     // Desktop GLSL-only fragment synchronization extensions. These are injected internally by the
     // compiler to make pixel local storage coherent.

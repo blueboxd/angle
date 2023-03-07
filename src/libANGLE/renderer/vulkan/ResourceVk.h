@@ -68,10 +68,11 @@ class ResourceUse final
     void setSerial(SerialIndex index, Serial serial)
     {
         ASSERT(index != kInvalidQueueSerialIndex);
-        if (mSerials.size() <= index)
+        if (ANGLE_UNLIKELY(mSerials.size() <= index))
         {
             mSerials.resize(index + 1, kZeroSerial);
         }
+        ASSERT(mSerials[index] <= serial);
         mSerials[index] = serial;
     }
 
@@ -103,9 +104,9 @@ class ResourceUse final
 
     bool usedByCommandBuffer(const QueueSerial &commandBufferQueueSerial) const
     {
+        ASSERT(commandBufferQueueSerial.valid());
         // Return true if we have the exact queue serial in the array.
-        return commandBufferQueueSerial.valid() &&
-               mSerials.size() > commandBufferQueueSerial.getIndex() &&
+        return mSerials.size() > commandBufferQueueSerial.getIndex() &&
                mSerials[commandBufferQueueSerial.getIndex()] ==
                    commandBufferQueueSerial.getSerial();
     }

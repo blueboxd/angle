@@ -5,7 +5,7 @@
 //
 // VulkanPerformanceCounterTest:
 //   Validates specific GL call patterns with ANGLE performance counters.
-//   For example we can verify a certain call set doesn't break the RenderPass.
+//   For example we can verify a certain call set doesn't break the render pass.
 
 #include "test_utils/ANGLETest.h"
 #include "test_utils/angle_test_instantiate.h"
@@ -1559,6 +1559,40 @@ TEST_P(VulkanPerformanceCounterTest, ColorInvalidateMaskDraw)
     EXPECT_COLOR_OP_COUNTERS(getPerfCounters(), expected);
 }
 
+// Test glFenceSync followed by glInvalidateFramebuffer should still allow storeOp being optimized
+// out.
+TEST_P(VulkanPerformanceCounterTest, FenceSyncAndColorInvalidate)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled(kPerfMonitorExtensionName));
+
+    angle::VulkanPerfCounters expected;
+
+    // Expect rpCount+1, color(Clears+0, Loads+0, LoadNones+0, Stores+0, StoreNones+0)
+    setExpectedCountersForColorOps(getPerfCounters(), 1, 0, 0, 0, 0, 0, &expected);
+
+    GLFramebuffer framebuffer;
+    GLTexture texture;
+    setupForColorOpsTest(&framebuffer, &texture);
+
+    // Draw
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+    ASSERT_GL_NO_ERROR();
+
+    // Insert a fence which should trigger a deferred renderPass end
+    GLsync sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+    // Invalidate FBO. This should still allow vulkan backend to optimize out the storeOp, even
+    // though we just called glFenceSync .
+    const GLenum discards[] = {GL_COLOR_ATTACHMENT0};
+    glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, discards);
+    ASSERT_GL_NO_ERROR();
+
+    // Use swapBuffers and then check how many loads and stores were actually done
+    swapBuffers();
+    EXPECT_COLOR_OP_COUNTERS(getPerfCounters(), expected);
+    glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+}
 // Tests that invalidate followed by discarded draws results in no load and store.
 //
 // - Scenario: invalidate, rasterizer discard, draw
@@ -7087,6 +7121,26 @@ TEST_P(VulkanPerformanceCounterTest, AsyncMonolithicPipelineCreation)
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 
     drawQuad(drawRed, essl3_shaders::PositionAttrib(), 0.0f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+}
+
+// Verify that changing framebuffer and back doesn't break the render pass.
+TEST_P(VulkanPerformanceCounterTest, FBOChangeAndBackDoesNotBreakRenderPass)
+{
+    uint64_t expectedRenderPassCount = getPerfCounters().renderPasses + 1;
+
+    ANGLE_GL_PROGRAM(drawRed, essl3_shaders::vs::Simple(), essl3_shaders::fs::Red());
+    drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0);
+
+    // Verify render pass count.
+    EXPECT_EQ(getPerfCounters().renderPasses, expectedRenderPassCount);
+
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
 }
 

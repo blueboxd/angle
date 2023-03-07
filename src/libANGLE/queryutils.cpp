@@ -3174,6 +3174,7 @@ bool GetQueryParameterInfo(const State &glState,
         case GL_TEXTURE_BINDING_2D:
         case GL_TEXTURE_BINDING_CUBE_MAP:
         case GL_RESET_NOTIFICATION_STRATEGY_EXT:
+        case GL_QUERY_COUNTER_BITS_EXT:
         {
             *type      = GL_INT;
             *numParams = 1;
@@ -3269,6 +3270,14 @@ bool GetQueryParameterInfo(const State &glState,
             *numParams = 1;
             return true;
         }
+        case GL_POLYGON_OFFSET_CLAMP_EXT:
+            if (!extensions.polygonOffsetClampEXT)
+            {
+                return false;
+            }
+            *type      = GL_FLOAT;
+            *numParams = 1;
+            return true;
         case GL_ALIASED_LINE_WIDTH_RANGE:
         case GL_ALIASED_POINT_SIZE_RANGE:
         case GL_DEPTH_RANGE:
@@ -3325,22 +3334,30 @@ bool GetQueryParameterInfo(const State &glState,
             *numParams = 1;
             return true;
         case GL_MAX_CLIP_DISTANCES_EXT:  // case GL_MAX_CLIP_PLANES
+        case GL_CLIP_DISTANCE0_EXT:
+        case GL_CLIP_DISTANCE1_EXT:
+        case GL_CLIP_DISTANCE2_EXT:
+        case GL_CLIP_DISTANCE3_EXT:
+        case GL_CLIP_DISTANCE4_EXT:
+        case GL_CLIP_DISTANCE5_EXT:
+        case GL_CLIP_DISTANCE6_EXT:
+        case GL_CLIP_DISTANCE7_EXT:
             if (clientMajorVersion < 2)
             {
                 break;
             }
-            if (!extensions.clipDistanceAPPLE && !extensions.clipCullDistanceEXT)
+            if (!extensions.clipDistanceAPPLE && !extensions.clipCullDistanceAny())
             {
                 // NOTE(hqle): if client version is 1. GL_MAX_CLIP_DISTANCES_EXT is equal
                 // to GL_MAX_CLIP_PLANES which is a valid enum.
                 return false;
             }
-            *type      = GL_INT;
+            *type      = (pname == GL_MAX_CLIP_DISTANCES_EXT) ? GL_INT : GL_BOOL;
             *numParams = 1;
             return true;
         case GL_MAX_CULL_DISTANCES_EXT:
         case GL_MAX_COMBINED_CLIP_AND_CULL_DISTANCES_EXT:
-            if (!extensions.clipCullDistanceEXT)
+            if (!extensions.clipCullDistanceAny())
             {
                 return false;
             }
