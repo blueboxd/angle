@@ -282,6 +282,11 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessages[] = {
     // being accessed. http://anglebug.com/6725
     {
         "SYNC-HAZARD-READ-AFTER-WRITE",
+        "vkCmdDraw: Hazard READ_AFTER_WRITE for VkBuffer",
+        "usage: SYNC_VERTEX_SHADER_SHADER_STORAGE_READ",
+    },
+    {
+        "SYNC-HAZARD-READ-AFTER-WRITE",
         "vkCmdDrawIndexed: Hazard READ_AFTER_WRITE for vertex",
         "usage: SYNC_VERTEX_ATTRIBUTE_INPUT_VERTEX_ATTRIBUTE_READ",
     },
@@ -1252,7 +1257,8 @@ angle::Result OneOffCommandPool::getCommandBuffer(vk::Context *context,
         {
             VkCommandPoolCreateInfo createInfo = {};
             createInfo.sType                   = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-            createInfo.flags                   = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+            createInfo.flags                   = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
+                               VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
             ASSERT(mProtectionType == vk::ProtectionType::Unprotected ||
                    mProtectionType == vk::ProtectionType::Protected);
             if (mProtectionType == vk::ProtectionType::Protected)
@@ -2841,6 +2847,7 @@ void RendererVk::enableDeviceExtensionsPromotedTo11(
 //
 // - VK_KHR_create_renderpass2
 // - VK_KHR_image_format_list
+// - VK_KHR_sampler_mirror_clamp_to_edge
 //
 void RendererVk::enableDeviceExtensionsPromotedTo12(
     const vk::ExtensionNameList &deviceExtensionNames)
@@ -2853,6 +2860,11 @@ void RendererVk::enableDeviceExtensionsPromotedTo12(
     if (mFeatures.supportsImageFormatList.enabled)
     {
         mEnabledDeviceExtensions.push_back(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME);
+    }
+
+    if (mFeatures.supportsSamplerMirrorClampToEdge.enabled)
+    {
+        mEnabledDeviceExtensions.push_back(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
     }
 
     if (mFeatures.supportsDepthStencilResolve.enabled)
@@ -4114,6 +4126,10 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
         &mFeatures, supportsImageFormatList,
         ExtensionFound(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME, deviceExtensionNames));
 
+    ANGLE_FEATURE_CONDITION(
+        &mFeatures, supportsSamplerMirrorClampToEdge,
+        ExtensionFound(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME, deviceExtensionNames));
+
     // Emulation of GL_EXT_multisampled_render_to_texture is only really useful on tiling hardware,
     // but is exposed on any configuration deployed on Android, such as Samsung's AMD-based GPU.
     //
@@ -4479,6 +4495,10 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, forceWaitForSubmissionToCompleteForQueryResult,
                             isARM || (isNvidia && nvidiaVersion.major < 470u));
 
+    // Some ARM drivers may not free memory in "vkFreeCommandBuffers()" without
+    // VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT flag.
+    ANGLE_FEATURE_CONDITION(&mFeatures, useResetCommandBufferBitForSecondaryPools, isARM);
+
     ApplyFeatureOverrides(&mFeatures, displayVk->getState());
 
     // Disable async command queue when using Vulkan secondary command buffers temporarily to avoid
@@ -4794,28 +4814,25 @@ angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
                                             QueueSerial *queueSerialOut)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "RendererVk::queueSubmitOneOff");
-    // Allocate a oneoff submitQueueSerial and generate a serial and then use it and release the
+    // Allocate a one off SerialIndex and generate a QueueSerial and then use it and release the
     // index.
-    QueueSerial lastSubmittedQueueSerial;
-    ANGLE_TRY(allocateQueueSerialIndex(&lastSubmittedQueueSerial));
-    QueueSerial submitQueueSerial(lastSubmittedQueueSerial.getIndex(),
-                                  generateQueueSerial(lastSubmittedQueueSerial.getIndex()));
+    SerialIndex index;
+    ANGLE_TRY(allocateQueueSerialIndex(&index));
+    QueueSerial submitQueueSerial(index, generateQueueSerial(index));
 
-    if (isAsyncCommandQueueEnabled())
-    {
-        ANGLE_TRY(mCommandProcessor.enqueueSubmitOneOffCommands(
-            context, protectionType, priority, primary.getHandle(), waitSemaphore,
-            waitSemaphoreStageMasks, fence, submitPolicy, submitQueueSerial));
-    }
-    else
-    {
-        ANGLE_TRY(mCommandQueue.queueSubmitOneOff(
-            context, protectionType, priority, primary.getHandle(), waitSemaphore,
-            waitSemaphoreStageMasks, fence, submitPolicy, submitQueueSerial));
-    }
+    angle::Result result =
+        isAsyncCommandQueueEnabled()
+            ? mCommandProcessor.enqueueSubmitOneOffCommands(
+                  context, protectionType, priority, primary.getHandle(), waitSemaphore,
+                  waitSemaphoreStageMasks, fence, submitPolicy, submitQueueSerial)
+            : mCommandQueue.queueSubmitOneOff(
+                  context, protectionType, priority, primary.getHandle(), waitSemaphore,
+                  waitSemaphoreStageMasks, fence, submitPolicy, submitQueueSerial);
 
-    // Immediately release the queue index since itis an one off use.
-    releaseQueueSerialIndex(lastSubmittedQueueSerial.getIndex());
+    // Immediately release the queue index since it is an one off use.
+    releaseQueueSerialIndex(index);
+    // Avoid SerialIndex leak
+    ANGLE_TRY(result);
 
     *queueSerialOut = submitQueueSerial;
     if (primary.valid())
@@ -4823,6 +4840,8 @@ angle::Result RendererVk::queueSubmitOneOff(vk::Context *context,
         mOneOffCommandPoolMap[protectionType].releaseCommandBuffer(submitQueueSerial,
                                                                    std::move(primary));
     }
+
+    ANGLE_TRY(mCommandQueue.postSubmitCheck(context));
 
     return angle::Result::Continue;
 }
@@ -5129,7 +5148,6 @@ angle::Result RendererVk::submitCommands(vk::Context *context,
                                          vk::ProtectionType protectionType,
                                          egl::ContextPriority contextPriority,
                                          const vk::Semaphore *signalSemaphore,
-                                         vk::SecondaryCommandPools *commandPools,
                                          const QueueSerial &submitQueueSerial)
 {
     vk::SecondaryCommandBufferList commandBuffersToReset;
@@ -5145,13 +5163,13 @@ angle::Result RendererVk::submitCommands(vk::Context *context,
     {
         ANGLE_TRY(mCommandProcessor.enqueueSubmitCommands(
             context, protectionType, contextPriority, signalVkSemaphore,
-            std::move(commandBuffersToReset), commandPools, submitQueueSerial));
+            std::move(commandBuffersToReset), submitQueueSerial));
     }
     else
     {
         ANGLE_TRY(mCommandQueue.submitCommands(context, protectionType, contextPriority,
                                                signalVkSemaphore, std::move(commandBuffersToReset),
-                                               commandPools, submitQueueSerial));
+                                               submitQueueSerial));
     }
 
     ANGLE_TRY(mCommandQueue.postSubmitCheck(context));
@@ -5201,15 +5219,6 @@ angle::Result RendererVk::waitForResourceUseToFinishWithUserTimeout(vk::Context 
         ANGLE_TRY(mCommandProcessor.waitForResourceUseToBeSubmitted(context, use));
     }
     return mCommandQueue.waitForResourceUseToFinishWithUserTimeout(context, use, timeout, result);
-}
-
-angle::Result RendererVk::finish(vk::Context *context)
-{
-    if (isAsyncCommandQueueEnabled())
-    {
-        ANGLE_TRY(mCommandProcessor.waitForAllWorkToBeSubmitted(context));
-    }
-    return mCommandQueue.waitIdle(context, getMaxFenceWaitTimeNs());
 }
 
 angle::Result RendererVk::flushWaitSemaphores(
@@ -5443,13 +5452,20 @@ VkDeviceSize RendererVk::getPreferedBufferBlockSize(uint32_t memoryTypeIndex) co
     return std::min(heapSize / 64, mPreferredLargeHeapBlockSize);
 }
 
-angle::Result RendererVk::allocateQueueSerialIndex(QueueSerial *queueSerialOut)
+angle::Result RendererVk::allocateQueueSerialIndex(SerialIndex *indexOut)
 {
-    SerialIndex index = mQueueSerialIndexAllocator.allocate();
-    if (index == kInvalidQueueSerialIndex)
+    *indexOut = mQueueSerialIndexAllocator.allocate();
+    if (*indexOut == kInvalidQueueSerialIndex)
     {
         return angle::Result::Stop;
     }
+    return angle::Result::Continue;
+}
+
+angle::Result RendererVk::allocateQueueSerialIndex(QueueSerial *queueSerialOut)
+{
+    SerialIndex index;
+    ANGLE_TRY(allocateQueueSerialIndex(&index));
     Serial serial   = isAsyncCommandQueueEnabled() ? mCommandProcessor.getLastEnqueuedSerial(index)
                                                    : mCommandQueue.getLastSubmittedSerial(index);
     *queueSerialOut = QueueSerial(index, serial);

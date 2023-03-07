@@ -844,6 +844,13 @@ struct FeaturesVk : FeatureSetBase
                                        "VkDevice supports the VK_KHR_bind_memory2 extension",
                                        &members, "https://anglebug.com/4966"};
 
+    FeatureInfo supportsSamplerMirrorClampToEdge = {
+        "supportsSamplerMirrorClampToEdge",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_KHR_sampler_mirror_clamp_to_edge extension",
+        &members,
+    };
+
     FeatureInfo preferSubmitOnAnySamplesPassedQueryEnd = {
         "preferSubmitOnAnySamplesPassedQueryEnd", FeatureCategory::VulkanWorkarounds,
         "Submit commands to driver when last GL_ANY_SAMPLES_PASSED query is made for performance "
@@ -859,6 +866,14 @@ struct FeaturesVk : FeatureSetBase
                                            FeatureCategory::VulkanFeatures,
                                            "Reset command buffer in async thread.", &members,
                                            "https://issuetracker.google.com/255411748"};
+
+    FeatureInfo useResetCommandBufferBitForSecondaryPools = {
+        "useResetCommandBufferBitForSecondaryPools",
+        FeatureCategory::VulkanWorkarounds,
+        "Use VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT for initializing "
+        "SecondaryCommandPools when using VulkanSecondaryCommandBuffer. ",
+        &members,
+    };
 };
 
 inline FeaturesVk::FeaturesVk()  = default;

@@ -1161,6 +1161,13 @@ void GenerateCaps(const FunctionsGL *functions,
         LimitVersion(maxSupportedESVersion, gl::Version(2, 0));
     }
 
+    if (!functions->isAtLeastGL(gl::Version(4, 3)) &&
+        !functions->hasGLExtension("GL_ARB_stencil_texturing") &&
+        !functions->isAtLeastGLES(gl::Version(3, 1)))
+    {
+        LimitVersion(maxSupportedESVersion, gl::Version(3, 0));
+    }
+
     if (functions->isAtLeastGL(gl::Version(4, 3)) || functions->isAtLeastGLES(gl::Version(3, 1)) ||
         functions->hasGLExtension("GL_ARB_framebuffer_no_attachments"))
     {
@@ -1502,6 +1509,15 @@ void GenerateCaps(const FunctionsGL *functions,
          functions->hasGLESExtension("GL_NV_texture_border_clamp"));
     extensions->textureBorderClampOES = extensions->textureBorderClampEXT;
 
+    // This functionality is supported on macOS but the extension
+    // strings are not listed there for historical reasons.
+    extensions->textureMirrorClampToEdgeEXT =
+        IsMac() || functions->isAtLeastGL(gl::Version(4, 4)) ||
+        functions->hasGLExtension("GL_ARB_texture_mirror_clamp_to_edge") ||
+        functions->hasGLExtension("GL_EXT_texture_mirror_clamp") ||
+        functions->hasGLExtension("GL_ATI_texture_mirror_once") ||
+        functions->hasGLESExtension("GL_EXT_texture_mirror_clamp_to_edge");
+
     extensions->multiDrawIndirectEXT = true;
     extensions->instancedArraysANGLE = functions->isAtLeastGL(gl::Version(3, 1)) ||
                                        (functions->hasGLExtension("GL_ARB_instanced_arrays") &&
@@ -1576,6 +1592,10 @@ void GenerateCaps(const FunctionsGL *functions,
         extensions->robustnessEXT &&
         (functions->hasGLExtension("GL_ARB_robust_buffer_access_behavior") ||
          functions->hasGLESExtension("GL_KHR_robust_buffer_access_behavior"));
+
+    extensions->stencilTexturingANGLE = functions->isAtLeastGL(gl::Version(4, 3)) ||
+                                        functions->hasGLExtension("GL_ARB_stencil_texturing") ||
+                                        functions->isAtLeastGLES(gl::Version(3, 1));
 
     // ANGLE_shader_pixel_local_storage.
     if (features.supportsShaderPixelLocalStorageEXT.enabled &&
@@ -2422,11 +2442,11 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     // http://crbug.com/594016
     bool isLinuxVivante = IsLinux() && IsVivante(device);
 
-    // Temporarily disable on all of Android. http://crbug.com/1238327
+    // Temporarily disable on all of Android. http://crbug.com/1417485
     ANGLE_FEATURE_CONDITION(features, disableMultisampledRenderToTexture,
                             isAdreno4xxOnAndroidLessThan51 || isAdreno4xxOnAndroid70 ||
                                 isAdreno5xxOnAndroidLessThan70 || isAdreno5xxOnAndroid71 ||
-                                isLinuxVivante);
+                                isLinuxVivante || IsAndroid());
 
     // http://crbug.com/1181068
     ANGLE_FEATURE_CONDITION(features, uploadTextureDataInChunks, IsApple());
