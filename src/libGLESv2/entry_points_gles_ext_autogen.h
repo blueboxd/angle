@@ -665,6 +665,18 @@ ANGLE_EXPORT void GL_APIENTRY GL_GetFramebufferPixelLocalStorageParameterfvANGLE
 ANGLE_EXPORT void GL_APIENTRY GL_GetFramebufferPixelLocalStorageParameterivANGLE(GLint plane,
                                                                                  GLenum pname,
                                                                                  GLint *params);
+ANGLE_EXPORT void GL_APIENTRY
+GL_GetFramebufferPixelLocalStorageParameterfvRobustANGLE(GLint plane,
+                                                         GLenum pname,
+                                                         GLsizei bufSize,
+                                                         GLsizei *length,
+                                                         GLfloat *params);
+ANGLE_EXPORT void GL_APIENTRY
+GL_GetFramebufferPixelLocalStorageParameterivRobustANGLE(GLint plane,
+                                                         GLenum pname,
+                                                         GLsizei bufSize,
+                                                         GLsizei *length,
+                                                         GLint *params);
 
 // GL_ANGLE_stencil_texturing
 
@@ -1324,6 +1336,8 @@ ANGLE_EXPORT void GL_APIENTRY GL_TexBufferRangeEXT(GLenum target,
 // GL_EXT_texture_cube_map_array
 
 // GL_EXT_texture_filter_anisotropic
+
+// GL_EXT_texture_filter_minmax
 
 // GL_EXT_texture_format_BGRA8888
 

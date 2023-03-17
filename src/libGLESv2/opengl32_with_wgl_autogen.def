@@ -618,7 +618,9 @@ EXPORTS
     glFramebufferPixelLocalClearValueuivANGLE
     glFramebufferTexturePixelLocalStorageANGLE
     glGetFramebufferPixelLocalStorageParameterfvANGLE
+    glGetFramebufferPixelLocalStorageParameterfvRobustANGLE
     glGetFramebufferPixelLocalStorageParameterivANGLE
+    glGetFramebufferPixelLocalStorageParameterivRobustANGLE
     glPixelLocalStorageBarrierANGLE
 
     ; GL_ANGLE_stencil_texturing
@@ -926,6 +928,8 @@ EXPORTS
     ; GL_EXT_texture_cube_map_array
 
     ; GL_EXT_texture_filter_anisotropic
+
+    ; GL_EXT_texture_filter_minmax
 
     ; GL_EXT_texture_format_BGRA8888
 

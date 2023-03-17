@@ -1187,6 +1187,7 @@ RenderPassAttachment::RenderPassAttachment()
 }
 
 void RenderPassAttachment::init(ImageHelper *image,
+                                UniqueSerial imageSiblingSerial,
                                 gl::LevelIndex levelIndex,
                                 uint32_t layerIndex,
                                 uint32_t layerCount,
@@ -1194,11 +1195,12 @@ void RenderPassAttachment::init(ImageHelper *image,
 {
     ASSERT(mImage == nullptr);
 
-    mImage      = image;
-    mLevelIndex = levelIndex;
-    mLayerIndex = layerIndex;
-    mLayerCount = layerCount;
-    mAspect     = aspect;
+    mImage              = image;
+    mImageSiblingSerial = imageSiblingSerial;
+    mLevelIndex         = levelIndex;
+    mLayerIndex         = layerIndex;
+    mLayerCount         = layerCount;
+    mAspect             = aspect;
 
     mImage->setRenderPassUsageFlag(RenderPassUsage::RenderTargetAttachment);
 }
@@ -1797,20 +1799,22 @@ void RenderPassCommandBufferHelper::colorImagesDraw(gl::LevelIndex level,
                                                     uint32_t layerCount,
                                                     ImageHelper *image,
                                                     ImageHelper *resolveImage,
+                                                    UniqueSerial imageSiblingSerial,
                                                     PackedAttachmentIndex packedAttachmentIndex)
 {
     ASSERT(packedAttachmentIndex < mColorAttachmentsCount);
 
     image->setQueueSerial(mQueueSerial);
 
-    mColorAttachments[packedAttachmentIndex].init(image, level, layerStart, layerCount,
-                                                  VK_IMAGE_ASPECT_COLOR_BIT);
+    mColorAttachments[packedAttachmentIndex].init(image, imageSiblingSerial, level, layerStart,
+                                                  layerCount, VK_IMAGE_ASPECT_COLOR_BIT);
 
     if (resolveImage)
     {
         resolveImage->setQueueSerial(mQueueSerial);
-        mColorResolveAttachments[packedAttachmentIndex].init(resolveImage, level, layerStart,
-                                                             layerCount, VK_IMAGE_ASPECT_COLOR_BIT);
+        mColorResolveAttachments[packedAttachmentIndex].init(resolveImage, imageSiblingSerial,
+                                                             level, layerStart, layerCount,
+                                                             VK_IMAGE_ASPECT_COLOR_BIT);
     }
 }
 
@@ -1818,7 +1822,8 @@ void RenderPassCommandBufferHelper::depthStencilImagesDraw(gl::LevelIndex level,
                                                            uint32_t layerStart,
                                                            uint32_t layerCount,
                                                            ImageHelper *image,
-                                                           ImageHelper *resolveImage)
+                                                           ImageHelper *resolveImage,
+                                                           UniqueSerial imageSiblingSerial)
 {
     ASSERT(!usesImage(*image));
     ASSERT(!resolveImage || !usesImage(*resolveImage));
@@ -1828,8 +1833,10 @@ void RenderPassCommandBufferHelper::depthStencilImagesDraw(gl::LevelIndex level,
     // only insert layout change barrier once.
     image->setQueueSerial(mQueueSerial);
 
-    mDepthAttachment.init(image, level, layerStart, layerCount, VK_IMAGE_ASPECT_DEPTH_BIT);
-    mStencilAttachment.init(image, level, layerStart, layerCount, VK_IMAGE_ASPECT_STENCIL_BIT);
+    mDepthAttachment.init(image, imageSiblingSerial, level, layerStart, layerCount,
+                          VK_IMAGE_ASPECT_DEPTH_BIT);
+    mStencilAttachment.init(image, imageSiblingSerial, level, layerStart, layerCount,
+                            VK_IMAGE_ASPECT_STENCIL_BIT);
 
     if (resolveImage)
     {
@@ -1838,10 +1845,10 @@ void RenderPassCommandBufferHelper::depthStencilImagesDraw(gl::LevelIndex level,
         // multisampled-render-to-texture renderbuffers.
         resolveImage->setQueueSerial(mQueueSerial);
 
-        mDepthResolveAttachment.init(resolveImage, level, layerStart, layerCount,
-                                     VK_IMAGE_ASPECT_DEPTH_BIT);
-        mStencilResolveAttachment.init(resolveImage, level, layerStart, layerCount,
-                                       VK_IMAGE_ASPECT_STENCIL_BIT);
+        mDepthResolveAttachment.init(resolveImage, imageSiblingSerial, level, layerStart,
+                                     layerCount, VK_IMAGE_ASPECT_DEPTH_BIT);
+        mStencilResolveAttachment.init(resolveImage, imageSiblingSerial, level, layerStart,
+                                       layerCount, VK_IMAGE_ASPECT_STENCIL_BIT);
     }
 }
 
@@ -2095,19 +2102,21 @@ void RenderPassCommandBufferHelper::finalizeDepthStencilResolveImageLayout(Conte
     depthStencilResolveImage->resetRenderPassUsageFlags();
 }
 
-void RenderPassCommandBufferHelper::finalizeImageLayout(Context *context, const ImageHelper *image)
+void RenderPassCommandBufferHelper::finalizeImageLayout(Context *context,
+                                                        const ImageHelper *image,
+                                                        UniqueSerial imageSiblingSerial)
 {
     if (image->hasRenderPassUsageFlag(RenderPassUsage::RenderTargetAttachment))
     {
         for (PackedAttachmentIndex index = kAttachmentIndexZero; index < mColorAttachmentsCount;
              ++index)
         {
-            if (mColorAttachments[index].getImage() == image)
+            if (mColorAttachments[index].hasImage(image, imageSiblingSerial))
             {
                 finalizeColorImageLayoutAndLoadStore(context, index);
                 mColorAttachments[index].reset();
             }
-            else if (mColorResolveAttachments[index].getImage() == image)
+            else if (mColorResolveAttachments[index].hasImage(image, imageSiblingSerial))
             {
                 finalizeColorImageLayout(context, mColorResolveAttachments[index].getImage(), index,
                                          true);
@@ -2116,14 +2125,14 @@ void RenderPassCommandBufferHelper::finalizeImageLayout(Context *context, const 
         }
     }
 
-    if (mDepthAttachment.getImage() == image)
+    if (mDepthAttachment.hasImage(image, imageSiblingSerial))
     {
         finalizeDepthStencilImageLayoutAndLoadStore(context);
         mDepthAttachment.reset();
         mStencilAttachment.reset();
     }
 
-    if (mDepthResolveAttachment.getImage() == image)
+    if (mDepthResolveAttachment.hasImage(image, imageSiblingSerial))
     {
         finalizeDepthStencilResolveImageLayout(context);
         mDepthResolveAttachment.reset();
@@ -4589,7 +4598,8 @@ angle::Result BufferHelper::initExternal(ContextVk *contextVk,
 angle::Result BufferHelper::initSuballocation(ContextVk *contextVk,
                                               uint32_t memoryTypeIndex,
                                               size_t size,
-                                              size_t alignment)
+                                              size_t alignment,
+                                              BufferUsageType usageType)
 {
     RendererVk *renderer = contextVk->getRenderer();
 
@@ -4604,13 +4614,15 @@ angle::Result BufferHelper::initSuballocation(ContextVk *contextVk,
         size += maxVertexAttribStride;
     }
 
-    vk::BufferPool *pool = contextVk->getDefaultBufferPool(size, memoryTypeIndex);
+    vk::BufferPool *pool = contextVk->getDefaultBufferPool(size, memoryTypeIndex, usageType);
     ANGLE_TRY(pool->allocateBuffer(contextVk, size, alignment, &mSuballocation));
 
     if (renderer->getFeatures().allocateNonZeroMemory.enabled)
     {
         ANGLE_TRY(initializeNonZeroMemory(contextVk, GetDefaultBufferUsageFlags(renderer), size));
     }
+
+    contextVk->getPerfCounters().bufferSuballocationCalls++;
 
     return angle::Result::Continue;
 }
@@ -4622,7 +4634,7 @@ angle::Result BufferHelper::allocateForCopyBuffer(ContextVk *contextVk,
     RendererVk *renderer     = contextVk->getRenderer();
     uint32_t memoryTypeIndex = renderer->getStagingBufferMemoryTypeIndex(coherency);
     size_t alignment         = renderer->getStagingBufferAlignment();
-    return initSuballocation(contextVk, memoryTypeIndex, size, alignment);
+    return initSuballocation(contextVk, memoryTypeIndex, size, alignment, BufferUsageType::Dynamic);
 }
 
 angle::Result BufferHelper::allocateForVertexConversion(ContextVk *contextVk,
@@ -4661,7 +4673,8 @@ angle::Result BufferHelper::allocateForVertexConversion(ContextVk *contextVk,
     // size anyway.
     size_t sizeToAllocate = roundUp(size, alignment);
 
-    return initSuballocation(contextVk, memoryTypeIndex, sizeToAllocate, alignment);
+    return initSuballocation(contextVk, memoryTypeIndex, sizeToAllocate, alignment,
+                             BufferUsageType::Static);
 }
 
 angle::Result BufferHelper::allocateForCopyImage(ContextVk *contextVk,
@@ -4684,7 +4697,8 @@ angle::Result BufferHelper::allocateForCopyImage(ContextVk *contextVk,
     allocationSize          = roundUp(allocationSize, imageCopyAlignment);
     size_t stagingAlignment = static_cast<size_t>(renderer->getStagingBufferAlignment());
 
-    ANGLE_TRY(initSuballocation(contextVk, memoryTypeIndex, allocationSize, stagingAlignment));
+    ANGLE_TRY(initSuballocation(contextVk, memoryTypeIndex, allocationSize, stagingAlignment,
+                                BufferUsageType::Static));
 
     *offset  = roundUp(getOffset(), static_cast<VkDeviceSize>(imageCopyAlignment));
     *dataPtr = getMappedMemory() + (*offset) - getOffset();
@@ -5046,43 +5060,6 @@ void BufferHelper::fillWithColor(const angle::Color<uint8_t> &color,
 ImageHelper::ImageHelper()
 {
     resetCachedProperties();
-}
-
-ImageHelper::ImageHelper(ImageHelper &&other)
-    : Resource(std::move(other)),
-      mImage(std::move(other.mImage)),
-      mDeviceMemory(std::move(other.mDeviceMemory)),
-      mVmaAllocation(std::move(other.mVmaAllocation)),
-      mImageType(other.mImageType),
-      mTilingMode(other.mTilingMode),
-      mCreateFlags(other.mCreateFlags),
-      mUsage(other.mUsage),
-      mExtents(other.mExtents),
-      mRotatedAspectRatio(other.mRotatedAspectRatio),
-      mIntendedFormatID(other.mIntendedFormatID),
-      mActualFormatID(other.mActualFormatID),
-      mSamples(other.mSamples),
-      mImageSerial(other.mImageSerial),
-      mCurrentLayout(other.mCurrentLayout),
-      mCurrentQueueFamilyIndex(other.mCurrentQueueFamilyIndex),
-      mLastNonShaderReadOnlyLayout(other.mLastNonShaderReadOnlyLayout),
-      mCurrentShaderReadStageMask(other.mCurrentShaderReadStageMask),
-      mYcbcrConversionDesc(other.mYcbcrConversionDesc),
-      mFirstAllocatedLevel(other.mFirstAllocatedLevel),
-      mLayerCount(other.mLayerCount),
-      mLevelCount(other.mLevelCount),
-      mViewFormats(other.mViewFormats),
-      mSubresourceUpdates(std::move(other.mSubresourceUpdates)),
-      mTotalStagedBufferUpdateSize(other.mTotalStagedBufferUpdateSize),
-      mCurrentSingleClearValue(std::move(other.mCurrentSingleClearValue)),
-      mContentDefined(std::move(other.mContentDefined)),
-      mStencilContentDefined(std::move(other.mStencilContentDefined)),
-      mAllocationSize(std::move(other.mAllocationSize)),
-      mMemoryAllocationType(std::move(other.mMemoryAllocationType)),
-      mMemoryTypeIndex(std::move(other.mMemoryTypeIndex))
-{
-    ASSERT(this != &other);
-    other.resetCachedProperties();
 }
 
 ImageHelper::~ImageHelper()
@@ -5508,18 +5485,26 @@ void ImageHelper::releaseImage(RendererVk *renderer)
     setEntireContentUndefined();
 }
 
-void ImageHelper::releaseImageFromShareContexts(RendererVk *renderer, ContextVk *contextVk)
+void ImageHelper::releaseImageFromShareContexts(RendererVk *renderer,
+                                                ContextVk *contextVk,
+                                                UniqueSerial imageSiblingSerial)
+{
+    finalizeImageLayoutInShareContexts(renderer, contextVk, imageSiblingSerial);
+    releaseImage(renderer);
+}
+
+void ImageHelper::finalizeImageLayoutInShareContexts(RendererVk *renderer,
+                                                     ContextVk *contextVk,
+                                                     UniqueSerial imageSiblingSerial)
 {
     if (contextVk && mImageSerial.valid())
     {
         const ContextVkSet &shareContextSet = contextVk->getShareGroup()->getContexts();
         for (ContextVk *ctx : shareContextSet)
         {
-            ctx->finalizeImageLayout(this);
+            ctx->finalizeImageLayout(this, imageSiblingSerial);
         }
     }
-
-    releaseImage(renderer);
 }
 
 void ImageHelper::releaseStagedUpdates(RendererVk *renderer)
@@ -7950,7 +7935,7 @@ void ImageHelper::stageSelfAsSubresourceUpdates(ContextVk *contextVk,
     // Because we are cloning this object to another object, we must finalize the layout if it is
     // being used by current renderpass as attachment. Otherwise we are copying the incorrect layout
     // since it is determined at endRenderPass time.
-    contextVk->finalizeImageLayout(this);
+    contextVk->finalizeImageLayout(this, {});
 
     std::unique_ptr<RefCounted<ImageHelper>> prevImage =
         std::make_unique<RefCounted<ImageHelper>>();
@@ -8317,12 +8302,19 @@ angle::Result ImageHelper::flushStagedUpdates(ContextVk *contextVk,
                     commandBuffer->copyBufferToImage(currentBuffer->getBuffer().getHandle(), mImage,
                                                      getCurrentLayout(contextVk), 1, copyRegion);
                 }
-                ANGLE_TRY(contextVk->onCopyUpdate(currentBuffer->getSize()));
+                bool commandBufferWasFlushed = false;
+                ANGLE_TRY(
+                    contextVk->onCopyUpdate(currentBuffer->getSize(), &commandBufferWasFlushed));
                 onWrite(updateMipLevelGL, 1, updateBaseLayer, updateLayerCount,
                         copyRegion->imageSubresource.aspectMask);
 
                 // Update total staging buffer size
                 mTotalStagedBufferUpdateSize -= bufferUpdate.bufferHelper->getSize();
+
+                if (commandBufferWasFlushed)
+                {
+                    ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer({}, &commandBuffer));
+                }
             }
             else
             {

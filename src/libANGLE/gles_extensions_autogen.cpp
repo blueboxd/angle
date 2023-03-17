@@ -181,6 +181,7 @@ const ExtensionInfoMap &GetExtensionInfoMap()
         map["GL_EXT_texture_cube_map_array"] = enableableExtension(&Extensions::textureCubeMapArrayEXT);
         map["GL_OES_texture_cube_map_array"] = enableableExtension(&Extensions::textureCubeMapArrayOES);
         map["GL_EXT_texture_filter_anisotropic"] = enableableExtension(&Extensions::textureFilterAnisotropicEXT);
+        map["GL_EXT_texture_filter_minmax"] = enableableExtension(&Extensions::textureFilterMinmaxEXT);
         map["GL_OES_texture_float"] = enableableExtension(&Extensions::textureFloatOES);
         map["GL_OES_texture_float_linear"] = enableableExtension(&Extensions::textureFloatLinearOES);
         map["GL_EXT_texture_format_BGRA8888"] = enableableExtension(&Extensions::textureFormatBGRA8888EXT);
@@ -246,8 +247,8 @@ const ExtensionInfoMap &GetExtensionInfoMap()
         map["GL_ANGLE_robust_resource_initialization"] = esOnlyExtension(&Extensions::robustResourceInitializationANGLE);
         map["GL_ANGLE_semaphore_fuchsia"] = enableableExtension(&Extensions::semaphoreFuchsiaANGLE);
         map["GL_ANGLE_shader_binary"] = esOnlyExtension(&Extensions::shaderBinaryANGLE);
-        map["GL_ANGLE_shader_pixel_local_storage"] = esOnlyExtension(&Extensions::shaderPixelLocalStorageANGLE);
-        map["GL_ANGLE_shader_pixel_local_storage_coherent"] = esOnlyExtension(&Extensions::shaderPixelLocalStorageCoherentANGLE);
+        map["GL_ANGLE_shader_pixel_local_storage"] = enableableExtension(&Extensions::shaderPixelLocalStorageANGLE);
+        map["GL_ANGLE_shader_pixel_local_storage_coherent"] = enableableExtension(&Extensions::shaderPixelLocalStorageCoherentANGLE);
         map["GL_ANGLE_stencil_texturing"] = enableableExtension(&Extensions::stencilTexturingANGLE);
         map["GL_CHROMIUM_sync_query"] = enableableExtension(&Extensions::syncQueryCHROMIUM);
         map["GL_ANGLE_texture_compression_dxt3"] = enableableExtension(&Extensions::textureCompressionDxt3ANGLE);

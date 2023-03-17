@@ -105,7 +105,7 @@
     void bufferStorage(BufferBinding targetPacked, GLsizeiptr size, const void *data,              \
                        GLbitfield flags);                                                          \
     /* GL_EXT_clip_control */                                                                      \
-    void clipControl(GLenum origin, GLenum depth);                                                 \
+    void clipControl(ClipOrigin originPacked, ClipDepthMode depthPacked);                          \
     /* GL_EXT_clip_cull_distance */                                                                \
     /* GL_EXT_color_buffer_float */                                                                \
     /* GL_EXT_color_buffer_half_float */                                                           \
@@ -229,6 +229,7 @@
     /* GL_EXT_texture_compression_s3tc_srgb */                                                     \
     /* GL_EXT_texture_cube_map_array */                                                            \
     /* GL_EXT_texture_filter_anisotropic */                                                        \
+    /* GL_EXT_texture_filter_minmax */                                                             \
     /* GL_EXT_texture_format_BGRA8888 */                                                           \
     /* GL_EXT_texture_format_sRGB_override */                                                      \
     /* GL_EXT_texture_mirror_clamp_to_edge */                                                      \
@@ -588,6 +589,10 @@
     void pixelLocalStorageBarrier();                                                               \
     void getFramebufferPixelLocalStorageParameterfv(GLint plane, GLenum pname, GLfloat *params);   \
     void getFramebufferPixelLocalStorageParameteriv(GLint plane, GLenum pname, GLint *params);     \
+    void getFramebufferPixelLocalStorageParameterfvRobust(                                         \
+        GLint plane, GLenum pname, GLsizei bufSize, GLsizei *length, GLfloat *params);             \
+    void getFramebufferPixelLocalStorageParameterivRobust(                                         \
+        GLint plane, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);               \
     /* GL_ANGLE_shader_pixel_local_storage_coherent */                                             \
     /* GL_ANGLE_stencil_texturing */                                                               \
     /* GL_ANGLE_texture_compression_dxt3 */                                                        \

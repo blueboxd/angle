@@ -121,20 +121,23 @@ class CommandProcessorTask
 
     void initTask();
 
+    void initFlushWaitSemaphores(ProtectionType protectionType,
+                                 egl::ContextPriority priority,
+                                 std::vector<VkSemaphore> &&waitSemaphores,
+                                 std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks);
+
     void initOutsideRenderPassProcessCommands(ProtectionType protectionType,
+                                              egl::ContextPriority priority,
                                               OutsideRenderPassCommandBufferHelper *commandBuffer);
 
     void initRenderPassProcessCommands(ProtectionType protectionType,
+                                       egl::ContextPriority priority,
                                        RenderPassCommandBufferHelper *commandBuffer,
                                        const RenderPass *renderPass);
 
     void initPresent(egl::ContextPriority priority,
                      const VkPresentInfoKHR &presentInfo,
                      SwapchainStatus *swapchainStatus);
-
-    void initFlushWaitSemaphores(ProtectionType protectionType,
-                                 std::vector<VkSemaphore> &&waitSemaphores,
-                                 std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks);
 
     void initFlushAndQueueSubmit(const VkSemaphore semaphore,
                                  ProtectionType protectionType,
@@ -396,22 +399,37 @@ class CommandQueue : angle::NonCopyable
                       const VkPresentInfoKHR &presentInfo,
                       SwapchainStatus *swapchainStatus);
 
-    angle::Result checkCompletedCommands(Context *context, bool *anyCommandFinished)
+    angle::Result checkCompletedCommands(Context *context)
     {
         std::lock_guard<std::mutex> lock(mMutex);
-        ANGLE_TRY(checkCompletedCommandsLocked(context));
-        *anyCommandFinished = !mFinishedCommandBatches.empty();
+        return checkCompletedCommandsLocked(context);
+    }
+
+    bool hasFinishedCommands() const { return !mFinishedCommandBatches.empty(); }
+
+    angle::Result checkAndCleanupCompletedCommands(Context *context)
+    {
+        ANGLE_TRY(checkCompletedCommands(context));
+
+        if (!mFinishedCommandBatches.empty())
+        {
+            ANGLE_TRY(retireFinishedCommandsAndCleanupGarbage(context));
+        }
+
         return angle::Result::Continue;
     }
 
     void flushWaitSemaphores(ProtectionType protectionType,
+                             egl::ContextPriority priority,
                              std::vector<VkSemaphore> &&waitSemaphores,
                              std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks);
     angle::Result flushOutsideRPCommands(Context *context,
                                          ProtectionType protectionType,
+                                         egl::ContextPriority priority,
                                          OutsideRenderPassCommandBufferHelper **outsideRPCommands);
     angle::Result flushRenderPassCommands(Context *context,
                                           ProtectionType protectionType,
+                                          egl::ContextPriority priority,
                                           const RenderPass &renderPass,
                                           RenderPassCommandBufferHelper **renderPassCommands);
 
@@ -449,20 +467,25 @@ class CommandQueue : angle::NonCopyable
                               DeviceScoped<CommandBatch> &commandBatch,
                               const QueueSerial &submitQueueSerial);
 
-    angle::Result ensurePrimaryCommandBufferValid(Context *context, ProtectionType protectionType);
+    angle::Result ensurePrimaryCommandBufferValid(Context *context,
+                                                  ProtectionType protectionType,
+                                                  egl::ContextPriority priority);
 
     struct CommandsState
     {
         std::vector<VkSemaphore> waitSemaphores;
         std::vector<VkPipelineStageFlags> waitSemaphoreStageMasks;
         PrimaryCommandBuffer primaryCommands;
-        // Keeps a free list of reusable primary command buffers.
-        PersistentCommandPool primaryCommandPool;
     };
+
+    using CommandsStateMap =
+        angle::PackedEnumMap<egl::ContextPriority,
+                             angle::PackedEnumMap<ProtectionType, CommandsState>>;
+    using PrimaryCommandPoolMap = angle::PackedEnumMap<ProtectionType, PersistentCommandPool>;
 
     angle::Result initCommandPool(Context *context, ProtectionType protectionType)
     {
-        PersistentCommandPool &commandPool = mCommandsStateMap[protectionType].primaryCommandPool;
+        PersistentCommandPool &commandPool = mPrimaryCommandPoolMap[protectionType];
         return commandPool.init(context, protectionType, mQueueMap.getIndex());
     }
 
@@ -476,7 +499,9 @@ class CommandQueue : angle::NonCopyable
     // Temporary storage for finished command batches that should be reset.
     angle::FixedQueue<CommandBatch, kMaxFinishedCommandsLimit> mFinishedCommandBatches;
 
-    angle::PackedEnumMap<ProtectionType, CommandsState> mCommandsStateMap;
+    CommandsStateMap mCommandsStateMap;
+    // Keeps a free list of reusable primary command buffers.
+    PrimaryCommandPoolMap mPrimaryCommandPoolMap;
 
     // Queue serial management.
     AtomicQueueSerialFixedArray mLastSubmittedSerials;
@@ -540,15 +565,18 @@ class CommandProcessor : public Context
 
     angle::Result enqueueFlushWaitSemaphores(
         ProtectionType protectionType,
+        egl::ContextPriority priority,
         std::vector<VkSemaphore> &&waitSemaphores,
         std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks);
     angle::Result enqueueFlushOutsideRPCommands(
         Context *context,
         ProtectionType protectionType,
+        egl::ContextPriority priority,
         OutsideRenderPassCommandBufferHelper **outsideRPCommands);
     angle::Result enqueueFlushRenderPassCommands(
         Context *context,
         ProtectionType protectionType,
+        egl::ContextPriority priority,
         const RenderPass &renderPass,
         RenderPassCommandBufferHelper **renderPassCommands);
 

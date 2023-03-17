@@ -21,7 +21,7 @@ namespace rx
 {
 class RendererVk;
 
-class SurfaceVk : public SurfaceImpl, public angle::ObserverInterface, public vk::Resource
+class SurfaceVk : public SurfaceImpl, public angle::ObserverInterface
 {
   public:
     angle::Result getAttachmentRenderTarget(const gl::Context *context,
@@ -185,13 +185,13 @@ struct SwapchainImage : angle::NonCopyable
     SwapchainImage(SwapchainImage &&other);
     ~SwapchainImage();
 
-    vk::ImageHelper image;
+    std::unique_ptr<vk::ImageHelper> image;
     vk::ImageViewHelper imageViews;
     vk::Framebuffer framebuffer;
     vk::Framebuffer fetchFramebuffer;
     vk::Framebuffer framebufferResolveMS;
 
-    uint64_t mFrameNumber = 0;
+    uint64_t frameNumber = 0;
 };
 }  // namespace impl
 
@@ -377,9 +377,6 @@ class WindowSurfaceVk : public SurfaceVk
     // presented).  This is a failsafe, as the application should ensure command buffer recording is
     // not ahead of the frame being rendered by *one* frame.
     angle::Result throttleCPU(ContextVk *contextVk, const QueueSerial &currentSubmitSerial);
-
-    // Finish all GPU operations on the surface
-    angle::Result finish(vk::Context *context);
 
     void updateOverlay(ContextVk *contextVk) const;
     bool overlayHasEnabledWidget(ContextVk *contextVk) const;

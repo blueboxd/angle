@@ -894,6 +894,20 @@ bool ValidateGetFramebufferPixelLocalStorageParameterivANGLE(const Context *cont
                                                              GLint plane,
                                                              GLenum pname,
                                                              const GLint *params);
+bool ValidateGetFramebufferPixelLocalStorageParameterfvRobustANGLE(const Context *context,
+                                                                   angle::EntryPoint entryPoint,
+                                                                   GLint plane,
+                                                                   GLenum pname,
+                                                                   GLsizei bufSize,
+                                                                   const GLsizei *length,
+                                                                   const GLfloat *params);
+bool ValidateGetFramebufferPixelLocalStorageParameterivRobustANGLE(const Context *context,
+                                                                   angle::EntryPoint entryPoint,
+                                                                   GLint plane,
+                                                                   GLenum pname,
+                                                                   GLsizei bufSize,
+                                                                   const GLsizei *length,
+                                                                   const GLint *params);
 
 // GL_ANGLE_stencil_texturing
 
@@ -1094,8 +1108,8 @@ bool ValidateBufferStorageEXT(const Context *context,
 // GL_EXT_clip_control
 bool ValidateClipControlEXT(const Context *context,
                             angle::EntryPoint entryPoint,
-                            GLenum origin,
-                            GLenum depth);
+                            ClipOrigin originPacked,
+                            ClipDepthMode depthPacked);
 
 // GL_EXT_clip_cull_distance
 
@@ -1926,6 +1940,8 @@ bool ValidateTexBufferRangeEXT(const Context *context,
 // GL_EXT_texture_cube_map_array
 
 // GL_EXT_texture_filter_anisotropic
+
+// GL_EXT_texture_filter_minmax
 
 // GL_EXT_texture_format_BGRA8888
 

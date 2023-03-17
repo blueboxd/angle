@@ -325,6 +325,7 @@ angle::Result TextureGL::setSubImage(const gl::Context *context,
 {
     ASSERT(TextureTargetToType(index.getTarget()) == getType());
 
+    ContextGL *contextGL              = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions      = GetFunctionsGL(context);
     StateManagerGL *stateManager      = GetStateManagerGL(context);
     const angle::FeaturesGL &features = GetFeaturesGL(context);
@@ -344,8 +345,10 @@ angle::Result TextureGL::setSubImage(const gl::Context *context,
     if (features.unpackOverlappingRowsSeparatelyUnpackBuffer.enabled && unpackBuffer &&
         unpack.rowLength != 0 && unpack.rowLength < area.width)
     {
-        return setSubImageRowByRowWorkaround(context, target, level, area, format, type, unpack,
-                                             unpackBuffer, 0, pixels);
+        ANGLE_TRY(setSubImageRowByRowWorkaround(context, target, level, area, format, type, unpack,
+                                                unpackBuffer, 0, pixels));
+        contextGL->markWorkSubmitted();
+        return angle::Result::Continue;
     }
 
     if (features.unpackLastRowSeparatelyForPaddingInclusion.enabled)
@@ -361,16 +364,20 @@ angle::Result TextureGL::setSubImage(const gl::Context *context,
         // by uploading the last row (and last level if 3D) separately.
         if (apply)
         {
-            return setSubImagePaddingWorkaround(context, target, level, area, format, type, unpack,
-                                                unpackBuffer, pixels);
+            ANGLE_TRY(setSubImagePaddingWorkaround(context, target, level, area, format, type,
+                                                   unpack, unpackBuffer, pixels));
+            contextGL->markWorkSubmitted();
+            return angle::Result::Continue;
         }
     }
 
     if (features.uploadTextureDataInChunks.enabled)
     {
-        return setSubImageRowByRowWorkaround(context, target, level, area, format, type, unpack,
-                                             unpackBuffer, kUploadTextureDataInChunksUploadSize,
-                                             pixels);
+        ANGLE_TRY(setSubImageRowByRowWorkaround(context, target, level, area, format, type, unpack,
+                                                unpackBuffer, kUploadTextureDataInChunksUploadSize,
+                                                pixels));
+        contextGL->markWorkSubmitted();
+        return angle::Result::Continue;
     }
 
     if (nativegl::UseTexImage2D(getType()))
@@ -391,6 +398,7 @@ angle::Result TextureGL::setSubImage(const gl::Context *context,
                                   texSubImageFormat.format, texSubImageFormat.type, pixels));
     }
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -577,6 +585,7 @@ angle::Result TextureGL::setCompressedImage(const gl::Context *context,
                                             size_t imageSize,
                                             const uint8_t *pixels)
 {
+    ContextGL *contextGL              = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions      = GetFunctionsGL(context);
     StateManagerGL *stateManager      = GetStateManagerGL(context);
     const angle::FeaturesGL &features = GetFeaturesGL(context);
@@ -617,6 +626,7 @@ angle::Result TextureGL::setCompressedImage(const gl::Context *context,
     ASSERT(!levelInfo.lumaWorkaround.enabled);
     setLevelInfo(context, target, level, 1, levelInfo);
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -628,6 +638,7 @@ angle::Result TextureGL::setCompressedSubImage(const gl::Context *context,
                                                size_t imageSize,
                                                const uint8_t *pixels)
 {
+    ContextGL *contextGL              = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions      = GetFunctionsGL(context);
     StateManagerGL *stateManager      = GetStateManagerGL(context);
     const angle::FeaturesGL &features = GetFeaturesGL(context);
@@ -663,6 +674,7 @@ angle::Result TextureGL::setCompressedSubImage(const gl::Context *context,
            !GetLevelInfo(features, originalInternalFormatInfo, compressedTexSubImageFormat.format)
                 .lumaWorkaround.enabled);
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -840,6 +852,7 @@ angle::Result TextureGL::copyImage(const gl::Context *context,
         contextGL->setNeedsFlushBeforeDeleteTextures();
     }
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -849,6 +862,7 @@ angle::Result TextureGL::copySubImage(const gl::Context *context,
                                       const gl::Rectangle &sourceArea,
                                       gl::Framebuffer *source)
 {
+    ContextGL *contextGL              = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions      = GetFunctionsGL(context);
     StateManagerGL *stateManager      = GetStateManagerGL(context);
     const angle::FeaturesGL &features = GetFeaturesGL(context);
@@ -917,10 +931,10 @@ angle::Result TextureGL::copySubImage(const gl::Context *context,
 
     if (features.flushBeforeDeleteTextureIfCopiedTo.enabled)
     {
-        ContextGL *contextGL = GetImplAs<ContextGL>(context);
         contextGL->setNeedsFlushBeforeDeleteTextures();
     }
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -981,6 +995,7 @@ angle::Result TextureGL::copySubTextureHelper(const gl::Context *context,
                                               bool unpackUnmultiplyAlpha,
                                               const gl::Texture *source)
 {
+    ContextGL *contextGL              = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions      = GetFunctionsGL(context);
     const angle::FeaturesGL &features = GetFeaturesGL(context);
     BlitGL *blitter                   = GetBlitGL(context);
@@ -993,7 +1008,6 @@ angle::Result TextureGL::copySubTextureHelper(const gl::Context *context,
     {
         // Conservatively indicate that this workaround is necessary. Not clear
         // if it is on this code path, but added for symmetry.
-        ContextGL *contextGL = GetImplAs<ContextGL>(context);
         contextGL->setNeedsFlushBeforeDeleteTextures();
     }
 
@@ -1023,6 +1037,7 @@ angle::Result TextureGL::copySubTextureHelper(const gl::Context *context,
                                            sourceArea, destOffset, &copySucceeded));
         if (copySucceeded)
         {
+            contextGL->markWorkSubmitted();
             return angle::Result::Continue;
         }
     }
@@ -1044,16 +1059,19 @@ angle::Result TextureGL::copySubTextureHelper(const gl::Context *context,
             unpackUnmultiplyAlpha, &copySucceeded));
         if (copySucceeded)
         {
+            contextGL->markWorkSubmitted();
             return angle::Result::Continue;
         }
     }
 
     // Fall back to CPU-readback
-    return blitter->copySubTextureCPUReadback(
+    ANGLE_TRY(blitter->copySubTextureCPUReadback(
         context, sourceGL, sourceLevel, sourceFormatInfo.sizedInternalFormat, this, target, level,
         destFormat.format, destFormat.type, sourceImageDesc.size, sourceArea, destOffset,
         needsLumaWorkaround, sourceLevelInfo.sourceFormat, unpackFlipY, unpackPremultiplyAlpha,
-        unpackUnmultiplyAlpha);
+        unpackUnmultiplyAlpha));
+    contextGL->markWorkSubmitted();
+    return angle::Result::Continue;
 }
 
 angle::Result TextureGL::setStorage(const gl::Context *context,
@@ -1380,6 +1398,7 @@ angle::Result TextureGL::setImageExternal(const gl::Context *context,
 
 angle::Result TextureGL::generateMipmap(const gl::Context *context)
 {
+    ContextGL *contextGL              = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions      = GetFunctionsGL(context);
     StateManagerGL *stateManager      = GetStateManagerGL(context);
     const angle::FeaturesGL &features = GetFeaturesGL(context);
@@ -1434,6 +1453,7 @@ angle::Result TextureGL::generateMipmap(const gl::Context *context)
     setLevelInfo(context, getType(), effectiveBaseLevel, maxLevel - effectiveBaseLevel,
                  getBaseLevelInfo());
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -2102,6 +2122,7 @@ angle::Result TextureGL::initializeContents(const gl::Context *context,
                                                   imageIndex, &clearSucceeded));
         if (clearSucceeded)
         {
+            contextGL->markWorkSubmitted();
             return angle::Result::Continue;
         }
     }
@@ -2200,6 +2221,7 @@ angle::Result TextureGL::initializeContents(const gl::Context *context,
     ANGLE_TRY(stateManager->setPixelUnpackState(context, context->getState().getUnpackState()));
     stateManager->bindBuffer(gl::BufferBinding::PixelUnpack, prevUnpackBuffer);
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
