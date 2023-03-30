@@ -278,6 +278,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     angle::Result syncState(const gl::Context *context,
                             const gl::State::DirtyBits &dirtyBits,
                             const gl::State::DirtyBits &bitMask,
+                            const gl::State::ExtendedDirtyBits &extendedDirtyBits,
+                            const gl::State::ExtendedDirtyBits &extendedBitMask,
                             gl::Command command) override;
 
     // Disjoint timer queries
@@ -791,6 +793,13 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     }
 
     const QueueSerial &getLastSubmittedQueueSerial() const { return mLastSubmittedQueueSerial; }
+
+    // Uploading mutable mipmap textures is currently restricted to single-context applications.
+    bool isEligibleForMutableTextureFlush() const
+    {
+        return getFeatures().mutableMipmapTextureUpload.enabled && !hasDisplayTextureShareGroup() &&
+               mShareGroupVk->getContextCount() == 1;
+    }
 
   private:
     // Dirty bits.

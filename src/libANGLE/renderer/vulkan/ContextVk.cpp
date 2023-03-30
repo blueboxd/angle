@@ -953,8 +953,12 @@ ContextVk::ContextVk(const gl::State &state, gl::ErrorSet *errorSet, RendererVk 
         mDynamicStateDirtyBits |= DirtyBits{
             DIRTY_BIT_DYNAMIC_RASTERIZER_DISCARD_ENABLE,
             DIRTY_BIT_DYNAMIC_DEPTH_BIAS_ENABLE,
-            DIRTY_BIT_DYNAMIC_PRIMITIVE_RESTART_ENABLE,
         };
+
+        if (!getFeatures().forceStaticPrimitiveRestartState.enabled)
+        {
+            mDynamicStateDirtyBits.set(DIRTY_BIT_DYNAMIC_PRIMITIVE_RESTART_ENABLE);
+        }
     }
     if (getFeatures().supportsLogicOpDynamicState.enabled)
     {
@@ -1136,7 +1140,11 @@ ContextVk::ContextVk(const gl::State &state, gl::ErrorSet *errorSet, RendererVk 
     {
         mPipelineDirtyBitsMask.reset(gl::State::DIRTY_BIT_RASTERIZER_DISCARD_ENABLED);
         mPipelineDirtyBitsMask.reset(gl::State::DIRTY_BIT_POLYGON_OFFSET_FILL_ENABLED);
-        mPipelineDirtyBitsMask.reset(gl::State::DIRTY_BIT_PRIMITIVE_RESTART_ENABLED);
+
+        if (!getFeatures().forceStaticPrimitiveRestartState.enabled)
+        {
+            mPipelineDirtyBitsMask.reset(gl::State::DIRTY_BIT_PRIMITIVE_RESTART_ENABLED);
+        }
     }
 
     angle::PerfMonitorCounterGroup vulkanGroup;
@@ -1195,12 +1203,17 @@ void ContextVk::onDestroy(const gl::Context *context)
     }
 
     // Recycle current command buffers.
+
+    // Release functions are only used for Vulkan secondary command buffers.
+    mOutsideRenderPassCommands->releaseCommandPool();
+    mRenderPassCommands->releaseCommandPool();
+
     // Detach functions are only used for ring buffer allocators.
     mOutsideRenderPassCommands->detachAllocator();
     mRenderPassCommands->detachAllocator();
 
-    mRenderer->recycleOutsideRenderPassCommandBufferHelper(device, &mOutsideRenderPassCommands);
-    mRenderer->recycleRenderPassCommandBufferHelper(device, &mRenderPassCommands);
+    mRenderer->recycleOutsideRenderPassCommandBufferHelper(&mOutsideRenderPassCommands);
+    mRenderer->recycleRenderPassCommandBufferHelper(&mRenderPassCommands);
 
     mVertexInputGraphicsPipelineCache.destroy(this);
     mFragmentOutputGraphicsPipelineCache.destroy(this);
@@ -1212,6 +1225,17 @@ void ContextVk::onDestroy(const gl::Context *context)
     mRenderPassCache.destroy(this);
     mShaderLibrary.destroy(device);
     mGpuEventQueryPool.destroy(device);
+
+    // Must retire all Vulkan secondary command buffers before destroying the pools.
+    if ((!vk::OutsideRenderPassCommandBuffer::ExecutesInline() ||
+         !vk::RenderPassCommandBuffer::ExecutesInline()) &&
+        mRenderer->isAsyncCommandBufferResetEnabled())
+    {
+        // This will also reset Primary command buffers which is REQUIRED on some buggy Vulkan
+        // implementations.
+        (void)mRenderer->retireFinishedCommands(this);
+    }
+
     mCommandPools.outsideRenderPassPool.destroy(device);
     mCommandPools.renderPassPool.destroy(device);
 
@@ -1365,6 +1389,17 @@ angle::Result ContextVk::initialize()
     emptyBufferInfo.pQueueFamilyIndices         = nullptr;
     constexpr VkMemoryPropertyFlags kMemoryType = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     ANGLE_TRY(mEmptyBuffer.init(this, emptyBufferInfo, kMemoryType));
+
+    // If the share group has one context and is about to add the second one, the first context's
+    // mutable textures should be flushed.
+    if (isEligibleForMutableTextureFlush())
+    {
+        ASSERT(mShareGroupVk->getContextCount() == 1);
+        for (auto context : mShareGroupVk->getContexts())
+        {
+            ANGLE_TRY(context->flushOutsideRenderPassCommands());
+        }
+    }
 
     // Add context into the share group
     mShareGroupVk->addContext(this);
@@ -3167,7 +3202,7 @@ angle::Result ContextVk::handleDirtyDescriptorSetsImpl(CommandBufferHelperT *com
 {
     // When using Vulkan secondary command buffers, the descriptor sets need to be updated before
     // they are bound.
-    if (!commandBufferHelper->getCommandBuffer().ExecutesInline())
+    if (!CommandBufferHelperT::ExecutesInline())
     {
         flushDescriptorSetUpdates();
     }
@@ -3752,9 +3787,10 @@ void ContextVk::clearAllGarbage()
 
 void ContextVk::handleDeviceLost()
 {
-    (void)mOutsideRenderPassCommands->reset(this);
-    (void)mRenderPassCommands->reset(this);
-    mRenderer->notifyDeviceLost();
+    vk::SecondaryCommandBufferCollector collector;
+    (void)mOutsideRenderPassCommands->reset(this, &collector);
+    (void)mRenderPassCommands->reset(this, &collector);
+    collector.retireCommandBuffers();
 }
 
 angle::Result ContextVk::drawArrays(const gl::Context *context,
@@ -5088,6 +5124,8 @@ angle::Result ContextVk::invalidateProgramExecutableHelper(const gl::Context *co
 angle::Result ContextVk::syncState(const gl::Context *context,
                                    const gl::State::DirtyBits &dirtyBits,
                                    const gl::State::DirtyBits &bitMask,
+                                   const gl::State::ExtendedDirtyBits &extendedDirtyBits,
+                                   const gl::State::ExtendedDirtyBits &extendedBitMask,
                                    gl::Command command)
 {
     const gl::State &glState                       = context->getState();
@@ -5278,7 +5316,8 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_LINE_WIDTH);
                 break;
             case gl::State::DIRTY_BIT_PRIMITIVE_RESTART_ENABLED:
-                if (getFeatures().supportsExtendedDynamicState2.enabled)
+                if (getFeatures().supportsExtendedDynamicState2.enabled &&
+                    !getFeatures().forceStaticPrimitiveRestartState.enabled)
                 {
                     mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_PRIMITIVE_RESTART_ENABLE);
                 }
@@ -5507,8 +5546,6 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 break;
             case gl::State::DIRTY_BIT_EXTENDED:
             {
-                gl::State::ExtendedDirtyBits extendedDirtyBits =
-                    glState.getAndResetExtendedDirtyBits();
                 for (size_t extendedDirtyBit : extendedDirtyBits)
                 {
                     switch (extendedDirtyBit)
@@ -5538,6 +5575,8 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                             break;
                         case gl::State::EXTENDED_DIRTY_BIT_CLIP_DISTANCES:
                             invalidateGraphicsDriverUniforms();
+                            break;
+                        case gl::State::EXTENDED_DIRTY_BIT_DEPTH_CLAMP_ENABLED:
                             break;
                         case gl::State::EXTENDED_DIRTY_BIT_MIPMAP_GENERATION_HINT:
                             break;
