@@ -183,6 +183,7 @@ const ExtensionInfoMap &GetExtensionInfoMap()
         map["GL_EXT_texture_format_sRGB_override"] = esOnlyExtension(&Extensions::textureFormatSRGBOverrideEXT);
         map["GL_OES_texture_half_float"] = enableableExtension(&Extensions::textureHalfFloatOES);
         map["GL_OES_texture_half_float_linear"] = enableableExtension(&Extensions::textureHalfFloatLinearOES);
+        map["GL_EXT_texture_mirror_clamp_to_edge"] = enableableExtension(&Extensions::textureMirrorClampToEdgeEXT);
         map["GL_EXT_texture_norm16"] = enableableExtension(&Extensions::textureNorm16EXT);
         map["GL_OES_texture_npot"] = enableableExtension(&Extensions::textureNpotOES);
         map["GL_EXT_texture_rg"] = enableableExtension(&Extensions::textureRgEXT);
@@ -240,6 +241,7 @@ const ExtensionInfoMap &GetExtensionInfoMap()
         map["GL_ANGLE_robust_fragment_shader_output"] = enableableExtension(&Extensions::robustFragmentShaderOutputANGLE);
         map["GL_ANGLE_robust_resource_initialization"] = esOnlyExtension(&Extensions::robustResourceInitializationANGLE);
         map["GL_ANGLE_semaphore_fuchsia"] = enableableExtension(&Extensions::semaphoreFuchsiaANGLE);
+        map["GL_ANGLE_shader_binary"] = esOnlyExtension(&Extensions::shaderBinaryANGLE);
         map["GL_ANGLE_shader_pixel_local_storage"] = esOnlyExtension(&Extensions::shaderPixelLocalStorageANGLE);
         map["GL_ANGLE_shader_pixel_local_storage_coherent"] = esOnlyExtension(&Extensions::shaderPixelLocalStorageCoherentANGLE);
         map["GL_CHROMIUM_sync_query"] = enableableExtension(&Extensions::syncQueryCHROMIUM);

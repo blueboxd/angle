@@ -785,7 +785,7 @@ static MTLLanguageVersion GetUserSetOrHighestMSLVersion(const MTLLanguageVersion
 AutoObjCPtr<id<MTLLibrary>> CreateShaderLibrary(
     const mtl::ContextDevice &metalDevice,
     const std::string &source,
-    NSDictionary<NSString *, NSObject *> *substitutionMacros,
+    const std::map<std::string, std::string> &substitutionMacros,
     bool enableFastMath,
     AutoObjCPtr<NSError *> *error)
 {
@@ -797,14 +797,14 @@ AutoObjCPtr<id<MTLLibrary>> CreateShaderLibrary(const mtl::ContextDevice &metalD
                                                 const std::string &source,
                                                 AutoObjCPtr<NSError *> *error)
 {
-    return CreateShaderLibrary(metalDevice, source.c_str(), source.size(), @{}, true, error);
+    return CreateShaderLibrary(metalDevice, source.c_str(), source.size(), {}, true, error);
 }
 
 AutoObjCPtr<id<MTLLibrary>> CreateShaderLibrary(
     const mtl::ContextDevice &metalDevice,
     const char *source,
     size_t sourceLen,
-    NSDictionary<NSString *, NSObject *> *substitutionMacros,
+    const std::map<std::string, std::string> &substitutionMacros,
     bool enableFastMath,
     AutoObjCPtr<NSError *> *errorOut)
 {
@@ -826,9 +826,19 @@ AutoObjCPtr<id<MTLLibrary>> CreateShaderLibrary(
         options.fastMathEnabled = false;
 #endif
         options.fastMathEnabled &= enableFastMath;
-        options.languageVersion    = GetUserSetOrHighestMSLVersion(options.languageVersion);
-        options.preprocessorMacros = substitutionMacros;
-        auto library               = metalDevice.newLibraryWithSource(nsSource, options, &nsError);
+        options.languageVersion = GetUserSetOrHighestMSLVersion(options.languageVersion);
+
+        if (!substitutionMacros.empty())
+        {
+            auto macroDict = [NSMutableDictionary dictionary];
+            for (const auto &macro : substitutionMacros)
+            {
+                [macroDict setObject:@(macro.second.c_str()) forKey:@(macro.first.c_str())];
+            }
+            options.preprocessorMacros = macroDict;
+        }
+
+        auto library = metalDevice.newLibraryWithSource(nsSource, options, &nsError);
         if (angle::GetEnvironmentVar(kANGLEPrintMSLEnv)[0] == '1')
         {
             NSLog(@"%@\n", nsSource);
@@ -855,7 +865,7 @@ AutoObjCPtr<id<MTLLibrary>> CreateShaderLibraryFromBinary(id<MTLDevice> metalDev
 
         auto library = [metalDevice newLibraryWithData:shaderSourceData error:&nsError];
 
-        [shaderSourceData ANGLE_MTL_AUTORELEASE];
+        dispatch_release(shaderSourceData);
 
         *errorOut = std::move(nsError);
 
@@ -942,30 +952,38 @@ MTLBlendFactor GetBlendFactor(GLenum factor)
             return MTLBlendFactorOne;
         case GL_SRC_COLOR:
             return MTLBlendFactorSourceColor;
-        case GL_DST_COLOR:
-            return MTLBlendFactorDestinationColor;
         case GL_ONE_MINUS_SRC_COLOR:
             return MTLBlendFactorOneMinusSourceColor;
         case GL_SRC_ALPHA:
             return MTLBlendFactorSourceAlpha;
         case GL_ONE_MINUS_SRC_ALPHA:
             return MTLBlendFactorOneMinusSourceAlpha;
+        case GL_DST_COLOR:
+            return MTLBlendFactorDestinationColor;
+        case GL_ONE_MINUS_DST_COLOR:
+            return MTLBlendFactorOneMinusDestinationColor;
         case GL_DST_ALPHA:
             return MTLBlendFactorDestinationAlpha;
         case GL_ONE_MINUS_DST_ALPHA:
             return MTLBlendFactorOneMinusDestinationAlpha;
-        case GL_ONE_MINUS_DST_COLOR:
-            return MTLBlendFactorOneMinusDestinationColor;
         case GL_SRC_ALPHA_SATURATE:
             return MTLBlendFactorSourceAlphaSaturated;
         case GL_CONSTANT_COLOR:
             return MTLBlendFactorBlendColor;
-        case GL_CONSTANT_ALPHA:
-            return MTLBlendFactorBlendAlpha;
         case GL_ONE_MINUS_CONSTANT_COLOR:
             return MTLBlendFactorOneMinusBlendColor;
+        case GL_CONSTANT_ALPHA:
+            return MTLBlendFactorBlendAlpha;
         case GL_ONE_MINUS_CONSTANT_ALPHA:
             return MTLBlendFactorOneMinusBlendAlpha;
+        case GL_SRC1_COLOR_EXT:
+            return MTLBlendFactorSource1Color;
+        case GL_ONE_MINUS_SRC1_COLOR_EXT:
+            return MTLBlendFactorOneMinusSource1Color;
+        case GL_SRC1_ALPHA_EXT:
+            return MTLBlendFactorSource1Alpha;
+        case GL_ONE_MINUS_SRC1_ALPHA_EXT:
+            return MTLBlendFactorOneMinusSource1Alpha;
         default:
             UNREACHABLE();
             return MTLBlendFactorZero;

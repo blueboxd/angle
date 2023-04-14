@@ -3656,6 +3656,14 @@ bool GetQueryParameterInfo(const State &glState,
         return true;
     }
 
+    if (extensions.shaderFramebufferFetchARM &&
+        (pname == GL_FETCH_PER_SAMPLE_ARM || pname == GL_FRAGMENT_SHADER_FRAMEBUFFER_FETCH_MRT_ARM))
+    {
+        *type      = GL_BOOL;
+        *numParams = 1;
+        return true;
+    }
+
     if (glState.getClientVersion() < Version(2, 0))
     {
         switch (pname)
@@ -4514,19 +4522,20 @@ egl::Error SetSurfaceAttrib(Surface *surface, EGLint attribute, EGLint value)
     return NoError();
 }
 
-Error GetSyncAttrib(Display *display, Sync *sync, EGLint attribute, EGLint *value)
+Error GetSyncAttrib(Display *display, SyncID sync, EGLint attribute, EGLint *value)
 {
+    const egl::Sync *syncObj = display->getSync(sync);
     switch (attribute)
     {
         case EGL_SYNC_TYPE_KHR:
-            *value = sync->getType();
+            *value = syncObj->getType();
             return NoError();
 
         case EGL_SYNC_STATUS_KHR:
-            return sync->getStatus(display, value);
+            return syncObj->getStatus(display, value);
 
         case EGL_SYNC_CONDITION_KHR:
-            *value = sync->getCondition();
+            *value = syncObj->getCondition();
             return NoError();
 
         default:

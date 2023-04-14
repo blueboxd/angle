@@ -398,9 +398,7 @@ VkImageAspectFlags GetFormatAspectFlags(const angle::Format &format)
 }
 
 // Context implementation.
-Context::Context(RendererVk *renderer)
-    : mRenderer(renderer), mPerfCounters{}, mCurrentQueueSerialIndex(kInvalidQueueSerialIndex)
-{}
+Context::Context(RendererVk *renderer) : mRenderer(renderer), mPerfCounters{} {}
 
 Context::~Context() {}
 
@@ -974,9 +972,6 @@ PFN_vkGetPhysicalDeviceMemoryProperties2KHR vkGetPhysicalDeviceMemoryProperties2
 // VK_KHR_external_semaphore_fd
 PFN_vkImportSemaphoreFdKHR vkImportSemaphoreFdKHR = nullptr;
 
-// VK_EXT_external_memory_host
-PFN_vkGetMemoryHostPointerPropertiesEXT vkGetMemoryHostPointerPropertiesEXT = nullptr;
-
 // VK_EXT_host_query_reset
 PFN_vkResetQueryPoolEXT vkResetQueryPoolEXT = nullptr;
 
@@ -1142,14 +1137,9 @@ void InitExternalSemaphoreFdFunctions(VkInstance instance)
     GET_INSTANCE_FUNC(vkImportSemaphoreFdKHR);
 }
 
-void InitExternalMemoryHostFunctions(VkInstance instance)
+void InitHostQueryResetFunctions(VkDevice device)
 {
-    GET_INSTANCE_FUNC(vkGetMemoryHostPointerPropertiesEXT);
-}
-
-void InitHostQueryResetFunctions(VkInstance instance)
-{
-    GET_INSTANCE_FUNC(vkGetMemoryHostPointerPropertiesEXT);
+    GET_DEVICE_FUNC(vkResetQueryPoolEXT);
 }
 
 // VK_KHR_get_memory_requirements2
@@ -1221,7 +1211,7 @@ void InitExtendedDynamicState2EXTFunctions(VkDevice device)
 // VK_KHR_fragment_shading_rate
 void InitFragmentShadingRateKHRInstanceFunction(VkInstance instance)
 {
-    GET_INSTANCE_FUNC(vkGetPhysicalDeviceExternalSemaphorePropertiesKHR);
+    GET_INSTANCE_FUNC(vkGetPhysicalDeviceFragmentShadingRatesKHR);
 }
 
 void InitFragmentShadingRateKHRDeviceFunction(VkDevice device)
@@ -1239,6 +1229,51 @@ void InitGetPastPresentationTimingGoogleFunction(VkDevice device)
 #    undef GET_DEVICE_FUNC
 
 #endif  // !defined(ANGLE_SHARED_LIBVULKAN)
+
+#define ASSIGN_FROM_CORE(vkName, EXT)              \
+    do                                             \
+    {                                              \
+        /* The core entry point must be present */ \
+        ASSERT(vkName != nullptr);                 \
+        vkName##EXT = vkName;                      \
+    } while (0)
+
+void InitGetPhysicalDeviceProperties2KHRFunctionsFromCore()
+{
+    ASSIGN_FROM_CORE(vkGetPhysicalDeviceProperties2, KHR);
+    ASSIGN_FROM_CORE(vkGetPhysicalDeviceFeatures2, KHR);
+    ASSIGN_FROM_CORE(vkGetPhysicalDeviceMemoryProperties2, KHR);
+}
+
+void InitExternalFenceCapabilitiesFunctionsFromCore()
+{
+    ASSIGN_FROM_CORE(vkGetPhysicalDeviceExternalFenceProperties, KHR);
+}
+
+void InitExternalSemaphoreCapabilitiesFunctionsFromCore()
+{
+    ASSIGN_FROM_CORE(vkGetPhysicalDeviceExternalSemaphoreProperties, KHR);
+}
+
+void InitSamplerYcbcrKHRFunctionsFromCore()
+{
+    ASSIGN_FROM_CORE(vkCreateSamplerYcbcrConversion, KHR);
+    ASSIGN_FROM_CORE(vkDestroySamplerYcbcrConversion, KHR);
+}
+
+void InitGetMemoryRequirements2KHRFunctionsFromCore()
+{
+    ASSIGN_FROM_CORE(vkGetBufferMemoryRequirements2, KHR);
+    ASSIGN_FROM_CORE(vkGetImageMemoryRequirements2, KHR);
+}
+
+void InitBindMemory2KHRFunctionsFromCore()
+{
+    ASSIGN_FROM_CORE(vkBindBufferMemory2, KHR);
+    ASSIGN_FROM_CORE(vkBindImageMemory2, KHR);
+}
+
+#undef ASSIGN_FROM_CORE
 
 GLenum CalculateGenerateMipmapFilter(ContextVk *contextVk, angle::FormatID formatID)
 {

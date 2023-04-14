@@ -511,6 +511,9 @@ struct Extensions
     // GL_OES_texture_half_float_linear
     bool textureHalfFloatLinearOES = false;
 
+    // GL_EXT_texture_mirror_clamp_to_edge
+    bool textureMirrorClampToEdgeEXT = false;
+
     // GL_EXT_texture_norm16
     bool textureNorm16EXT = false;
 
@@ -675,6 +678,9 @@ struct Extensions
 
     // GL_ANGLE_semaphore_fuchsia
     bool semaphoreFuchsiaANGLE = false;
+
+    // GL_ANGLE_shader_binary
+    bool shaderBinaryANGLE = false;
 
     // GL_ANGLE_shader_pixel_local_storage
     bool shaderPixelLocalStorageANGLE = false;

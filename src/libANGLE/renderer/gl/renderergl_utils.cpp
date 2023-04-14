@@ -136,6 +136,13 @@ bool IsAdreno5xx(const FunctionsGL *functions)
     return number != 0 && number >= 500 && number < 600;
 }
 
+bool IsMali(const FunctionsGL *functions)
+{
+    constexpr char Mali[]        = "Mali";
+    const char *nativeGLRenderer = GetString(functions, GL_RENDERER);
+    return angle::BeginsWith(nativeGLRenderer, Mali);
+}
+
 bool IsMaliT8xxOrOlder(const FunctionsGL *functions)
 {
     int number = getMaliTNumber(functions);
@@ -1493,12 +1500,15 @@ void GenerateCaps(const FunctionsGL *functions,
                                      functions->hasGLExtension("GL_EXT_framebuffer_object") ||
                                      functions->isAtLeastGLES(gl::Version(3, 0)) ||
                                      functions->hasGLESExtension("GL_OES_fbo_render_mipmap");
-    extensions->textureBorderClampOES =
+
+    extensions->textureBorderClampEXT =
         !features.disableTextureClampToBorder.enabled &&
         (functions->standard == STANDARD_GL_DESKTOP ||
-         functions->hasGLESExtension("GL_OES_texture_border_clamp") ||
          functions->hasGLESExtension("GL_EXT_texture_border_clamp") ||
+         functions->hasGLESExtension("GL_OES_texture_border_clamp") ||
          functions->hasGLESExtension("GL_NV_texture_border_clamp"));
+    extensions->textureBorderClampOES = extensions->textureBorderClampEXT;
+
     extensions->multiDrawIndirectEXT = true;
     extensions->instancedArraysANGLE = functions->isAtLeastGL(gl::Version(3, 1)) ||
                                        (functions->hasGLExtension("GL_ARB_instanced_arrays") &&
@@ -1675,6 +1685,8 @@ void GenerateCaps(const FunctionsGL *functions,
     {
         extensions->shaderFramebufferFetchEXT = true;
     }
+
+    // TODO(http://anglebug.com/7882): Support ARM_shader_framebuffer_fetch
 
     // EXT_shader_framebuffer_fetch_non_coherent.
     if (features.supportsShaderFramebufferFetchNonCoherentEXT.enabled)
@@ -2417,11 +2429,11 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     // http://crbug.com/594016
     bool isLinuxVivante = IsLinux() && IsVivante(device);
 
-    // Temporarily disable on all of Android. http://crbug.com/1238327
+    // Temporarily disable on all of Android. http://crbug.com/1417485
     ANGLE_FEATURE_CONDITION(features, disableMultisampledRenderToTexture,
                             isAdreno4xxOnAndroidLessThan51 || isAdreno4xxOnAndroid70 ||
                                 isAdreno5xxOnAndroidLessThan70 || isAdreno5xxOnAndroid71 ||
-                                isLinuxVivante);
+                                isLinuxVivante || IsAndroid());
 
     // http://crbug.com/1181068
     ANGLE_FEATURE_CONDITION(features, uploadTextureDataInChunks, IsApple());
@@ -2470,6 +2482,9 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     // EXT_shader_pixel_local_storage
     ANGLE_FEATURE_CONDITION(features, supportsShaderPixelLocalStorageEXT,
                             functions->hasGLESExtension("GL_EXT_shader_pixel_local_storage"));
+
+    // https://crbug.com/1356053
+    ANGLE_FEATURE_CONDITION(features, bindFramebufferForTimerQueries, IsMali(functions));
 }
 
 void InitializeFrontendFeatures(const FunctionsGL *functions, angle::FrontendFeatures *features)
