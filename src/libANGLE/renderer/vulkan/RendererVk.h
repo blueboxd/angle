@@ -290,7 +290,7 @@ class RendererVk : angle::NonCopyable
                                     vk::PrimaryCommandBuffer &&primary,
                                     vk::ProtectionType protectionType,
                                     egl::ContextPriority priority,
-                                    const vk::Semaphore *waitSemaphore,
+                                    VkSemaphore waitSemaphore,
                                     VkPipelineStageFlags waitSemaphoreStageMasks,
                                     const vk::Fence *fence,
                                     vk::SubmitPolicy submitPolicy,
@@ -497,7 +497,6 @@ class RendererVk : angle::NonCopyable
                                                             const vk::ResourceUse &use,
                                                             uint64_t timeout,
                                                             VkResult *result);
-    angle::Result finish(vk::Context *context);
     angle::Result checkCompletedCommands(vk::Context *context);
     angle::Result retireFinishedCommands(vk::Context *context);
 

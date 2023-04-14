@@ -830,11 +830,11 @@
             "issue": "http://anglebug.com/3586"
         },
         {
-            "name": "precision_safe_division",
+            "name": "double_depth_bias_constant_factor",
             "category": "Workarounds",
             "description": [
-                "Special case handling for platforms that do not generate 1.0f even when the dividend and ",
-                "divisor have the same value"
+                "Due to a Vulkan spec ambiguity, some drivers interpret depthBiasConstantFactor as half ",
+                "the expected value"
             ]
         },
         {

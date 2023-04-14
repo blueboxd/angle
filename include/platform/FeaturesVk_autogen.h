@@ -627,11 +627,11 @@ struct FeaturesVk : FeatureSetBase
         "emulateAdvancedBlendEquations", FeatureCategory::VulkanFeatures,
         "Emulate GL_KHR_blend_equation_advanced", &members, "http://anglebug.com/3586"};
 
-    FeatureInfo precisionSafeDivision = {
-        "precisionSafeDivision",
+    FeatureInfo doubleDepthBiasConstantFactor = {
+        "doubleDepthBiasConstantFactor",
         FeatureCategory::VulkanWorkarounds,
-        "Special case handling for platforms that do not generate 1.0f even when the dividend and "
-        "divisor have the same value",
+        "Due to a Vulkan spec ambiguity, some drivers interpret depthBiasConstantFactor as half "
+        "the expected value",
         &members,
     };
 

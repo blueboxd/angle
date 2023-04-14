@@ -940,10 +940,12 @@ void DisplayMtl::initializeExtensions() const
     mNativeExtensions.copyTextureCHROMIUM           = true;
     mNativeExtensions.copyCompressedTextureCHROMIUM = false;
 
+#if !ANGLE_PLATFORM_WATCHOS
     if (@available(iOS 14.0, macOS 10.11, macCatalyst 14.0, tvOS 16.0, *))
     {
         mNativeExtensions.textureMirrorClampToEdgeEXT = true;
     }
+#endif
 
     if (ANGLE_APPLE_AVAILABLE_XCI(10.11, 11.0, 13.1))
     {
@@ -1271,6 +1273,13 @@ void DisplayMtl::initializeFeatures()
 
     ANGLE_FEATURE_CONDITION((&mFeatures), enableInMemoryMtlLibraryCache, true);
     ANGLE_FEATURE_CONDITION((&mFeatures), enableParallelMtlLibraryCompilation, true);
+
+    // Uploading texture data via staging buffers improves performance on all tested systems.
+    // http://anglebug.com/8092: Disabled on intel due to some texture formats uploading incorrectly
+    // with staging buffers
+    ANGLE_FEATURE_CONDITION(&mFeatures, alwaysPreferStagedTextureUploads, true);
+    ANGLE_FEATURE_CONDITION(&mFeatures, disableStagedInitializationOfPackedTextureFormats,
+                            isIntel() || isAMD());
 
     ApplyFeatureOverrides(&mFeatures, getState());
 }
