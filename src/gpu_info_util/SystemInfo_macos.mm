@@ -189,6 +189,12 @@ void GetIORegistryDevices(std::vector<GPUDeviceInfo> *devices)
 
 void ForceGPUSwitchIndex(SystemInfo *info)
 {
+    // Early-out if on a single-GPU system
+    if (info->gpus.size() < 2)
+    {
+        return;
+    }
+
     VendorID activeVendor = 0;
     DeviceID activeDevice = 0;
 
@@ -384,10 +390,6 @@ bool GetSystemInfo_mac(SystemInfo *info)
     {
         info->isMacSwitchable = true;
     }
-
-#if defined(ANGLE_PLATFORM_MACCATALYST) && defined(ANGLE_ENABLE_EAGL)
-    info->needsEAGLOnMac = true;
-#endif
 
     return true;
 }

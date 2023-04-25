@@ -64,6 +64,7 @@ PLS_ALLOW_LIST = {
     "BufferData",
     "BufferSubData",
     "CheckFramebufferStatus",
+    "ClipControlEXT",
     "CullFace",
     "DepthFunc",
     "DepthMask",
@@ -90,6 +91,9 @@ PLS_ALLOW_LIST = {
     "UseProgram",
     "ValidateProgram",
     "Viewport",
+    "ProvokingVertexANGLE",
+    "FenceSync",
+    "FlushMappedBufferRange",
 }
 PLS_ALLOW_WILDCARDS = [
     "BlendEquationSeparatei*",
@@ -98,13 +102,22 @@ PLS_ALLOW_WILDCARDS = [
     "BlendFunci*",
     "ClearBuffer*",
     "ColorMaski*",
+    "DebugMessageCallback*",
+    "DebugMessageControl*",
+    "DebugMessageInsert*",
     "Disablei*",
     "DrawArrays*",
     "DrawElements*",
     "DrawRangeElements*",
     "Enablei*",
+    "Gen*",
     "Get*",
     "Is*",
+    "ObjectLabel*",
+    "ObjectPtrLabel*",
+    "PolygonOffset*",
+    "PopDebugGroup*",
+    "PushDebugGroup*",
     "SamplerParameter*",
     "TexParameter*",
     "Uniform*",
@@ -228,13 +241,13 @@ TEMPLATE_ENTRY_POINT_DECL = """{angle_export}{return_type} {export_def} {name}({
 
 TEMPLATE_GLES_ENTRY_POINT_NO_RETURN = """\
 void GL_APIENTRY GL_{name}({params})
-{{{optional_gl_entry_point_locks}
+{{
     Context *context = {context_getter};
     {event_comment}EVENT(context, GL{name}, "context = %d{comma_if_needed}{format_params}", CID(context){comma_if_needed}{pass_params});
 
     if ({valid_context_check})
     {{{packed_gl_enum_conversions}
-        SCOPED_SHARE_CONTEXT_LOCK(context);
+        {context_lock}
         bool isCallValid = (context->skipValidation() || {validation_expression});
         if (isCallValid)
         {{
@@ -251,14 +264,14 @@ void GL_APIENTRY GL_{name}({params})
 
 TEMPLATE_GLES_ENTRY_POINT_WITH_RETURN = """\
 {return_type} GL_APIENTRY GL_{name}({params})
-{{{optional_gl_entry_point_locks}
+{{
     Context *context = {context_getter};
     {event_comment}EVENT(context, GL{name}, "context = %d{comma_if_needed}{format_params}", CID(context){comma_if_needed}{pass_params});
 
     {return_type} returnValue;
     if ({valid_context_check})
     {{{packed_gl_enum_conversions}
-        SCOPED_SHARE_CONTEXT_LOCK(context);
+        {context_lock}
         bool isCallValid = (context->skipValidation() || {validation_expression});
         if (isCallValid)
         {{
@@ -283,17 +296,18 @@ TEMPLATE_EGL_ENTRY_POINT_NO_RETURN = """\
 void EGLAPIENTRY EGL_{name}({params})
 {{
     {preamble}
-    ANGLE_SCOPED_GLOBAL_LOCK();
-    EGL_EVENT({name}, "{format_params}"{comma_if_needed}{pass_params});
-
     Thread *thread = egl::GetCurrentThread();
+    {{
+        ANGLE_SCOPED_GLOBAL_LOCK();
+        EGL_EVENT({name}, "{format_params}"{comma_if_needed}{pass_params});
 
-    {packed_gl_enum_conversions}
+        {packed_gl_enum_conversions}
 
-    ANGLE_EGL_VALIDATE_VOID(thread, {name}, {labeled_object}, {internal_params});
+        ANGLE_EGL_VALIDATE_VOID(thread, {name}, {labeled_object}, {internal_params});
 
-    {name}(thread{comma_if_needed}{internal_params});
-    ANGLE_CAPTURE_EGL({name}, true, {egl_capture_params});
+        {name}(thread{comma_if_needed}{internal_params});
+        ANGLE_CAPTURE_EGL({name}, true, {egl_capture_params});
+    }}
 }}
 """
 
@@ -308,17 +322,19 @@ TEMPLATE_EGL_ENTRY_POINT_WITH_RETURN = """\
 {return_type} EGLAPIENTRY EGL_{name}({params})
 {{
     {preamble}
-    ANGLE_SCOPED_GLOBAL_LOCK();
-    EGL_EVENT({name}, "{format_params}"{comma_if_needed}{pass_params});
-
     Thread *thread = egl::GetCurrentThread();
+    {return_type} returnValue;
+    {{
+        ANGLE_SCOPED_GLOBAL_LOCK();
+        EGL_EVENT({name}, "{format_params}"{comma_if_needed}{pass_params});
 
-    {packed_gl_enum_conversions}
+        {packed_gl_enum_conversions}
 
-    ANGLE_EGL_VALIDATE(thread, {name}, {labeled_object}, {return_type}{comma_if_needed}{internal_params});
+        ANGLE_EGL_VALIDATE(thread, {name}, {labeled_object}, {return_type}{comma_if_needed}{internal_params});
 
-    {return_type} returnValue = {name}(thread{comma_if_needed}{internal_params});
-    ANGLE_CAPTURE_EGL({name}, true, {egl_capture_params}, returnValue);
+        returnValue = {name}(thread{comma_if_needed}{internal_params});
+        ANGLE_CAPTURE_EGL({name}, true, {egl_capture_params}, returnValue);
+    }}
     return returnValue;
 }}
 """
@@ -1678,8 +1694,8 @@ def format_entry_point_def(api, command_node, cmd_name, proto, params, cmd_packe
             event_comment,
         "labeled_object":
             get_egl_entry_point_labeled_object(ep_to_object, cmd_name, params, packed_enums),
-        "optional_gl_entry_point_locks":
-            get_optional_gl_locks(api, cmd_name, params),
+        "context_lock":
+            get_context_lock(api, cmd_name),
         "preamble":
             get_preamble(api, cmd_name, params)
     }
@@ -2658,16 +2674,13 @@ def get_egl_entry_point_labeled_object(ep_to_object, cmd_stripped, params, packe
     return "Get%sIfValid(%s, %s)" % (category, display_param, found_param)
 
 
-def get_optional_gl_locks(api, cmd_name, params):
-    if api != apis.GLES:
-        return ""
-
+def get_context_lock(api, cmd_name):
     # EGLImage related commands need to access EGLImage and Display which should
     # be protected with global lock
-    if not cmd_name.startswith("glEGLImage"):
-        return ""
+    if api == apis.GLES and cmd_name.startswith("glEGLImage"):
+        return "SCOPED_GLOBAL_AND_SHARE_CONTEXT_LOCK(context);"
 
-    return "ANGLE_SCOPED_GLOBAL_LOCK();"
+    return "SCOPED_SHARE_CONTEXT_LOCK(context);"
 
 
 def get_prepare_swap_buffers_call(api, cmd_name, params):

@@ -20,6 +20,7 @@
 #include "libANGLE/renderer/vulkan/OverlayVk.h"
 #include "libANGLE/renderer/vulkan/PersistentCommandPool.h"
 #include "libANGLE/renderer/vulkan/RendererVk.h"
+#include "libANGLE/renderer/vulkan/ShareGroupVk.h"
 #include "libANGLE/renderer/vulkan/vk_helpers.h"
 
 namespace angle
@@ -595,6 +596,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                      const vk::PackedClearValuesArray &clearValues,
                                      vk::RenderPassCommandBuffer **commandBufferOut);
 
+    void disableRenderPassReactivation() { mAllowRenderPassToReactivate = false; }
+
     // Only returns true if we have a started RP and we've run setupDraw.
     bool hasActiveRenderPass() const
     {
@@ -626,11 +629,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     bool isRenderPassStartedAndUsesImage(const vk::ImageHelper &image) const
     {
         return mRenderPassCommands->started() && mRenderPassCommands->usesImage(image);
-    }
-
-    bool hasActiveRenderPassWithCommands() const
-    {
-        return hasActiveRenderPass() && !mRenderPassCommands->getCommandBuffer().empty();
     }
 
     vk::RenderPassCommandBufferHelper &getStartedRenderPassCommands()
@@ -1551,6 +1549,9 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // of the GENERAL layout instead of COLOR_ATTACHMENT_OPTIMAL, but has definite benefits of
     // avoiding render pass breaks when a framebuffer fetch program is used mid render pass.
     bool mIsInFramebufferFetchMode;
+
+    // True if current started render pass is allowed to reactivate.
+    bool mAllowRenderPassToReactivate;
 
     // The size of copy commands issued between buffers and images. Used to submit the command
     // buffer for the outside render pass.

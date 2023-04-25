@@ -123,9 +123,9 @@ std::shared_ptr<WaitableCompileEvent> ShaderMtl::compile(const gl::Context *cont
     options->clampFragDepth = true;
 #endif
 
-    if (displayMtl->getFeatures().rewriteRowMajorMatrices.enabled)
+    if (displayMtl->getFeatures().emulateAlphaToCoverage.enabled)
     {
-        options->rewriteRowMajorMatrices = true;
+        options->emulateAlphaToCoverage = true;
     }
 
     // Constants:

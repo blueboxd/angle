@@ -1784,6 +1784,7 @@ bool CanCopyWithTransfer(RendererVk *renderer,
                          VkImageTiling srcTilingMode,
                          angle::FormatID dstFormatID,
                          VkImageTiling dstTilingMode);
+
 class ImageViewHelper;
 class ImageHelper final : public Resource, public angle::Subject
 {
@@ -2579,6 +2580,7 @@ class ImageHelper final : public Resource, public angle::Subject
 
     angle::Result initializeNonZeroMemory(Context *context,
                                           bool hasProtectedContent,
+                                          VkMemoryPropertyFlags flags,
                                           VkDeviceSize size);
 
     std::vector<SubresourceUpdate> *getLevelUpdates(gl::LevelIndex level);
@@ -3080,6 +3082,7 @@ class BufferViewHelper final : public Resource
     ~BufferViewHelper() override;
 
     void init(RendererVk *renderer, VkDeviceSize offset, VkDeviceSize size);
+    bool isInitialized() const { return mInitialized; }
     void release(ContextVk *contextVk);
     void destroy(VkDevice device);
 
@@ -3093,6 +3096,8 @@ class BufferViewHelper final : public Resource
     ImageOrBufferViewSubresourceSerial getSerial() const;
 
   private:
+    bool mInitialized;
+
     // To support format reinterpretation, additional views for formats other than the one specified
     // to glTexBuffer may need to be created.  On draw/dispatch, the format layout qualifier of the
     // imageBuffer is used (if provided) to create a potentially different view of the buffer.

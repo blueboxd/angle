@@ -1504,6 +1504,20 @@ void GenerateCaps(const FunctionsGL *functions,
     extensions->sampleVariablesOES = functions->isAtLeastGL(gl::Version(4, 2)) ||
                                      functions->isAtLeastGLES(gl::Version(3, 2)) ||
                                      functions->hasGLESExtension("GL_OES_sample_variables");
+    // Some drivers do not support sample qualifiers in ESSL 3.00, so ESSL 3.10 is required on ES.
+    extensions->shaderMultisampleInterpolationOES =
+        functions->isAtLeastGL(gl::Version(4, 2)) || functions->isAtLeastGLES(gl::Version(3, 2)) ||
+        (functions->isAtLeastGLES(gl::Version(3, 1)) &&
+         functions->hasGLESExtension("GL_OES_shader_multisample_interpolation"));
+    if (extensions->shaderMultisampleInterpolationOES)
+    {
+        caps->minInterpolationOffset =
+            QuerySingleGLFloat(functions, GL_MIN_FRAGMENT_INTERPOLATION_OFFSET_OES);
+        caps->maxInterpolationOffset =
+            QuerySingleGLFloat(functions, GL_MAX_FRAGMENT_INTERPOLATION_OFFSET_OES);
+        caps->subPixelInterpolationOffsetBits =
+            QuerySingleGLInt(functions, GL_FRAGMENT_INTERPOLATION_OFFSET_BITS_OES);
+    }
 
     // Support video texture extension on non Android backends.
     // TODO(crbug.com/776222): support Android and Apple devices.
@@ -1756,18 +1770,14 @@ void GenerateCaps(const FunctionsGL *functions,
         extensions->compressedETC2RGB8TextureOES || functions->isAtLeastGLES(gl::Version(3, 0)) ||
         functions->hasGLESExtension("GL_EXT_compressed_ETC1_RGB8_sub_texture");
 
-#if defined(ANGLE_PLATFORM_MACOS) || defined(ANGLE_PLATFORM_MACCATALYST)
-    angle::SystemInfo info;
-    if (angle::GetSystemInfo(&info) && !info.needsEAGLOnMac)
+#if ANGLE_ENABLE_CGL
+    VendorID vendor = GetVendorID(functions);
+    if ((IsAMD(vendor) || IsIntel(vendor)) && *maxSupportedESVersion >= gl::Version(3, 0))
     {
-        VendorID vendor = GetVendorID(functions);
-        if ((IsAMD(vendor) || IsIntel(vendor)) && *maxSupportedESVersion >= gl::Version(3, 0))
-        {
-            // Apple Intel/AMD drivers do not correctly use the TEXTURE_SRGB_DECODE property of
-            // sampler states.  Disable this extension when we would advertise any ES version
-            // that has samplers.
-            extensions->textureSRGBDecodeEXT = false;
-        }
+        // Apple Intel/AMD drivers do not correctly use the TEXTURE_SRGB_DECODE property of
+        // sampler states.  Disable this extension when we would advertise any ES version
+        // that has samplers.
+        extensions->textureSRGBDecodeEXT = false;
     }
 #endif
 
@@ -2212,7 +2222,7 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
 
     // Triggers a bug on Marshmallow Adreno (4xx?) driver.
     // http://anglebug.com/2046
-    ANGLE_FEATURE_CONDITION(features, dontInitializeUninitializedLocals, IsAndroid() && isQualcomm);
+    ANGLE_FEATURE_CONDITION(features, dontInitializeUninitializedLocals, !isMesa && isQualcomm);
 
     ANGLE_FEATURE_CONDITION(features, finishDoesNotCauseQueriesToBeAvailable,
                             functions->standard == STANDARD_GL_DESKTOP && isNvidia);
@@ -2255,16 +2265,15 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
 
     // Ported from gpu_driver_bug_list.json (#246, #258)
     ANGLE_FEATURE_CONDITION(features, dontUseLoopsToInitializeVariables,
-                            (IsAndroid() && isQualcomm) || (isIntel && IsApple()));
+                            (!isMesa && isQualcomm) || (isIntel && IsApple()));
 
     // Adreno drivers do not support glBindFragDataLocation* with MRT
     // Intel macOS condition ported from gpu_driver_bug_list.json (#327)
     ANGLE_FEATURE_CONDITION(features, disableBlendFuncExtended,
-                            (IsAndroid() && isQualcomm) ||
+                            (!isMesa && isQualcomm) ||
                                 (IsApple() && isIntel && GetMacOSVersion() < OSVersion(10, 14, 0)));
 
-    ANGLE_FEATURE_CONDITION(features, unsizedSRGBReadPixelsDoesntTransform,
-                            IsAndroid() && isQualcomm);
+    ANGLE_FEATURE_CONDITION(features, unsizedSRGBReadPixelsDoesntTransform, !isMesa && isQualcomm);
 
     ANGLE_FEATURE_CONDITION(features, queryCounterBitsGeneratesErrors, IsNexus5X(vendor, device));
 
@@ -2537,8 +2546,11 @@ void InitializeFrontendFeatures(const FunctionsGL *functions, angle::FrontendFea
     VendorID vendor = GetVendorID(functions);
     bool isQualcomm = IsQualcomm(vendor);
 
+    std::array<int, 3> mesaVersion = {0, 0, 0};
+    bool isMesa                    = IsMesa(functions, &mesaVersion);
+
     ANGLE_FEATURE_CONDITION(features, disableProgramCachingForTransformFeedback,
-                            IsAndroid() && isQualcomm);
+                            !isMesa && isQualcomm);
     // https://crbug.com/480992
     // Disable shader program cache to workaround PowerVR Rogue issues.
     ANGLE_FEATURE_CONDITION(features, disableProgramBinary, IsPowerVrRogue(functions));
