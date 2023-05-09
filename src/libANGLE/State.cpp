@@ -1134,6 +1134,36 @@ void State::setStencilBackOperations(GLenum stencilBackFail,
     }
 }
 
+void State::setPolygonMode(PolygonMode mode)
+{
+    if (mRasterizer.polygonMode != mode)
+    {
+        mRasterizer.polygonMode = mode;
+        mDirtyBits.set(DIRTY_BIT_EXTENDED);
+        mExtendedDirtyBits.set(EXTENDED_DIRTY_BIT_POLYGON_MODE);
+    }
+}
+
+void State::setPolygonOffsetPoint(bool enabled)
+{
+    if (mRasterizer.polygonOffsetPoint != enabled)
+    {
+        mRasterizer.polygonOffsetPoint = enabled;
+        mDirtyBits.set(DIRTY_BIT_EXTENDED);
+        mExtendedDirtyBits.set(EXTENDED_DIRTY_BIT_POLYGON_OFFSET_POINT_ENABLED);
+    }
+}
+
+void State::setPolygonOffsetLine(bool enabled)
+{
+    if (mRasterizer.polygonOffsetLine != enabled)
+    {
+        mRasterizer.polygonOffsetLine = enabled;
+        mDirtyBits.set(DIRTY_BIT_EXTENDED);
+        mExtendedDirtyBits.set(EXTENDED_DIRTY_BIT_POLYGON_OFFSET_LINE_ENABLED);
+    }
+}
+
 void State::setPolygonOffsetFill(bool enabled)
 {
     if (mRasterizer.polygonOffsetFill != enabled)
@@ -1300,6 +1330,12 @@ void State::setEnableFeature(GLenum feature, bool enabled)
             return;
         case GL_CULL_FACE:
             setCullFace(enabled);
+            return;
+        case GL_POLYGON_OFFSET_POINT_NV:
+            setPolygonOffsetPoint(enabled);
+            return;
+        case GL_POLYGON_OFFSET_LINE_NV:
+            setPolygonOffsetLine(enabled);
             return;
         case GL_POLYGON_OFFSET_FILL:
             setPolygonOffsetFill(enabled);
@@ -1473,6 +1509,10 @@ bool State::getEnableFeature(GLenum feature) const
             return isSampleAlphaToOneEnabled();
         case GL_CULL_FACE:
             return isCullFaceEnabled();
+        case GL_POLYGON_OFFSET_POINT_NV:
+            return isPolygonOffsetPointEnabled();
+        case GL_POLYGON_OFFSET_LINE_NV:
+            return isPolygonOffsetLineEnabled();
         case GL_POLYGON_OFFSET_FILL:
             return isPolygonOffsetFillEnabled();
         case GL_DEPTH_CLAMP_EXT:
@@ -2467,6 +2507,12 @@ void State::getBooleanv(GLenum pname, GLboolean *params) const
         case GL_CULL_FACE:
             *params = mRasterizer.cullFace;
             break;
+        case GL_POLYGON_OFFSET_POINT_NV:
+            *params = mRasterizer.polygonOffsetPoint;
+            break;
+        case GL_POLYGON_OFFSET_LINE_NV:
+            *params = mRasterizer.polygonOffsetLine;
+            break;
         case GL_POLYGON_OFFSET_FILL:
             *params = mRasterizer.polygonOffsetFill;
             break;
@@ -2638,7 +2684,7 @@ void State::getFloatv(GLenum pname, GLfloat *params) const
             params[0] = static_cast<GLfloat>(mCoverageModulation);
             break;
         case GL_ALPHA_TEST_REF:
-            *params = mGLES1State.mAlphaTestRef;
+            *params = mGLES1State.mAlphaTestParameters.ref;
             break;
         case GL_CURRENT_COLOR:
         {
@@ -2927,6 +2973,9 @@ angle::Result State::getIntegerv(const Context *context, GLenum pname, GLint *pa
             params[2] = mScissor.width;
             params[3] = mScissor.height;
             break;
+        case GL_POLYGON_MODE_NV:
+            *params = ToGLenum(mRasterizer.polygonMode);
+            break;
         case GL_CULL_FACE_MODE:
             *params = ToGLenum(mRasterizer.cullMode);
             break;
@@ -3118,7 +3167,7 @@ angle::Result State::getIntegerv(const Context *context, GLenum pname, GLint *pa
             *params = mBoundBuffers[BufferBinding::DispatchIndirect].id().value;
             break;
         case GL_ALPHA_TEST_FUNC:
-            *params = ToGLenum(mGLES1State.mAlphaTestFunc);
+            *params = ToGLenum(mGLES1State.mAlphaTestParameters.func);
             break;
         case GL_CLIENT_ACTIVE_TEXTURE:
             *params = mGLES1State.mClientActiveTexture + GL_TEXTURE0;

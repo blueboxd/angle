@@ -1497,6 +1497,10 @@ void GenerateCaps(const FunctionsGL *functions,
                                 functions->hasGLESExtension("GL_EXT_depth_clamp");
     extensions->polygonOffsetClampEXT = functions->hasExtension("GL_EXT_polygon_offset_clamp");
 
+    // Not currently exposed on native OpenGL ES due to driver bugs.
+    extensions->polygonModeNV    = functions->standard == STANDARD_GL_DESKTOP;
+    extensions->polygonModeANGLE = extensions->polygonModeNV;
+
     // This functionality is provided by Shader Model 5 and should be available in GLSL 4.00
     // or even in older versions with GL_ARB_sample_shading and GL_ARB_gpu_shader5. However,
     // some OpenGL implementations (e.g., macOS) that do not support higher context versions
@@ -1569,8 +1573,12 @@ void GenerateCaps(const FunctionsGL *functions,
     extensions->unpackSubimageEXT  = functions->standard == STANDARD_GL_DESKTOP ||
                                     functions->isAtLeastGLES(gl::Version(3, 0)) ||
                                     functions->hasGLESExtension("GL_EXT_unpack_subimage");
-    extensions->shaderNoperspectiveInterpolationNV = functions->isAtLeastGL(gl::Version(3, 0));
-    extensions->packSubimageNV                     = functions->standard == STANDARD_GL_DESKTOP ||
+    // Some drivers do not support this extension in ESSL 3.00, so ESSL 3.10 is required on ES.
+    extensions->shaderNoperspectiveInterpolationNV =
+        functions->isAtLeastGL(gl::Version(3, 0)) ||
+        (functions->isAtLeastGLES(gl::Version(3, 1)) &&
+         functions->hasGLESExtension("GL_NV_shader_noperspective_interpolation"));
+    extensions->packSubimageNV = functions->standard == STANDARD_GL_DESKTOP ||
                                  functions->isAtLeastGLES(gl::Version(3, 0)) ||
                                  functions->hasGLESExtension("GL_NV_pack_subimage");
     extensions->vertexArrayObjectOES = functions->isAtLeastGL(gl::Version(3, 0)) ||

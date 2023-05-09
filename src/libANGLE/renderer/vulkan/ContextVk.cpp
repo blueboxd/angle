@@ -180,12 +180,9 @@ bool CanMultiDrawIndirectUseCmd(ContextVk *contextVk,
     return canMultiDrawIndirectUseCmd;
 }
 
-uint32_t GetCoverageSampleCount(const gl::State &glState, FramebufferVk *drawFramebuffer)
+uint32_t GetCoverageSampleCount(const gl::State &glState, GLint samples)
 {
-    if (!glState.isSampleCoverageEnabled())
-    {
-        return 0;
-    }
+    ASSERT(glState.isSampleCoverageEnabled());
 
     // Get a fraction of the samples based on the coverage parameters.
     // There are multiple ways to obtain an integer value from a float -
@@ -199,15 +196,12 @@ uint32_t GetCoverageSampleCount(const gl::State &glState, FramebufferVk *drawFra
     // play well with all vendors.
     //
     // We are going with truncation for expediency.
-    return static_cast<uint32_t>(glState.getSampleCoverageValue() * drawFramebuffer->getSamples());
+    return static_cast<uint32_t>(glState.getSampleCoverageValue() * samples);
 }
 
 void ApplySampleCoverage(const gl::State &glState, uint32_t coverageSampleCount, uint32_t *maskOut)
 {
-    if (!glState.isSampleCoverageEnabled())
-    {
-        return;
-    }
+    ASSERT(glState.isSampleCoverageEnabled());
 
     uint32_t coverageMask = angle::BitMask<uint32_t>(coverageSampleCount);
 
@@ -815,6 +809,12 @@ angle::Result CreateGraphicsPipelineSubset(ContextVk *contextVk,
 
     return angle::Result::Continue;
 }
+
+bool QueueSerialsHaveDifferentIndexOrSmaller(const QueueSerial &queueSerial1,
+                                             const QueueSerial &queueSerial2)
+{
+    return queueSerial1.getIndex() != queueSerial2.getIndex() || queueSerial1 < queueSerial2;
+}
 }  // anonymous namespace
 
 void ContextVk::flushDescriptorSetUpdates()
@@ -1408,6 +1408,10 @@ angle::Result ContextVk::initialize()
     // Allocate queueSerial index and generate queue serial for commands.
     ANGLE_TRY(allocateQueueSerialIndex());
 
+    // Initialize serials to be valid but appear submitted and finished.
+    mLastFlushedQueueSerial   = QueueSerial(mCurrentQueueSerialIndex, Serial());
+    mLastSubmittedQueueSerial = mLastFlushedQueueSerial;
+
     return angle::Result::Continue;
 }
 
@@ -1451,7 +1455,7 @@ angle::Result ContextVk::flush(const gl::Context *context)
         return mCurrentWindowSurface->onSharedPresentContextFlush(context);
     }
 
-    return flushImpl(nullptr, RenderPassClosureReason::GLFlush);
+    return flushImpl(nullptr, nullptr, RenderPassClosureReason::GLFlush);
 }
 
 angle::Result ContextVk::finish(const gl::Context *context)
@@ -1639,7 +1643,8 @@ angle::Result ContextVk::setupIndirectDraw(const gl::Context *context,
 
     // Break the render pass if the indirect buffer was previously used as the output from transform
     // feedback.
-    if (mCurrentTransformFeedbackBuffers.contains(indirectBuffer))
+    if (mCurrentTransformFeedbackQueueSerial.valid() &&
+        indirectBuffer->writtenByCommandBuffer(mCurrentTransformFeedbackQueueSerial))
     {
         ANGLE_TRY(
             flushCommandsAndEndRenderPass(RenderPassClosureReason::XfbWriteThenIndirectDrawBuffer));
@@ -2793,7 +2798,7 @@ angle::Result ContextVk::handleDirtyGraphicsTransformFeedbackBuffersEmulation(
                                              vk::PipelineStage::VertexShader, bufferHelper);
         }
 
-        populateTransformFeedbackBufferSet(bufferCount, bufferHelpers);
+        mCurrentTransformFeedbackQueueSerial = mRenderPassCommands->getQueueSerial();
     }
 
     ProgramExecutableVk *executableVk      = getExecutable();
@@ -2879,7 +2884,7 @@ angle::Result ContextVk::handleDirtyGraphicsTransformFeedbackBuffersExtension(
     mRenderPassCommands->beginTransformFeedback(bufferCount, counterBufferHandles.data(),
                                                 counterBufferOffsets.data(), rebindBuffers);
 
-    populateTransformFeedbackBufferSet(bufferCount, buffers);
+    mCurrentTransformFeedbackQueueSerial = mRenderPassCommands->getQueueSerial();
 
     return angle::Result::Continue;
 }
@@ -3119,7 +3124,7 @@ angle::Result ContextVk::handleDirtyGraphicsDynamicDepthBiasEnable(
     DirtyBits::Iterator *dirtyBitsIterator,
     DirtyBits dirtyBitMask)
 {
-    mRenderPassCommandBuffer->setDepthBiasEnable(mState.isPolygonOffsetFillEnabled());
+    mRenderPassCommandBuffer->setDepthBiasEnable(mState.isPolygonOffsetEnabled());
     return angle::Result::Continue;
 }
 
@@ -3446,7 +3451,9 @@ void ContextVk::addOverlayUsedBuffersCount(vk::CommandBufferHelperCommon *comman
     }
 }
 
-angle::Result ContextVk::submitCommands(const vk::Semaphore *signalSemaphore, Submit submission)
+angle::Result ContextVk::submitCommands(const vk::Semaphore *signalSemaphore,
+                                        const vk::SharedExternalFence *externalFence,
+                                        Submit submission)
 {
     if (vk::CommandBufferHelperCommon::kEnableCommandStreamDiagnostics)
     {
@@ -3460,12 +3467,13 @@ angle::Result ContextVk::submitCommands(const vk::Semaphore *signalSemaphore, Su
         mRenderer->collectGarbage(use, std::move(mCurrentGarbage));
     }
 
-    ASSERT(mLastFlushedQueueSerial > mLastSubmittedQueueSerial);
+    ASSERT(mLastFlushedQueueSerial.valid());
+    ASSERT(QueueSerialsHaveDifferentIndexOrSmaller(mLastSubmittedQueueSerial,
+                                                   mLastFlushedQueueSerial));
 
     ANGLE_TRY(mRenderer->submitCommands(this, getProtectionType(), mContextPriority,
-                                        signalSemaphore, mLastFlushedQueueSerial));
+                                        signalSemaphore, externalFence, mLastFlushedQueueSerial));
 
-    ASSERT(mLastSubmittedQueueSerial < mLastFlushedQueueSerial);
     mLastSubmittedQueueSerial = mLastFlushedQueueSerial;
     mSubmittedResourceUse.setQueueSerial(mLastSubmittedQueueSerial);
 
@@ -3622,7 +3630,7 @@ angle::Result ContextVk::synchronizeCpuGpuTime()
         // vkEvent's are externally synchronized, therefore need work to be submitted before calling
         // vkGetEventStatus
         ANGLE_TRY(mRenderer->queueSubmitOneOff(this, std::move(commandBuffer), getProtectionType(),
-                                               mContextPriority, VK_NULL_HANDLE, 0, nullptr,
+                                               mContextPriority, VK_NULL_HANDLE, 0,
                                                vk::SubmitPolicy::EnsureSubmitted, &submitSerial));
 
         // Track it with the submitSerial.
@@ -3833,6 +3841,8 @@ void ContextVk::handleDeviceLost()
     (void)mOutsideRenderPassCommands->reset(this, &collector);
     (void)mRenderPassCommands->reset(this, &collector);
     collector.retireCommandBuffers();
+
+    mRenderer->notifyDeviceLost();
 }
 
 angle::Result ContextVk::drawArrays(const gl::Context *context,
@@ -4688,14 +4698,6 @@ void ContextVk::updateBlendFuncsAndEquations()
 
 void ContextVk::updateSampleMaskWithRasterizationSamples(const uint32_t rasterizationSamples)
 {
-    // FramebufferVk::syncState could have been the origin for this call, at which point the
-    // draw FBO may have changed, retrieve the latest draw FBO.
-    FramebufferVk *drawFramebuffer = vk::GetImpl(mState.getDrawFramebuffer());
-
-    // If sample coverage is enabled, emulate it by generating and applying a mask on top of the
-    // sample mask.
-    uint32_t coverageSampleCount = GetCoverageSampleCount(mState, drawFramebuffer);
-
     static_assert(sizeof(uint32_t) == sizeof(GLbitfield), "Vulkan assumes 32-bit sample masks");
     ASSERT(mState.getMaxSampleMaskWords() == 1);
 
@@ -4711,10 +4713,26 @@ void ContextVk::updateSampleMaskWithRasterizationSamples(const uint32_t rasteriz
             mask = mState.getSampleMaskWord(0) & angle::BitMask<uint32_t>(rasterizationSamples);
         }
 
-        ApplySampleCoverage(mState, coverageSampleCount, &mask);
+        // If sample coverage is enabled, emulate it by generating and applying a mask on top of the
+        // sample mask.
+        if (mState.isSampleCoverageEnabled())
+        {
+            ApplySampleCoverage(mState, GetCoverageSampleCount(mState, rasterizationSamples),
+                                &mask);
+        }
     }
 
     mGraphicsPipelineDesc->updateSampleMask(&mGraphicsPipelineTransition, 0, mask);
+}
+
+void ContextVk::updateAlphaToCoverageWithRasterizationSamples(const uint32_t rasterizationSamples)
+{
+    // The following assumes that supported sample counts for multisampled
+    // rendering does not include 1. This is true in the Vulkan backend,
+    // where 1x multisampling is disallowed.
+    mGraphicsPipelineDesc->updateAlphaToCoverageEnable(
+        &mGraphicsPipelineTransition,
+        mState.isSampleAlphaToCoverageEnabled() && rasterizationSamples > 1);
 }
 
 void ContextVk::updateFrameBufferFetchSamples(const uint32_t prevSamples, const uint32_t curSamples)
@@ -4959,6 +4977,7 @@ void ContextVk::updateRasterizationSamples(const uint32_t rasterizationSamples)
                                                       rasterizationSamples);
     updateSampleShadingWithRasterizationSamples(rasterizationSamples);
     updateSampleMaskWithRasterizationSamples(rasterizationSamples);
+    updateAlphaToCoverageWithRasterizationSamples(rasterizationSamples);
 }
 
 void ContextVk::updateRasterizerDiscardEnabled(bool isPrimitivesGeneratedQueryActive)
@@ -5233,8 +5252,7 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 updateColorMasks();
                 break;
             case gl::State::DIRTY_BIT_SAMPLE_ALPHA_TO_COVERAGE_ENABLED:
-                mGraphicsPipelineDesc->updateAlphaToCoverageEnable(
-                    &mGraphicsPipelineTransition, glState.isSampleAlphaToCoverageEnabled());
+                updateAlphaToCoverageWithRasterizationSamples(drawFramebufferVk->getSamples());
                 updateStencilWriteWorkaround();
 
                 static_assert(gl::State::DIRTY_BIT_PROGRAM_EXECUTABLE >
@@ -5349,8 +5367,8 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 }
                 else
                 {
-                    mGraphicsPipelineDesc->updatePolygonOffsetFillEnabled(
-                        &mGraphicsPipelineTransition, glState.isPolygonOffsetFillEnabled());
+                    mGraphicsPipelineDesc->updatePolygonOffsetEnabled(
+                        &mGraphicsPipelineTransition, glState.isPolygonOffsetEnabled());
                 }
                 break;
             case gl::State::DIRTY_BIT_POLYGON_OFFSET:
@@ -5599,8 +5617,11 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                 break;
             case gl::State::DIRTY_BIT_EXTENDED:
             {
-                for (size_t extendedDirtyBit : extendedDirtyBits)
+                for (auto extendedIter    = extendedDirtyBits.begin(),
+                          extendedEndIter = extendedDirtyBits.end();
+                     extendedIter != extendedEndIter; ++extendedIter)
                 {
+                    const size_t extendedDirtyBit = *extendedIter;
                     switch (extendedDirtyBit)
                     {
                         case gl::State::EXTENDED_DIRTY_BIT_CLIP_CONTROL:
@@ -5632,6 +5653,30 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                         case gl::State::EXTENDED_DIRTY_BIT_DEPTH_CLAMP_ENABLED:
                             break;
                         case gl::State::EXTENDED_DIRTY_BIT_MIPMAP_GENERATION_HINT:
+                            break;
+                        case gl::State::EXTENDED_DIRTY_BIT_POLYGON_MODE:
+                            // TODO(https://anglebug.com/7713): Use EDS3
+                            mGraphicsPipelineDesc->updatePolygonMode(&mGraphicsPipelineTransition,
+                                                                     glState.getPolygonMode());
+                            // When polygon mode is changed, depth bias might need to be toggled.
+                            static_assert(
+                                gl::State::EXTENDED_DIRTY_BIT_POLYGON_OFFSET_LINE_ENABLED >
+                                    gl::State::EXTENDED_DIRTY_BIT_POLYGON_MODE,
+                                "Dirty bit order");
+                            extendedIter.setLaterBit(
+                                gl::State::EXTENDED_DIRTY_BIT_POLYGON_OFFSET_LINE_ENABLED);
+                            break;
+                        case gl::State::EXTENDED_DIRTY_BIT_POLYGON_OFFSET_POINT_ENABLED:
+                        case gl::State::EXTENDED_DIRTY_BIT_POLYGON_OFFSET_LINE_ENABLED:
+                            if (getFeatures().supportsExtendedDynamicState2.enabled)
+                            {
+                                mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_DEPTH_BIAS_ENABLE);
+                            }
+                            else
+                            {
+                                mGraphicsPipelineDesc->updatePolygonOffsetEnabled(
+                                    &mGraphicsPipelineTransition, glState.isPolygonOffsetEnabled());
+                            }
                             break;
                         case gl::State::EXTENDED_DIRTY_BIT_SHADER_DERIVATIVE_HINT:
                             break;
@@ -5743,7 +5788,7 @@ angle::Result ContextVk::onMakeCurrent(const gl::Context *context)
 
 angle::Result ContextVk::onUnMakeCurrent(const gl::Context *context)
 {
-    ANGLE_TRY(flushImpl(nullptr, RenderPassClosureReason::ContextChange));
+    ANGLE_TRY(flushImpl(nullptr, nullptr, RenderPassClosureReason::ContextChange));
     mCurrentWindowSurface = nullptr;
 
     if (mCurrentQueueSerialIndex != kInvalidQueueSerialIndex)
@@ -5769,7 +5814,7 @@ angle::Result ContextVk::onSurfaceUnMakeCurrent(WindowSurfaceVk *surface)
     {
         // May be nullptr if only used as a readSurface.
         ASSERT(mCurrentWindowSurface == surface || mCurrentWindowSurface == nullptr);
-        ANGLE_TRY(flushImpl(nullptr, RenderPassClosureReason::SurfaceUnMakeCurrent));
+        ANGLE_TRY(flushImpl(nullptr, nullptr, RenderPassClosureReason::SurfaceUnMakeCurrent));
         mCurrentWindowSurface = nullptr;
     }
     ASSERT(mCurrentWindowSurface == nullptr);
@@ -6251,20 +6296,6 @@ angle::Result ContextVk::onBeginTransformFeedback(
     return angle::Result::Continue;
 }
 
-void ContextVk::populateTransformFeedbackBufferSet(
-    size_t bufferCount,
-    const gl::TransformFeedbackBuffersArray<vk::BufferHelper *> &buffers)
-{
-    for (size_t bufferIndex = 0; bufferIndex < bufferCount; ++bufferIndex)
-    {
-        vk::BufferHelper *buffer = buffers[bufferIndex];
-        if (!mCurrentTransformFeedbackBuffers.contains(buffer))
-        {
-            mCurrentTransformFeedbackBuffers.insert(buffer);
-        }
-    }
-}
-
 void ContextVk::onEndTransformFeedback()
 {
     if (getFeatures().supportsTransformFeedbackExtension.enabled)
@@ -6356,7 +6387,8 @@ angle::Result ContextVk::dispatchComputeIndirect(const gl::Context *context, GLi
 
     // Break the render pass if the indirect buffer was previously used as the output from transform
     // feedback.
-    if (mCurrentTransformFeedbackBuffers.contains(&buffer))
+    if (mCurrentTransformFeedbackQueueSerial.valid() &&
+        buffer.writtenByCommandBuffer(mCurrentTransformFeedbackQueueSerial))
     {
         ANGLE_TRY(flushCommandsAndEndRenderPass(
             RenderPassClosureReason::XfbWriteThenIndirectDispatchBuffer));
@@ -6537,7 +6569,7 @@ angle::Result ContextVk::releaseTextures(const gl::Context *context,
             vk::ConvertImageLayoutToGLImageLayout(image.getCurrentImageLayout());
     }
 
-    ANGLE_TRY(flushImpl(nullptr, RenderPassClosureReason::ImageUseThenReleaseToExternal));
+    ANGLE_TRY(flushImpl(nullptr, nullptr, RenderPassClosureReason::ImageUseThenReleaseToExternal));
     return mRenderer->waitForResourceUseToBeSubmittedToDevice(this, mSubmittedResourceUse);
 }
 
@@ -6992,26 +7024,37 @@ angle::Result ContextVk::updateActiveImages(CommandBufferHelperT *commandBufferH
 }
 
 angle::Result ContextVk::flushImpl(const vk::Semaphore *signalSemaphore,
+                                   const vk::SharedExternalFence *externalFence,
                                    RenderPassClosureReason renderPassClosureReason)
 {
-    ANGLE_TRACE_EVENT0("gpu.angle", "ContextVk::flushImpl");
+    bool someCommandsNeedFlush =
+        !mOutsideRenderPassCommands->empty() || !mRenderPassCommands->empty();
+    bool someCommandAlreadyFlushedNeedsSubmit =
+        mLastFlushedQueueSerial != mLastSubmittedQueueSerial;
+    bool someOtherReasonNeedsSubmit = signalSemaphore != nullptr || externalFence != nullptr ||
+                                      mHasWaitSemaphoresPendingSubmission;
 
-    bool allCommandsEmpty = mOutsideRenderPassCommands->empty() && mRenderPassCommands->empty();
-    if (!allCommandsEmpty)
+    if (!someCommandsNeedFlush && !someCommandAlreadyFlushedNeedsSubmit &&
+        !someOtherReasonNeedsSubmit)
+    {
+        // We have nothing to submit.
+        return angle::Result::Continue;
+    }
+
+    ANGLE_TRACE_EVENT0("gpu.angle", "ContextVk::flushImpl");
+    if (someCommandsNeedFlush)
     {
         // If any of secondary command buffer not empty, we need to do flush
         // Avoid calling vkQueueSubmit() twice, since submitCommands() below will do that.
         ANGLE_TRY(flushCommandsAndEndRenderPassWithoutSubmit(renderPassClosureReason));
     }
-    else if (mLastFlushedQueueSerial != mLastSubmittedQueueSerial)
+    else if (someCommandAlreadyFlushedNeedsSubmit)
     {
         // This is when someone already called flushCommandsAndEndRenderPassWithoutQueueSubmit.
-        ASSERT(mLastFlushedQueueSerial > mLastSubmittedQueueSerial);
-    }
-    else if (signalSemaphore == nullptr && !mHasWaitSemaphoresPendingSubmission)
-    {
-        // We have nothing to submit.
-        return angle::Result::Continue;
+        // Nothing to flush but we have some command to submit.
+        ASSERT(mLastFlushedQueueSerial.valid());
+        ASSERT(QueueSerialsHaveDifferentIndexOrSmaller(mLastSubmittedQueueSerial,
+                                                       mLastFlushedQueueSerial));
     }
 
     if (mIsAnyHostVisibleBufferWritten)
@@ -7056,7 +7099,7 @@ angle::Result ContextVk::flushImpl(const vk::Semaphore *signalSemaphore,
     if (mLastFlushedQueueSerial == mLastSubmittedQueueSerial)
     {
         // We have to do empty submission...
-        ASSERT(allCommandsEmpty);
+        ASSERT(!someCommandsNeedFlush);
         mLastFlushedQueueSerial = mOutsideRenderPassCommands->getQueueSerial();
         generateOutsideRenderPassCommandsQueueSerial();
     }
@@ -7081,7 +7124,7 @@ angle::Result ContextVk::flushImpl(const vk::Semaphore *signalSemaphore,
     ASSERT(mWaitSemaphores.empty());
     ASSERT(mWaitSemaphoreStageMasks.empty());
 
-    ANGLE_TRY(submitCommands(signalSemaphore, Submit::AllCommands));
+    ANGLE_TRY(submitCommands(signalSemaphore, externalFence, Submit::AllCommands));
 
     ASSERT(mOutsideRenderPassCommands->getQueueSerial() > mLastSubmittedQueueSerial);
 
@@ -7115,7 +7158,7 @@ angle::Result ContextVk::finishImpl(RenderPassClosureReason renderPassClosureRea
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "ContextVk::finishImpl");
 
-    ANGLE_TRY(flushImpl(nullptr, renderPassClosureReason));
+    ANGLE_TRY(flushImpl(nullptr, nullptr, renderPassClosureReason));
 
     // You must have to wait for all queue indices ever used to finish. Just wait for
     // mLastSubmittedQueueSerial (which only contains current index) to finish is not enough, if it
@@ -7206,7 +7249,7 @@ angle::Result ContextVk::getTimestamp(uint64_t *timestampOut)
 
     QueueSerial submitQueueSerial;
     ANGLE_TRY(mRenderer->queueSubmitOneOff(this, std::move(commandBuffer), getProtectionType(),
-                                           mContextPriority, VK_NULL_HANDLE, 0, nullptr,
+                                           mContextPriority, VK_NULL_HANDLE, 0,
                                            vk::SubmitPolicy::AllowDeferred, &submitQueueSerial));
     // Track it with the submitSerial.
     timestampQuery.setQueueSerial(submitQueueSerial);
@@ -7373,7 +7416,7 @@ angle::Result ContextVk::flushCommandsAndEndRenderPassWithoutSubmit(RenderPassCl
     // Restart at subpass 0.
     mGraphicsPipelineDesc->resetSubpass(&mGraphicsPipelineTransition);
 
-    mCurrentTransformFeedbackBuffers.clear();
+    mCurrentTransformFeedbackQueueSerial = QueueSerial();
 
     onRenderPassFinished(reason);
 
@@ -7404,7 +7447,8 @@ angle::Result ContextVk::flushCommandsAndEndRenderPassWithoutSubmit(RenderPassCl
 
     // Save the queueSerial before calling flushRenderPassCommands, which may return a new
     // mRenderPassCommands
-    ASSERT(mLastFlushedQueueSerial < mRenderPassCommands->getQueueSerial());
+    ASSERT(QueueSerialsHaveDifferentIndexOrSmaller(mLastFlushedQueueSerial,
+                                                   mRenderPassCommands->getQueueSerial()));
     mLastFlushedQueueSerial = mRenderPassCommands->getQueueSerial();
 
     ANGLE_TRY(mRenderer->flushRenderPassCommands(this, getProtectionType(), mContextPriority,
@@ -7442,7 +7486,7 @@ angle::Result ContextVk::flushCommandsAndEndRenderPass(RenderPassClosureReason r
     if (mHasDeferredFlush)
     {
         // If we have deferred glFlush call in the middle of render pass, flush them now.
-        ANGLE_TRY(flushImpl(nullptr, RenderPassClosureReason::AlreadySpecifiedElsewhere));
+        ANGLE_TRY(flushImpl(nullptr, nullptr, RenderPassClosureReason::AlreadySpecifiedElsewhere));
     }
     return angle::Result::Continue;
 }
@@ -7500,7 +7544,10 @@ angle::Result ContextVk::onSyncObjectInit(vk::SyncHelper *syncHelper, bool isEGL
     // pass).
     if (isEGLSyncObject || !mRenderPassCommands->started())
     {
-        ANGLE_TRY(flushImpl(nullptr, RenderPassClosureReason::SyncObjectInit));
+        ANGLE_TRY(flushImpl(nullptr, nullptr, RenderPassClosureReason::SyncObjectInit));
+        // Even if no commands is generated, and flushImpl bails out, queueSerial is valid since
+        // Context initialization. It will always test finished/signaled.
+        ASSERT(mLastSubmittedQueueSerial.valid());
         syncHelper->setQueueSerial(mLastSubmittedQueueSerial);
         return angle::Result::Continue;
     }
@@ -7618,7 +7665,7 @@ angle::Result ContextVk::flushAndSubmitOutsideRenderPassCommands()
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "ContextVk::flushAndSubmitOutsideRenderPassCommands");
     ANGLE_TRY(flushOutsideRenderPassCommands());
-    return submitCommands(nullptr, Submit::OutsideRenderPassCommandsOnly);
+    return submitCommands(nullptr, nullptr, Submit::OutsideRenderPassCommandsOnly);
 }
 
 angle::Result ContextVk::flushOutsideRenderPassCommands()
@@ -7649,7 +7696,8 @@ angle::Result ContextVk::flushOutsideRenderPassCommands()
 
     // Save the queueSerial before calling flushRenderPassCommands, which may return a new
     // mRenderPassCommands
-    ASSERT(mLastFlushedQueueSerial <= mOutsideRenderPassCommands->getQueueSerial());
+    ASSERT(QueueSerialsHaveDifferentIndexOrSmaller(mLastFlushedQueueSerial,
+                                                   mOutsideRenderPassCommands->getQueueSerial()));
     mLastFlushedQueueSerial = mOutsideRenderPassCommands->getQueueSerial();
 
     ANGLE_TRY(mRenderer->flushOutsideRPCommands(this, getProtectionType(), mContextPriority,
@@ -8033,7 +8081,7 @@ angle::Result ContextVk::endRenderPassIfComputeReadAfterTransformFeedbackWrite()
     // Similar to flushCommandBuffersIfNecessary(), but using uniform buffers currently bound and
     // used by the current (compute) program.  This is to handle read-after-write hazards where the
     // write originates from transform feedback.
-    if (mCurrentTransformFeedbackBuffers.empty())
+    if (!mCurrentTransformFeedbackQueueSerial.valid())
     {
         return angle::Result::Continue;
     }
@@ -8056,7 +8104,7 @@ angle::Result ContextVk::endRenderPassIfComputeReadAfterTransformFeedbackWrite()
         }
 
         vk::BufferHelper &buffer = vk::GetImpl(bufferBinding.get())->getBuffer();
-        if (mCurrentTransformFeedbackBuffers.contains(&buffer))
+        if (buffer.writtenByCommandBuffer(mCurrentTransformFeedbackQueueSerial))
         {
             return flushCommandsAndEndRenderPass(RenderPassClosureReason::XfbWriteThenComputeRead);
         }
@@ -8231,9 +8279,7 @@ ANGLE_INLINE angle::Result ContextVk::allocateQueueSerialIndex()
 {
     ASSERT(mCurrentQueueSerialIndex == kInvalidQueueSerialIndex);
     // Make everything appears to be flushed and submitted
-    ANGLE_TRY(mRenderer->allocateQueueSerialIndex(&mLastFlushedQueueSerial));
-    mCurrentQueueSerialIndex  = mLastFlushedQueueSerial.getIndex();
-    mLastSubmittedQueueSerial = mLastFlushedQueueSerial;
+    ANGLE_TRY(mRenderer->allocateQueueSerialIndex(&mCurrentQueueSerialIndex));
     // Note queueSerial for render pass is deferred until begin time.
     generateOutsideRenderPassCommandsQueueSerial();
     return angle::Result::Continue;

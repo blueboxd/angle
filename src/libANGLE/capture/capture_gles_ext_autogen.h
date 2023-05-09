@@ -330,12 +330,20 @@ angle::CallCapture CaptureMultiDrawElementsInstancedANGLE(const State &glState,
 
 // GL_ANGLE_pack_reverse_row_order
 
+// GL_ANGLE_polygon_mode
+angle::CallCapture CapturePolygonModeANGLE(const State &glState,
+                                           bool isCallValid,
+                                           GLenum face,
+                                           PolygonMode modePacked);
+
 // GL_ANGLE_program_binary
 
 // GL_ANGLE_provoking_vertex
 angle::CallCapture CaptureProvokingVertexANGLE(const State &glState,
                                                bool isCallValid,
                                                ProvokingVertexConvention provokeModePacked);
+
+// GL_ANGLE_renderability_validation
 
 // GL_ANGLE_request_extension
 angle::CallCapture CaptureRequestExtensionANGLE(const State &glState,
@@ -2155,6 +2163,12 @@ angle::CallCapture CaptureBlitFramebufferNV(const State &glState,
                                             GLenum filter);
 
 // GL_NV_pixel_buffer_object
+
+// GL_NV_polygon_mode
+angle::CallCapture CapturePolygonModeNV(const State &glState,
+                                        bool isCallValid,
+                                        GLenum face,
+                                        PolygonMode modePacked);
 
 // GL_NV_read_depth
 

@@ -84,7 +84,7 @@ class ShareGroupVk;
 
 namespace angle
 {
-egl::Error ToEGL(Result result, rx::DisplayVk *displayVk, EGLint errorCode);
+egl::Error ToEGL(Result result, EGLint errorCode);
 }  // namespace angle
 
 namespace rx
@@ -190,14 +190,6 @@ void AppendToPNextChain(VulkanStruct1 *chainStart, VulkanStruct2 *ptr)
     }
     endPtr->pNext = reinterpret_cast<VkBaseOutStructure *>(ptr);
 }
-
-struct Error
-{
-    VkResult errorCode;
-    const char *file;
-    const char *function;
-    uint32_t line;
-};
 
 class QueueSerialIndexAllocator final
 {
@@ -1141,6 +1133,7 @@ VkFilter GetFilter(const GLenum filter);
 VkSamplerMipmapMode GetSamplerMipmapMode(const GLenum filter);
 VkSamplerAddressMode GetSamplerAddressMode(const GLenum wrap);
 VkPrimitiveTopology GetPrimitiveTopology(gl::PrimitiveMode mode);
+VkPolygonMode GetPolygonMode(const gl::PolygonMode polygonMode);
 VkCullModeFlagBits GetCullMode(const gl::RasterizerState &rasterState);
 VkFrontFace GetFrontFace(GLenum frontFace, bool invertCullFace);
 VkSampleCountFlagBits GetSamples(GLint sampleCount);

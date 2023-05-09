@@ -710,6 +710,9 @@ StateManager11::StateManager11(Renderer11 *renderer)
     mCurRasterState.cullFace            = false;
     mCurRasterState.cullMode            = gl::CullFaceMode::Back;
     mCurRasterState.frontFace           = GL_CCW;
+    mCurRasterState.polygonMode         = gl::PolygonMode::Fill;
+    mCurRasterState.polygonOffsetPoint  = false;
+    mCurRasterState.polygonOffsetLine   = false;
     mCurRasterState.polygonOffsetFill   = false;
     mCurRasterState.polygonOffsetFactor = 0.0f;
     mCurRasterState.polygonOffsetUnits  = 0.0f;
@@ -1211,6 +1214,20 @@ void StateManager11::syncState(const gl::Context *context,
                             break;
                         case gl::State::EXTENDED_DIRTY_BIT_DEPTH_CLAMP_ENABLED:
                             if (state.getRasterizerState().depthClamp != mCurRasterState.depthClamp)
+                            {
+                                mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
+                            }
+                            break;
+                        case gl::State::EXTENDED_DIRTY_BIT_POLYGON_MODE:
+                            if (state.getRasterizerState().polygonMode !=
+                                mCurRasterState.polygonMode)
+                            {
+                                mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
+                            }
+                            break;
+                        case gl::State::EXTENDED_DIRTY_BIT_POLYGON_OFFSET_LINE_ENABLED:
+                            if (state.getRasterizerState().polygonOffsetLine !=
+                                mCurRasterState.polygonOffsetLine)
                             {
                                 mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
                             }
@@ -2236,8 +2253,9 @@ angle::Result StateManager11::updateState(const gl::Context *context,
     // TODO(jiawei.shao@intel.com): This can be recomputed only on framebuffer or multisample mask
     // state changes.
     RenderTarget11 *firstRT = mFramebuffer11->getFirstRenderTarget();
-    int samples             = (firstRT ? firstRT->getSamples() : 0);
-    unsigned int sampleMask = GetBlendSampleMask(glState, samples);
+    const int samples       = (firstRT ? firstRT->getSamples() : 0);
+    // Single-sampled rendering requires ignoring sample coverage and sample mask states.
+    unsigned int sampleMask = (samples != 0) ? GetBlendSampleMask(glState, samples) : 0xFFFFFFFF;
     if (sampleMask != mCurSampleMask)
     {
         mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
@@ -2314,9 +2332,11 @@ angle::Result StateManager11::updateState(const gl::Context *context,
                 ANGLE_TRY(syncRasterizerState(context, mode));
                 break;
             case DIRTY_BIT_BLEND_STATE:
-                ANGLE_TRY(syncBlendState(
-                    context, glState.getBlendStateExt(), glState.getBlendColor(), sampleMask,
-                    glState.isSampleAlphaToCoverageEnabled(), glState.hasConstantAlphaBlendFunc()));
+                // Single-sampled rendering requires ignoring alpha-to-coverage state.
+                ANGLE_TRY(syncBlendState(context, glState.getBlendStateExt(),
+                                         glState.getBlendColor(), sampleMask,
+                                         glState.isSampleAlphaToCoverageEnabled() && (samples != 0),
+                                         glState.hasConstantAlphaBlendFunc()));
                 break;
             case DIRTY_BIT_DEPTH_STENCIL_STATE:
                 ANGLE_TRY(syncDepthStencilState(context));

@@ -23,6 +23,7 @@
 #include "common/platform.h"
 #include "common/string_utils.h"
 #include "common/system_utils.h"
+#include "common/tls.h"
 #include "common/utilities.h"
 #include "image_util/loadimage.h"
 #include "libANGLE/Buffer.h"
@@ -420,31 +421,49 @@ bool CanSupportAEP(const gl::Version &version, const gl::Extensions &extensions)
 // TODO(angleproject:6479): Due to a bug in Apple's dyld loader, `thread_local` will cause
 // excessive memory use. Temporarily avoid it by using pthread's thread
 // local storage instead.
-static TLSIndex GetCurrentValidContextTLSIndex()
+static angle::TLSIndex GetCurrentValidContextTLSIndex()
 {
-    static TLSIndex CurrentValidContextIndex = TLS_INVALID_INDEX;
+    static angle::TLSIndex CurrentValidContextIndex = TLS_INVALID_INDEX;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
       ASSERT(CurrentValidContextIndex == TLS_INVALID_INDEX);
-      CurrentValidContextIndex = CreateTLSIndex(nullptr);
+      CurrentValidContextIndex = angle::CreateTLSIndex(nullptr);
     });
     return CurrentValidContextIndex;
 }
 Context *GetCurrentValidContextTLS()
 {
-    TLSIndex CurrentValidContextIndex = GetCurrentValidContextTLSIndex();
+    angle::TLSIndex CurrentValidContextIndex = GetCurrentValidContextTLSIndex();
     ASSERT(CurrentValidContextIndex != TLS_INVALID_INDEX);
-    return static_cast<Context *>(GetTLSValue(CurrentValidContextIndex));
+    return static_cast<Context *>(angle::GetTLSValue(CurrentValidContextIndex));
 }
 void SetCurrentValidContextTLS(Context *context)
 {
-    TLSIndex CurrentValidContextIndex = GetCurrentValidContextTLSIndex();
+    angle::TLSIndex CurrentValidContextIndex = GetCurrentValidContextTLSIndex();
     ASSERT(CurrentValidContextIndex != TLS_INVALID_INDEX);
-    SetTLSValue(CurrentValidContextIndex, context);
+    angle::SetTLSValue(CurrentValidContextIndex, context);
 }
 #else
 thread_local Context *gCurrentValidContext = nullptr;
 #endif
+
+// Handle setting the current context in TLS on different platforms
+extern void SetCurrentValidContext(Context *context)
+{
+#if defined(ANGLE_USE_ANDROID_TLS_SLOT)
+    if (angle::gUseAndroidOpenGLTlsSlot)
+    {
+        ANGLE_ANDROID_GET_GL_TLS()[angle::kAndroidOpenGLTlsSlot] = static_cast<void *>(context);
+        return;
+    }
+#endif
+
+#if defined(ANGLE_PLATFORM_APPLE)
+    SetCurrentValidContextTLS(context);
+#else
+    gCurrentValidContext = context;
+#endif
+}
 
 Context::Context(egl::Display *display,
                  const egl::Config *config,
@@ -2990,11 +3009,7 @@ void Context::setContextLost()
     mSkipValidation = false;
 
     // Make sure we update TLS.
-#if defined(ANGLE_PLATFORM_APPLE)
-    SetCurrentValidContextTLS(nullptr);
-#else
-    gCurrentValidContext = nullptr;
-#endif
+    SetCurrentValidContext(nullptr);
 }
 
 GLenum Context::getGraphicsResetStatus()
@@ -3789,6 +3804,12 @@ Extensions Context::generateSupportedExtensions() const
         // non-conformant in ES 3.0 and superseded by EXT_color_buffer_float.
         supportedExtensions.colorBufferFloatRgbCHROMIUM  = false;
         supportedExtensions.colorBufferFloatRgbaCHROMIUM = false;
+    }
+
+    if (getClientVersion() >= ES_3_0)
+    {
+        // Enable this extension for GLES3+.
+        supportedExtensions.renderabilityValidationANGLE = true;
     }
 
     if (getFrontendFeatures().disableDrawBuffersIndexed.enabled)
@@ -6091,6 +6112,17 @@ void Context::pixelStorei(GLenum pname, GLint param)
             UNREACHABLE();
             return;
     }
+}
+
+void Context::polygonMode(GLenum face, PolygonMode modePacked)
+{
+    ASSERT(face == GL_FRONT_AND_BACK);
+    mState.setPolygonMode(modePacked);
+}
+
+void Context::polygonModeNV(GLenum face, PolygonMode modePacked)
+{
+    polygonMode(face, modePacked);
 }
 
 void Context::polygonOffset(GLfloat factor, GLfloat units)
@@ -10255,13 +10287,10 @@ void ErrorSet::validationError(angle::EntryPoint entryPoint, GLenum errorCode, c
 {
     ASSERT(errorCode != GL_NO_ERROR);
     mErrors.insert(errorCode);
-    gl::LogSeverity severity = gl::LOG_INFO;
-#if defined(ANGLE_ENABLE_ASSERTS)
-    severity = gl::LOG_WARN;
-#endif  // defined(ANGLE_ENABLE_ASSERTS)
+
     mContext->getState().getDebug().insertMessage(GL_DEBUG_SOURCE_API, GL_DEBUG_TYPE_ERROR,
                                                   errorCode, GL_DEBUG_SEVERITY_HIGH, message,
-                                                  severity, entryPoint);
+                                                  gl::LOG_INFO, entryPoint);
 }
 
 bool ErrorSet::empty() const
