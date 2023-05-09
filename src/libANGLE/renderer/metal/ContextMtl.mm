@@ -1362,7 +1362,6 @@ angle::Result ContextMtl::syncState(const gl::Context *context,
                 break;
             case gl::State::DIRTY_BIT_EXTENDED:
                 updateExtendedState(glState);
-                // Nothing to do until EXT_clip_control is implemented.
                 break;
             case gl::State::DIRTY_BIT_SAMPLE_SHADING:
                 // Nothing to do until OES_sample_shading is implemented.
@@ -1381,9 +1380,25 @@ angle::Result ContextMtl::syncState(const gl::Context *context,
 
 void ContextMtl::updateExtendedState(const gl::State &glState)
 {
-    // Handling clip distance enabled flags, mipmap generation hint & shader derivative
-    // hint.
-    invalidateDriverUniforms();
+    gl::State::ExtendedDirtyBits extendedDirtyBits = glState.getAndResetExtendedDirtyBits();
+    for (size_t extendedDirtyBit : extendedDirtyBits)
+    {
+        switch (extendedDirtyBit)
+        {
+            case gl::State::EXTENDED_DIRTY_BIT_CLIP_CONTROL:
+                updateFrontFace(glState);
+                invalidateDriverUniforms();
+                break;
+            case gl::State::EXTENDED_DIRTY_BIT_CLIP_DISTANCES:
+                invalidateDriverUniforms();
+                break;
+            case gl::State::EXTENDED_DIRTY_BIT_DEPTH_CLAMP_ENABLED:
+                mDirtyBits.set(DIRTY_BIT_DEPTH_CLIP_MODE);
+                break;
+            default:
+                break;
+        }
+    }
 }
 
 // Disjoint timer queries
@@ -2150,8 +2165,9 @@ void ContextMtl::updateCullMode(const gl::State &glState)
 void ContextMtl::updateFrontFace(const gl::State &glState)
 {
     FramebufferMtl *framebufferMtl = mtl::GetImpl(glState.getDrawFramebuffer());
-    mWinding =
-        mtl::GetFontfaceWinding(glState.getRasterizerState().frontFace, !framebufferMtl->flipY());
+    const bool upperLeftOrigin     = mState.getClipOrigin() == gl::ClipOrigin::UpperLeft;
+    mWinding = mtl::GetFrontfaceWinding(glState.getRasterizerState().frontFace,
+                                        framebufferMtl->flipY() == upperLeftOrigin);
     mDirtyBits.set(DIRTY_BIT_WINDING);
 }
 
@@ -2536,6 +2552,10 @@ angle::Result ContextMtl::setupDrawImpl(const gl::Context *context,
             case DIRTY_BIT_DEPTH_BIAS:
                 ANGLE_TRY(handleDirtyDepthBias(context));
                 break;
+            case DIRTY_BIT_DEPTH_CLIP_MODE:
+                mRenderEncoder.setDepthClipMode(
+                    mState.isDepthClampEnabled() ? MTLDepthClipModeClamp : MTLDepthClipModeClip);
+                break;
             case DIRTY_BIT_STENCIL_REF:
                 mRenderEncoder.setStencilRefVals(mStencilRefFront, mStencilRefBack);
                 break;
@@ -2714,14 +2734,20 @@ angle::Result ContextMtl::handleDirtyDriverUniforms(const gl::Context *context,
 
     const float flipX      = 1.0;
     const float flipY      = mDrawFramebuffer->flipY() ? -1.0f : 1.0f;
-    mDriverUniforms.flipXY = gl::PackSnorm4x8(flipX, flipY, flipX, -flipY);
+    mDriverUniforms.flipXY = gl::PackSnorm4x8(
+        flipX, flipY, flipX, mState.getClipOrigin() == gl::ClipOrigin::LowerLeft ? -flipY : flipY);
 
     // gl_ClipDistance
     const uint32_t enabledClipDistances = mState.getEnabledClipDistances().bits();
     ASSERT((enabledClipDistances & ~sh::vk::kDriverUniformsMiscEnabledClipPlanesMask) == 0);
 
-    mDriverUniforms.misc = enabledClipDistances
-                           << sh::vk::kDriverUniformsMiscEnabledClipPlanesOffset;
+    // GL_CLIP_DEPTH_MODE_EXT
+    const uint32_t transformDepth = !mState.isClipDepthModeZeroToOne();
+    ASSERT((transformDepth & ~sh::vk::kDriverUniformsMiscTransformDepthMask) == 0);
+
+    mDriverUniforms.misc =
+        (enabledClipDistances << sh::vk::kDriverUniformsMiscEnabledClipPlanesOffset) |
+        (transformDepth << sh::vk::kDriverUniformsMiscTransformDepthOffset);
 
     // Sample coverage mask
     const uint32_t sampleBitCount = mDrawFramebuffer->getSamples();

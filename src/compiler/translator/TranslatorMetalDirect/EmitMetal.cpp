@@ -1093,6 +1093,13 @@ void GenMetalTraverser::emitFieldDeclaration(const TField &field,
             }
             break;
 
+        case TQualifier::EvqCentroidIn:
+            if (mPipelineStructs.fragmentIn.external == &parent)
+            {
+                mOut << " [[centroid_perspective]]";
+            }
+            break;
+
         case TQualifier::EvqFragColor:
             mOut << " [[color(0)]]";
             break;
@@ -1152,8 +1159,20 @@ void GenMetalTraverser::emitFieldDeclaration(const TField &field,
             break;
 
         case TQualifier::EvqFragDepth:
-            mOut << " [[depth(any), function_constant(" << sh::mtl::kDepthWriteEnabledConstName
-                 << ")]]";
+            mOut << " [[depth(";
+            switch (type.getLayoutQualifier().depth)
+            {
+                case EdGreater:
+                    mOut << "greater";
+                    break;
+                case EdLess:
+                    mOut << "less";
+                    break;
+                default:
+                    mOut << "any";
+                    break;
+            }
+            mOut << "), function_constant(" << sh::mtl::kDepthWriteEnabledConstName << ")]]";
             break;
 
         case TQualifier::EvqSampleMask:

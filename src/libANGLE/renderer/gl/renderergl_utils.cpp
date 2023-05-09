@@ -528,7 +528,12 @@ static gl::TextureCaps GenerateTextureFormatCaps(const FunctionsGL *functions,
 
     // We require GL_RGBA16F is renderable to expose EXT_color_buffer_half_float but we can't know
     // if the format is supported unless we try to create a framebuffer.
-    if (internalFormat == GL_RGBA16F)
+    // Renderability of signed normalized formats is optional on desktop GL.
+    if (internalFormat == GL_RGBA16F ||
+        (functions->standard == STANDARD_GL_DESKTOP &&
+         (internalFormat == GL_R8_SNORM || internalFormat == GL_R16_SNORM ||
+          internalFormat == GL_RG8_SNORM || internalFormat == GL_RG16_SNORM ||
+          internalFormat == GL_RGBA8_SNORM || internalFormat == GL_RGBA16_SNORM)))
     {
         if (textureCaps.textureAttachment)
         {
@@ -1168,6 +1173,13 @@ void GenerateCaps(const FunctionsGL *functions,
         LimitVersion(maxSupportedESVersion, gl::Version(2, 0));
     }
 
+    if (!functions->isAtLeastGL(gl::Version(4, 3)) &&
+        !functions->hasGLExtension("GL_ARB_stencil_texturing") &&
+        !functions->isAtLeastGLES(gl::Version(3, 1)))
+    {
+        LimitVersion(maxSupportedESVersion, gl::Version(3, 0));
+    }
+
     if (functions->isAtLeastGL(gl::Version(4, 3)) || functions->isAtLeastGLES(gl::Version(3, 1)) ||
         functions->hasGLExtension("GL_ARB_framebuffer_no_attachments"))
     {
@@ -1477,6 +1489,12 @@ void GenerateCaps(const FunctionsGL *functions,
                                       functions->hasGLESExtension("GL_EXT_shader_texture_lod");
     extensions->fragDepthEXT = functions->standard == STANDARD_GL_DESKTOP ||
                                functions->hasGLESExtension("GL_EXT_frag_depth");
+    extensions->conservativeDepthEXT = functions->isAtLeastGL(gl::Version(4, 2)) ||
+                                       functions->hasGLExtension("GL_ARB_conservative_depth") ||
+                                       functions->hasGLESExtension("GL_EXT_conservative_depth");
+    extensions->depthClampEXT = functions->isAtLeastGL(gl::Version(3, 2)) ||
+                                functions->hasGLExtension("GL_ARB_depth_clamp") ||
+                                functions->hasGLESExtension("GL_EXT_depth_clamp");
     extensions->polygonOffsetClampEXT = functions->hasExtension("GL_EXT_polygon_offset_clamp");
 
     // Support video texture extension on non Android backends.
@@ -1508,6 +1526,15 @@ void GenerateCaps(const FunctionsGL *functions,
          functions->hasGLESExtension("GL_OES_texture_border_clamp") ||
          functions->hasGLESExtension("GL_NV_texture_border_clamp"));
     extensions->textureBorderClampOES = extensions->textureBorderClampEXT;
+
+    // This functionality is supported on macOS but the extension
+    // strings are not listed there for historical reasons.
+    extensions->textureMirrorClampToEdgeEXT =
+        IsMac() || functions->isAtLeastGL(gl::Version(4, 4)) ||
+        functions->hasGLExtension("GL_ARB_texture_mirror_clamp_to_edge") ||
+        functions->hasGLExtension("GL_EXT_texture_mirror_clamp") ||
+        functions->hasGLExtension("GL_ATI_texture_mirror_once") ||
+        functions->hasGLESExtension("GL_EXT_texture_mirror_clamp_to_edge");
 
     extensions->multiDrawIndirectEXT = true;
     extensions->instancedArraysANGLE = functions->isAtLeastGL(gl::Version(3, 1)) ||
@@ -1583,6 +1610,10 @@ void GenerateCaps(const FunctionsGL *functions,
         extensions->robustnessEXT &&
         (functions->hasGLExtension("GL_ARB_robust_buffer_access_behavior") ||
          functions->hasGLESExtension("GL_KHR_robust_buffer_access_behavior"));
+
+    extensions->stencilTexturingANGLE = functions->isAtLeastGL(gl::Version(4, 3)) ||
+                                        functions->hasGLExtension("GL_ARB_stencil_texturing") ||
+                                        functions->isAtLeastGLES(gl::Version(3, 1));
 
     // ANGLE_shader_pixel_local_storage.
     if (features.supportsShaderPixelLocalStorageEXT.enabled &&
@@ -1847,12 +1878,11 @@ void GenerateCaps(const FunctionsGL *functions,
                                 caps->maxShaderAtomicCounterBuffers);
     CapCombinedLimitToESShaders(&caps->maxCombinedAtomicCounters, caps->maxShaderAtomicCounters);
 
-    // EXT_blend_func_extended.
-    // Note that this could be implemented also on top of native EXT_blend_func_extended, but it's
-    // currently not fully implemented.
+    // EXT_blend_func_extended is not implemented on top of ARB_blend_func_extended
+    // because the latter does not support fragment shader output layout qualifiers.
     extensions->blendFuncExtendedEXT = !features.disableBlendFuncExtended.enabled &&
-                                       functions->standard == STANDARD_GL_DESKTOP &&
-                                       functions->hasGLExtension("GL_ARB_blend_func_extended");
+                                       (functions->isAtLeastGL(gl::Version(3, 3)) ||
+                                        functions->hasGLESExtension("GL_EXT_blend_func_extended"));
     if (extensions->blendFuncExtendedEXT)
     {
         // TODO(http://anglebug.com/1085): Support greater values of
@@ -1944,6 +1974,10 @@ void GenerateCaps(const FunctionsGL *functions,
     extensions->shadowSamplersEXT = functions->isAtLeastGL(gl::Version(2, 0)) ||
                                     functions->isAtLeastGLES(gl::Version(3, 0)) ||
                                     functions->hasGLESExtension("GL_EXT_shadow_samplers");
+
+    extensions->clipControlEXT = functions->isAtLeastGL(gl::Version(4, 5)) ||
+                                 functions->hasGLExtension("GL_ARB_clip_control") ||
+                                 functions->hasGLESExtension("GL_EXT_clip_control");
 
     // GL_APPLE_clip_distance cannot be implemented on top of GL_EXT_clip_cull_distance,
     // so require either native support or desktop GL.
@@ -2215,7 +2249,11 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     ANGLE_FEATURE_CONDITION(features, dontUseLoopsToInitializeVariables,
                             (IsAndroid() && isQualcomm) || (isIntel && IsApple()));
 
-    ANGLE_FEATURE_CONDITION(features, disableBlendFuncExtended, isAMD || isIntel);
+    // Adreno drivers do not support glBindFragDataLocation* with MRT
+    // Intel macOS condition ported from gpu_driver_bug_list.json (#327)
+    ANGLE_FEATURE_CONDITION(features, disableBlendFuncExtended,
+                            (IsAndroid() && isQualcomm) ||
+                                (IsApple() && isIntel && GetMacOSVersion() < OSVersion(10, 14, 0)));
 
     ANGLE_FEATURE_CONDITION(features, unsizedSRGBReadPixelsDoesntTransform,
                             IsAndroid() && isQualcomm);
@@ -2313,8 +2351,7 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
         features, disableTimestampQueries,
         (IsLinux() && isVMWare) || (IsAndroid() && isNvidia) ||
             (IsAndroid() && GetAndroidSdkLevel() < 27 && IsAdreno5xxOrOlder(functions)) ||
-            (IsAndroid() && IsMaliT8xxOrOlder(functions)) ||
-            (IsAndroid() && IsMaliG31OrOlder(functions)));
+            (!isMesa && IsMaliT8xxOrOlder(functions)) || (!isMesa && IsMaliG31OrOlder(functions)));
 
     ANGLE_FEATURE_CONDITION(features, decodeEncodeSRGBForGenerateMipmap, IsApple());
 

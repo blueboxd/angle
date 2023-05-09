@@ -43,6 +43,11 @@ constexpr VkImageCreateFlags kVkImageCreateFlagsNone = 0;
 
 constexpr VkFilter kDefaultYCbCrChromaFilter = VK_FILTER_NEAREST;
 
+constexpr VkPipelineStageFlags kSwapchainAcquireImageWaitStageFlags =
+    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |          // First use is a blit command.
+    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |  // First use is a draw command.
+    VK_PIPELINE_STAGE_TRANSFER_BIT;                  // First use is a clear without scissor.
+
 using StagingBufferOffsetArray = std::array<VkDeviceSize, 2>;
 
 // A dynamic buffer is conceptually an infinitely long buffer. Each time you write to the buffer,
@@ -750,7 +755,8 @@ class BufferHelper : public ReadWriteResource
     angle::Result initSuballocation(ContextVk *contextVk,
                                     uint32_t memoryTypeIndex,
                                     size_t size,
-                                    size_t alignment);
+                                    size_t alignment,
+                                    BufferUsageType usageType);
 
     // Helper functions to initialize a buffer for a specific usage
     // Suballocate a buffer with alignment good for shader storage or copyBuffer .
@@ -965,6 +971,8 @@ class PackedClearValuesArray final
     gl::AttachmentArray<VkClearValue> mValues;
 };
 
+class ImageHelper;
+
 // Reference to a render pass attachment (color or depth/stencil) alongside render-pass-related
 // tracking such as when the attachment is last written to or invalidated.  This is used to
 // determine loadOp and storeOp of the attachment, and enables optimizations that need to know
@@ -976,6 +984,7 @@ class RenderPassAttachment final
     ~RenderPassAttachment() = default;
 
     void init(ImageHelper *image,
+              UniqueSerial imageSiblingSerial,
               gl::LevelIndex levelIndex,
               uint32_t layerIndex,
               uint32_t layerCount,
@@ -995,9 +1004,15 @@ class RenderPassAttachment final
                            bool *isInvalidatedOut);
     void restoreContent();
     bool hasAnyAccess() const { return mAccess != ResourceAccess::Unused; }
-    bool hasWriteAccess() const { return mAccess == ResourceAccess::Write; }
+    bool hasWriteAccess() const { return HasResourceWriteAccess(mAccess); }
 
     ImageHelper *getImage() { return mImage; }
+
+    bool hasImage(const ImageHelper *image, UniqueSerial imageSiblingSerial) const
+    {
+        // Compare values because we do want that invalid serials compare equal.
+        return mImage == image && mImageSiblingSerial.getValue() == imageSiblingSerial.getValue();
+    }
 
   private:
     bool hasWriteAfterInvalidate(uint32_t currentCmdCount) const;
@@ -1006,6 +1021,8 @@ class RenderPassAttachment final
 
     // The attachment image itself
     ImageHelper *mImage;
+    // Invalid or serial of EGLImage/Surface sibling target.
+    UniqueSerial mImageSiblingSerial;
     // The subresource used in the render pass
     gl::LevelIndex mLevelIndex;
     uint32_t mLayerIndex;
@@ -1078,7 +1095,7 @@ constexpr uint32_t kInfiniteCmdCount = 0xFFFFFFFF;
 class CommandBufferHelperCommon : angle::NonCopyable
 {
   public:
-    CommandPool *getCommandPool() { return mCommandPool; }
+    SecondaryCommandPool *getCommandPool() { return mCommandPool; }
 
     void bufferWrite(ContextVk *contextVk,
                      VkAccessFlags writeAccessType,
@@ -1128,7 +1145,7 @@ class CommandBufferHelperCommon : angle::NonCopyable
     CommandBufferHelperCommon();
     ~CommandBufferHelperCommon();
 
-    void initializeImpl(CommandPool *commandPool);
+    void initializeImpl(SecondaryCommandPool *commandPool);
 
     void resetImpl();
 
@@ -1160,7 +1177,7 @@ class CommandBufferHelperCommon : angle::NonCopyable
 
     // The command pool *CommandBufferHelper::mCommandBuffer is allocated from.  Only used with
     // Vulkan secondary command buffers (as opposed to ANGLE's SecondaryCommandBuffer).
-    CommandPool *mCommandPool;
+    SecondaryCommandPool *mCommandPool;
 
     // Whether the command buffers contains any draw/dispatch calls that possibly output data
     // through storage buffers and images.  This is used to determine whether glMemoryBarrier*
@@ -1175,15 +1192,17 @@ class CommandBufferHelperCommon : angle::NonCopyable
     QueueSerial mQueueSerial;
 };
 
+class SecondaryCommandBufferCollector;
+
 class OutsideRenderPassCommandBufferHelper final : public CommandBufferHelperCommon
 {
   public:
     OutsideRenderPassCommandBufferHelper();
     ~OutsideRenderPassCommandBufferHelper();
 
-    angle::Result initialize(Context *context, CommandPool *commandPool);
+    angle::Result initialize(Context *context, SecondaryCommandPool *commandPool);
 
-    angle::Result reset(Context *context);
+    angle::Result reset(Context *context, SecondaryCommandBufferCollector *commandBufferCollector);
 
     OutsideRenderPassCommandBuffer &getCommandBuffer() { return mCommandBuffer; }
 
@@ -1214,7 +1233,9 @@ class OutsideRenderPassCommandBufferHelper final : public CommandBufferHelperCom
                     ImageLayout imageLayout,
                     ImageHelper *image);
 
-    angle::Result flushToPrimary(Context *context, PrimaryCommandBuffer *primary);
+    angle::Result flushToPrimary(Context *context,
+                                 PrimaryCommandBuffer *primary,
+                                 SecondaryCommandBufferCollector *commandBufferCollector);
 
     void setGLMemoryBarrierIssued()
     {
@@ -1284,9 +1305,9 @@ class RenderPassCommandBufferHelper final : public CommandBufferHelperCommon
     RenderPassCommandBufferHelper();
     ~RenderPassCommandBufferHelper();
 
-    angle::Result initialize(Context *context, CommandPool *commandPool);
+    angle::Result initialize(Context *context, SecondaryCommandPool *commandPool);
 
-    angle::Result reset(Context *context);
+    angle::Result reset(Context *context, SecondaryCommandBufferCollector *commandBufferCollector);
 
     RenderPassCommandBuffer &getCommandBuffer()
     {
@@ -1325,24 +1346,29 @@ class RenderPassCommandBufferHelper final : public CommandBufferHelperCommon
                          uint32_t layerCount,
                          ImageHelper *image,
                          ImageHelper *resolveImage,
+                         UniqueSerial imageSiblingSerial,
                          PackedAttachmentIndex packedAttachmentIndex);
     void depthStencilImagesDraw(gl::LevelIndex level,
                                 uint32_t layerStart,
                                 uint32_t layerCount,
                                 ImageHelper *image,
-                                ImageHelper *resolveImage);
+                                ImageHelper *resolveImage,
+                                UniqueSerial imageSiblingSerial);
 
     bool usesImage(const ImageHelper &image) const;
     bool startedAndUsesImageWithBarrier(const ImageHelper &image) const;
 
     angle::Result flushToPrimary(Context *context,
                                  PrimaryCommandBuffer *primary,
-                                 const RenderPass *renderPass);
+                                 const RenderPass *renderPass,
+                                 SecondaryCommandBufferCollector *commandBufferCollector);
 
     bool started() const { return mRenderPassStarted; }
 
     // Finalize the layout if image has any deferred layout transition.
-    void finalizeImageLayout(Context *context, const ImageHelper *image);
+    void finalizeImageLayout(Context *context,
+                             const ImageHelper *image,
+                             UniqueSerial imageSiblingSerial);
 
     angle::Result beginRenderPass(ContextVk *contextVk,
                                   MaybeImagelessFramebuffer &framebuffer,
@@ -1532,7 +1558,7 @@ class RenderPassCommandBufferHelper final : public CommandBufferHelperCommon
 
 // The following class helps support both Vulkan and ANGLE secondary command buffers by
 // encapsulating their differences.
-template <typename CommandBufferT, typename CommandBufferHelperT>
+template <typename CommandBufferHelperT>
 class CommandBufferRecycler
 {
   public:
@@ -1542,24 +1568,35 @@ class CommandBufferRecycler
     void onDestroy();
 
     angle::Result getCommandBufferHelper(Context *context,
-                                         CommandPool *commandPool,
+                                         SecondaryCommandPool *commandPool,
                                          SecondaryCommandMemoryAllocator *commandsAllocator,
                                          CommandBufferHelperT **commandBufferHelperOut);
 
-    void recycleCommandBufferHelper(VkDevice device, CommandBufferHelperT **commandBuffer);
-
-    void resetCommandBuffer(CommandBufferT &&commandBuffer);
-
-    void releaseCommandBuffersToReset(std::vector<CommandBufferT> *vectorOut)
-    {
-        std::unique_lock<std::mutex> lock(mMutex);
-        (*vectorOut) = std::move(mSecondaryCommandBuffersToReset);
-    }
+    void recycleCommandBufferHelper(CommandBufferHelperT **commandBuffer);
 
   private:
     std::mutex mMutex;
     std::vector<CommandBufferHelperT *> mCommandBufferHelperFreeList;
-    std::vector<CommandBufferT> mSecondaryCommandBuffersToReset;
+};
+
+class SecondaryCommandBufferCollector final
+{
+  public:
+    SecondaryCommandBufferCollector()                                              = default;
+    SecondaryCommandBufferCollector(const SecondaryCommandBufferCollector &)       = delete;
+    SecondaryCommandBufferCollector(SecondaryCommandBufferCollector &&)            = default;
+    void operator=(const SecondaryCommandBufferCollector &)                        = delete;
+    SecondaryCommandBufferCollector &operator=(SecondaryCommandBufferCollector &&) = default;
+    ~SecondaryCommandBufferCollector() { ASSERT(empty()); }
+
+    void collectCommandBuffer(priv::SecondaryCommandBuffer &&commandBuffer);
+    void collectCommandBuffer(VulkanSecondaryCommandBuffer &&commandBuffer);
+    void retireCommandBuffers();
+
+    bool empty() const { return mCollectedCommandBuffers.empty(); }
+
+  private:
+    std::vector<VulkanSecondaryCommandBuffer> mCollectedCommandBuffers;
 };
 
 // Imagine an image going through a few layout transitions:
@@ -1701,7 +1738,6 @@ class ImageHelper final : public Resource, public angle::Subject
 {
   public:
     ImageHelper();
-    ImageHelper(ImageHelper &&other);
     ~ImageHelper() override;
 
     angle::Result init(Context *context,
@@ -1852,7 +1888,12 @@ class ImageHelper final : public Resource, public angle::Subject
     void releaseImage(RendererVk *renderer);
     // Similar to releaseImage, but also notify all contexts in the same share group to stop
     // accessing to it.
-    void releaseImageFromShareContexts(RendererVk *renderer, ContextVk *contextVk);
+    void releaseImageFromShareContexts(RendererVk *renderer,
+                                       ContextVk *contextVk,
+                                       UniqueSerial imageSiblingSerial);
+    void finalizeImageLayoutInShareContexts(RendererVk *renderer,
+                                            ContextVk *contextVk,
+                                            UniqueSerial imageSiblingSerial);
     void releaseStagedUpdates(RendererVk *renderer);
 
     bool valid() const { return mImage.valid(); }
@@ -2591,6 +2632,7 @@ class ImageHelper final : public Resource, public angle::Subject
     // Vulkan objects.
     Image mImage;
     DeviceMemory mDeviceMemory;
+    Allocation mVmaAllocation;
 
     // Image properties.
     VkImageCreateInfo mVkImageCreateInfo;

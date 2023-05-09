@@ -172,6 +172,10 @@ class State : angle::NonCopyable
     void setCullMode(CullFaceMode mode);
     void setFrontFace(GLenum front);
 
+    // EXT_depth_clamp
+    bool isDepthClampEnabled() const { return mRasterizer.depthClamp; }
+    void setDepthClamp(bool enabled);
+
     // Depth test state manipulation
     bool isDepthTestEnabled() const { return mDepthStencil.depthTest; }
     bool isDepthWriteEnabled() const { return mDepthStencil.depthTest && mDepthStencil.depthMask; }
@@ -181,14 +185,11 @@ class State : angle::NonCopyable
     float getNearPlane() const { return mNearZ; }
     float getFarPlane() const { return mFarZ; }
 
-    // Clip control extension
-    void setClipControl(GLenum origin, GLenum depth);
-    bool isClipControlDepthZeroToOne() const { return mClipControlDepth == GL_ZERO_TO_ONE_EXT; }
-    gl::ClipSpaceOrigin getClipSpaceOrigin() const
-    {
-        return mClipControlOrigin == GL_UPPER_LEFT_EXT ? ClipSpaceOrigin::UpperLeft
-                                                       : ClipSpaceOrigin::LowerLeft;
-    }
+    // EXT_clip_control
+    void setClipControl(ClipOrigin origin, ClipDepthMode depth);
+    ClipOrigin getClipOrigin() const { return mClipOrigin; }
+    ClipDepthMode getClipDepthMode() const { return mClipDepthMode; }
+    bool isClipDepthModeZeroToOne() const { return mClipDepthMode == ClipDepthMode::ZeroToOne; }
 
     // Blend state manipulation
     bool isBlendEnabled() const { return mBlendStateExt.getEnabledMask().test(0); }
@@ -716,7 +717,7 @@ class State : angle::NonCopyable
         DIRTY_BIT_SAMPLE_SHADING,
         DIRTY_BIT_PATCH_VERTICES,
         DIRTY_BIT_EXTENDED,  // clip distances, mipmap generation hint, derivative hint,
-                             // EXT_clip_control
+                             // EXT_clip_control, EXT_depth_clamp
         DIRTY_BIT_INVALID,
         DIRTY_BIT_MAX = DIRTY_BIT_INVALID,
     };
@@ -727,6 +728,7 @@ class State : angle::NonCopyable
     {
         EXTENDED_DIRTY_BIT_CLIP_CONTROL,            // EXT_clip_control
         EXTENDED_DIRTY_BIT_CLIP_DISTANCES,          // clip distances
+        EXTENDED_DIRTY_BIT_DEPTH_CLAMP_ENABLED,     // EXT_depth_clamp
         EXTENDED_DIRTY_BIT_MIPMAP_GENERATION_HINT,  // mipmap generation hint
         EXTENDED_DIRTY_BIT_SHADER_DERIVATIVE_HINT,  // shader derivative hint
         EXTENDED_DIRTY_BIT_SHADING_RATE,            // QCOM_shading_rate
@@ -1101,8 +1103,8 @@ class State : angle::NonCopyable
     float mNearZ;
     float mFarZ;
 
-    GLenum mClipControlOrigin;
-    GLenum mClipControlDepth;
+    ClipOrigin mClipOrigin;
+    ClipDepthMode mClipDepthMode;
 
     Framebuffer *mReadFramebuffer;
     Framebuffer *mDrawFramebuffer;

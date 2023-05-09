@@ -371,6 +371,9 @@ bool JoinVariableStorageQualifier(TQualifier *joinedQualifier, TQualifier storag
                 case EvqCentroid:
                     *joinedQualifier = EvqCentroid;
                     break;
+                case EvqSample:
+                    *joinedQualifier = EvqSample;
+                    break;
                 case EvqVertexOut:
                 case EvqGeometryOut:
                 case EvqTessControlOut:
@@ -393,6 +396,7 @@ bool JoinVariableStorageQualifier(TQualifier *joinedQualifier, TQualifier storag
             switch (storageQualifier)
             {
                 case EvqCentroid:
+                case EvqSample:
                     *joinedQualifier = EvqFlat;
                     break;
                 case EvqVertexOut:
@@ -712,6 +716,15 @@ TLayoutQualifier JoinLayoutQualifiers(TLayoutQualifier leftQualifier,
     {
         joinedQualifier.location = rightQualifier.location;
         ++joinedQualifier.locationsSpecified;
+    }
+    if (rightQualifier.depth != EdUnspecified)
+    {
+        if (joinedQualifier.depth != EdUnspecified)
+        {
+            diagnostics->error(rightQualifierLocation, "Cannot have multiple depth qualifiers",
+                               getDepthString(rightQualifier.depth));
+        }
+        joinedQualifier.depth = rightQualifier.depth;
     }
     if (rightQualifier.yuv != false)
     {

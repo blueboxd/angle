@@ -754,7 +754,7 @@ void InitializeMSRTSS(Context *context,
 
     *msrtss       = {};
     msrtss->sType = VK_STRUCTURE_TYPE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_INFO_EXT;
-    msrtss->pNext = &msrtssResolve;
+    msrtss->pNext = msrtssResolve;
     msrtss->multisampledRenderToSingleSampledEnable = true;
     msrtss->rasterizationSamples                    = gl_vk::GetSamples(renderToTextureSamples);
 
@@ -767,7 +767,8 @@ void InitializeMSRTSS(Context *context,
 
     if (renderer->getFeatures().supportsMultisampledRenderToSingleSampled.enabled)
     {
-        AddToPNextChain(subpass, msrtss);
+        // msrtss->pNext is not null so can't use AddToPNextChain
+        AppendToPNextChain(subpass, msrtss);
     }
     else
     {
@@ -4700,7 +4701,7 @@ FramebufferHelper::FramebufferHelper(FramebufferHelper &&other) : Resource(std::
 
 FramebufferHelper &FramebufferHelper::operator=(FramebufferHelper &&other)
 {
-    std::swap(mUse, other.mUse);
+    Resource::operator=(std::move(other));
     std::swap(mFramebuffer, other.mFramebuffer);
     return *this;
 }
