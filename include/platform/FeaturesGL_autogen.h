@@ -480,6 +480,11 @@ struct FeaturesGL : FeatureSetBase
         "Timestampis called.",
         &members, "https://crbug.com/1356053"};
 
+    FeatureInfo disableBaseInstanceVertex = {
+        "disableBaseInstanceVertex", FeatureCategory::OpenGLWorkarounds,
+        "Some Mali drivers have buggy implementations of glDraw*BaseVertex*.", &members,
+        "http://anglebug.com/8172"};
+
     FeatureInfo supportsFragmentShaderInterlockNV = {
         "supportsFragmentShaderInterlockNV", FeatureCategory::OpenGLFeatures,
         "Backend GL context supports NV_fragment_shader_interlock extension", &members,
@@ -509,6 +514,11 @@ struct FeaturesGL : FeatureSetBase
         "supportsShaderPixelLocalStorageEXT", FeatureCategory::OpenGLFeatures,
         "Backend GL context supports EXT_shader_pixel_local_storage extension", &members,
         "http://anglebug.com/7279"};
+
+    FeatureInfo disableClipControl = {
+        "disableClipControl", FeatureCategory::OpenGLFeatures,
+        "Some ARM Mali devices genenerate errors when querying the clip control state.", &members,
+        "http://crbug.com/1434317"};
 };
 
 inline FeaturesGL::FeaturesGL()  = default;

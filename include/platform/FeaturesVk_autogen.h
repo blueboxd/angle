@@ -57,10 +57,15 @@ struct FeaturesVk : FeatureSetBase
         "VkDevice supports the VK_EXT_depth_clip_enable extension.", &members,
         "http://anglebug.com/3970"};
 
-    FeatureInfo depthClamping = {
-        "depthClamping", FeatureCategory::VulkanWorkarounds,
-        "The depth value is not clamped to [0,1] for floating point depth buffers.", &members,
+    FeatureInfo supportsDepthClampZeroOne = {
+        "supportsDepthClampZeroOne", FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_EXT_depth_clamp_zero_one extension", &members,
         "http://anglebug.com/3970"};
+
+    FeatureInfo clampFragDepth = {"clampFragDepth", FeatureCategory::VulkanWorkarounds,
+                                  "gl_FragDepth is not clamped when rendering to a floating point "
+                                  "depth buffer without VK_EXT_depth_clamp_zero_one",
+                                  &members, "http://anglebug.com/3970"};
 
     FeatureInfo mutableMipmapTextureUpload = {
         "mutableMipmapTextureUpload", FeatureCategory::VulkanFeatures,
@@ -720,6 +725,11 @@ struct FeaturesVk : FeatureSetBase
         "supportsImage2dViewOf3d", FeatureCategory::VulkanFeatures,
         "VkDevice supports VK_EXT_image_2d_view_of_3d", &members, "https://anglebug.com/7320"};
 
+    FeatureInfo supportsSampler2dViewOf3d = {
+        "supportsSampler2dViewOf3d", FeatureCategory::VulkanFeatures,
+        "VkDevice supports the sampler2DViewOf3D feature of VK_EXT_image_2d_view_of_3d", &members,
+        "https://anglebug.com/7320"};
+
     FeatureInfo supportsImagelessFramebuffer = {
         "supportsImagelessFramebuffer", FeatureCategory::VulkanFeatures,
         "VkDevice supports VK_KHR_imageless_framebuffer extension", &members,
@@ -891,6 +901,20 @@ struct FeaturesVk : FeatureSetBase
         "SecondaryCommandPools when using VulkanSecondaryCommandBuffer. ",
         &members,
     };
+
+    FeatureInfo enablePipelineCacheDataCompression = {
+        "enablePipelineCacheDataCompression", FeatureCategory::VulkanFeatures,
+        "enable pipeline cache data compression.", &members,
+        "https://issuetracker.google.com/258207403"};
+
+    FeatureInfo supportsLegacyDithering = {
+        "supportsLegacyDithering", FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_EXT_legacy_dithering extension", &members,
+        "https://issuetracker.google.com/284462263"};
+
+    FeatureInfo limitSampleCountTo2 = {"limitSampleCountTo2", FeatureCategory::VulkanWorkarounds,
+                                       "Limit sample count to 2 to save memory on low end devices.",
+                                       &members, "http://anglebug.com/8162"};
 };
 
 inline FeaturesVk::FeaturesVk()  = default;

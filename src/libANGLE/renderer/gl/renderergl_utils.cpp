@@ -136,13 +136,6 @@ bool IsAdreno5xx(const FunctionsGL *functions)
     return number != 0 && number >= 500 && number < 600;
 }
 
-bool IsMali(const FunctionsGL *functions)
-{
-    constexpr char Mali[]        = "Mali";
-    const char *nativeGLRenderer = GetString(functions, GL_RENDERER);
-    return angle::BeginsWith(nativeGLRenderer, Mali);
-}
-
 bool IsMaliT8xxOrOlder(const FunctionsGL *functions)
 {
     int number = getMaliTNumber(functions);
@@ -153,6 +146,19 @@ bool IsMaliG31OrOlder(const FunctionsGL *functions)
 {
     int number = getMaliGNumber(functions);
     return number != 0 && number <= 31;
+}
+
+bool IsMaliG72OrG76(const FunctionsGL *functions)
+{
+    int number = getMaliGNumber(functions);
+    return number == 72 || number == 76;
+}
+
+bool IsMaliValhall(const FunctionsGL *functions)
+{
+    int number = getMaliGNumber(functions);
+    return number == 57 || number == 77 || number == 68 || number == 78 || number == 310 ||
+           number == 510 || number == 610 || number == 710 || number == 615 || number == 715;
 }
 
 int GetAndroidSdkLevel()
@@ -239,6 +245,10 @@ VendorID GetVendorID(const FunctionsGL *functions)
     else if (nativeVendorString.find("Vivante") != std::string::npos)
     {
         return VENDOR_ID_VIVANTE;
+    }
+    else if (nativeVendorString.find("Mali") != std::string::npos)
+    {
+        return VENDOR_ID_ARM;
     }
     else
     {
@@ -1925,16 +1935,18 @@ void GenerateCaps(const FunctionsGL *functions,
 
     // ANGLE_base_vertex_base_instance
     extensions->baseVertexBaseInstanceANGLE =
-        functions->isAtLeastGL(gl::Version(3, 2)) || functions->isAtLeastGLES(gl::Version(3, 2)) ||
-        functions->hasGLESExtension("GL_OES_draw_elements_base_vertex") ||
-        functions->hasGLESExtension("GL_EXT_draw_elements_base_vertex");
+        !features.disableBaseInstanceVertex.enabled &&
+        (functions->isAtLeastGL(gl::Version(3, 2)) || functions->isAtLeastGLES(gl::Version(3, 2)) ||
+         functions->hasGLESExtension("GL_OES_draw_elements_base_vertex") ||
+         functions->hasGLESExtension("GL_EXT_draw_elements_base_vertex"));
 
     // EXT_base_instance
-    extensions->baseInstanceEXT = functions->isAtLeastGL(gl::Version(3, 2)) ||
-                                  functions->isAtLeastGLES(gl::Version(3, 2)) ||
-                                  functions->hasGLESExtension("GL_OES_draw_elements_base_vertex") ||
-                                  functions->hasGLESExtension("GL_EXT_draw_elements_base_vertex") ||
-                                  functions->hasGLESExtension("GL_EXT_base_instance");
+    extensions->baseInstanceEXT =
+        !features.disableBaseInstanceVertex.enabled &&
+        (functions->isAtLeastGL(gl::Version(3, 2)) || functions->isAtLeastGLES(gl::Version(3, 2)) ||
+         functions->hasGLESExtension("GL_OES_draw_elements_base_vertex") ||
+         functions->hasGLESExtension("GL_EXT_draw_elements_base_vertex") ||
+         functions->hasGLESExtension("GL_EXT_base_instance"));
 
     // ANGLE_base_vertex_base_instance_shader_builtin
     extensions->baseVertexBaseInstanceShaderBuiltinANGLE = extensions->baseVertexBaseInstanceANGLE;
@@ -2001,9 +2013,12 @@ void GenerateCaps(const FunctionsGL *functions,
                                     functions->isAtLeastGLES(gl::Version(3, 0)) ||
                                     functions->hasGLESExtension("GL_EXT_shadow_samplers");
 
-    extensions->clipControlEXT = functions->isAtLeastGL(gl::Version(4, 5)) ||
-                                 functions->hasGLExtension("GL_ARB_clip_control") ||
-                                 functions->hasGLESExtension("GL_EXT_clip_control");
+    if (!features.disableClipControl.enabled)
+    {
+        extensions->clipControlEXT = functions->isAtLeastGL(gl::Version(4, 5)) ||
+                                     functions->hasGLExtension("GL_ARB_clip_control") ||
+                                     functions->hasGLESExtension("GL_EXT_clip_control");
+    }
 
     // GL_APPLE_clip_distance cannot be implemented on top of GL_EXT_clip_cull_distance,
     // so require either native support or desktop GL.
@@ -2109,8 +2124,10 @@ bool GetSystemInfoVendorIDAndDeviceID(const FunctionsGL *functions,
     *outVendor = GetVendorID(functions);
     *outDevice = 0;
 
-    // Gather additional information from the system to detect multi-GPU scenarios.
-    bool isGetSystemInfoSuccess = angle::GetSystemInfo(outSystemInfo);
+    // Gather additional information from the system to detect multi-GPU scenarios. Do not collect
+    // system info on Android as it may use Vulkan which can crash on older devices. All the system
+    // info we need is available in the version and renderer strings on Android.
+    bool isGetSystemInfoSuccess = !IsAndroid() && angle::GetSystemInfo(outSystemInfo);
 
     // Get the device id from system info, corresponding to the vendor of the active GPU.
     if (isGetSystemInfoSuccess && !outSystemInfo->gpus.empty())
@@ -2174,6 +2191,7 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     bool isVMWare      = IsVMWare(vendor);
     bool hasAMD        = systemInfo.hasAMDGPU();
     bool isImagination = IsPowerVR(vendor);
+    bool isMali        = IsARM(vendor);
 
     std::array<int, 3> mesaVersion = {0, 0, 0};
     bool isMesa                    = IsMesa(functions, &mesaVersion);
@@ -2546,7 +2564,13 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
                             functions->hasGLESExtension("GL_EXT_shader_pixel_local_storage"));
 
     // https://crbug.com/1356053
-    ANGLE_FEATURE_CONDITION(features, bindFramebufferForTimerQueries, IsMali(functions));
+    ANGLE_FEATURE_CONDITION(features, bindFramebufferForTimerQueries, isMali);
+
+    // https://crbug.com/1434317
+    ANGLE_FEATURE_CONDITION(features, disableClipControl, IsMaliG72OrG76(functions));
+
+    // http://anglebug.com/8172
+    ANGLE_FEATURE_CONDITION(features, disableBaseInstanceVertex, IsMaliValhall(functions));
 }
 
 void InitializeFrontendFeatures(const FunctionsGL *functions, angle::FrontendFeatures *features)

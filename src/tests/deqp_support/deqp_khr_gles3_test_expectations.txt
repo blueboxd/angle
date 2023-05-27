@@ -69,5 +69,5 @@
 6678 UBSAN : KHR-GLES3.packed_pixels.* = SKIP
 6678 UBSAN : KHR-GLES3.copy_tex_image_conversions.required.* = SKIP
 
-// Failure since VK-GL-CTS roll (2023-02-28)
-8045 : KHR-GLES3.shaders.negative.non_precision_qualifiers_in_struct_members = SKIP
+// Samsung Galaxy S23
+8157 GALAXYS23 VULKAN : KHR-GLES3.shaders.function.global_variable_aliasing_fragment = SKIP

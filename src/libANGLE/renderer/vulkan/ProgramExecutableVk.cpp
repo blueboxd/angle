@@ -208,19 +208,36 @@ void GetPipelineCacheData(ContextVk *contextVk,
         return;
     }
 
-    std::vector<uint8_t> pipelineCacheData(pipelineCacheSize);
-    result = pipelineCache.getCacheData(contextVk->getDevice(), &pipelineCacheSize,
-                                        pipelineCacheData.data());
-    if (result != VK_SUCCESS && result != VK_INCOMPLETE)
+    if (contextVk->getFeatures().enablePipelineCacheDataCompression.enabled)
     {
-        return;
-    }
+        std::vector<uint8_t> pipelineCacheData(pipelineCacheSize);
+        result = pipelineCache.getCacheData(contextVk->getDevice(), &pipelineCacheSize,
+                                            pipelineCacheData.data());
+        if (result != VK_SUCCESS && result != VK_INCOMPLETE)
+        {
+            return;
+        }
 
-    // Compress it.
-    if (!egl::CompressBlobCacheData(pipelineCacheData.size(), pipelineCacheData.data(),
-                                    cacheDataOut))
+        // Compress it.
+        if (!egl::CompressBlobCacheData(pipelineCacheData.size(), pipelineCacheData.data(),
+                                        cacheDataOut))
+        {
+            cacheDataOut->clear();
+        }
+    }
+    else
     {
-        cacheDataOut->clear();
+        if (!cacheDataOut->resize(pipelineCacheSize))
+        {
+            ERR() << "Failed to allocate memory for pipeline cache data.";
+            return;
+        }
+        result = pipelineCache.getCacheData(contextVk->getDevice(), &pipelineCacheSize,
+                                            cacheDataOut->data());
+        if (result != VK_SUCCESS && result != VK_INCOMPLETE)
+        {
+            cacheDataOut->clear();
+        }
     }
 }
 
@@ -347,6 +364,7 @@ angle::Result ProgramInfo::initProgram(ContextVk *contextVk,
     options.negativeViewportSupported   = contextVk->getFeatures().supportsNegativeViewport.enabled;
     options.isMultisampledFramebufferFetch =
         optionBits.multiSampleFramebufferFetch && shaderType == gl::ShaderType::Fragment;
+    options.enableSampleShading = optionBits.enableSampleShading;
 
     // Don't validate SPIR-V generated for GLES1 shaders when validation layers are enabled.  The
     // layers already validate SPIR-V, and since GLES1 shaders are controlled by ANGLE, they don't
@@ -457,23 +475,30 @@ void ProgramExecutableVk::reset(ContextVk *contextVk)
     }
 }
 
-angle::Result ProgramExecutableVk::initializePipelineCache(
-    ContextVk *contextVk,
-    const std::vector<uint8_t> &compressedPipelineData)
+angle::Result ProgramExecutableVk::initializePipelineCache(ContextVk *contextVk,
+                                                           bool compressed,
+                                                           const std::vector<uint8_t> &pipelineData)
 {
     ASSERT(!mPipelineCache.valid());
 
+    size_t dataSize            = pipelineData.size();
+    const uint8_t *dataPointer = pipelineData.data();
+
     angle::MemoryBuffer uncompressedData;
-    if (!egl::DecompressBlobCacheData(compressedPipelineData.data(), compressedPipelineData.size(),
-                                      &uncompressedData))
+    if (compressed)
     {
-        return angle::Result::Stop;
+        if (!egl::DecompressBlobCacheData(dataPointer, dataSize, &uncompressedData))
+        {
+            return angle::Result::Stop;
+        }
+        dataSize    = uncompressedData.size();
+        dataPointer = uncompressedData.data();
     }
 
     VkPipelineCacheCreateInfo pipelineCacheCreateInfo = {};
     pipelineCacheCreateInfo.sType           = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-    pipelineCacheCreateInfo.initialDataSize = uncompressedData.size();
-    pipelineCacheCreateInfo.pInitialData    = uncompressedData.data();
+    pipelineCacheCreateInfo.initialDataSize = dataSize;
+    pipelineCacheCreateInfo.pInitialData    = dataPointer;
 
     if (contextVk->getFeatures().supportsPipelineCreationCacheControl.enabled)
     {
@@ -602,10 +627,12 @@ std::unique_ptr<rx::LinkEvent> ProgramExecutableVk::load(ContextVk *contextVk,
         std::vector<uint8_t> compressedPipelineData(compressedPipelineDataSize);
         if (compressedPipelineDataSize > 0)
         {
+            bool compressedData = false;
+            stream->readBool(&compressedData);
             stream->readBytes(compressedPipelineData.data(), compressedPipelineDataSize);
-
             // Initialize the pipeline cache based on cached data.
-            angle::Result status = initializePipelineCache(contextVk, compressedPipelineData);
+            angle::Result status =
+                initializePipelineCache(contextVk, compressedData, compressedPipelineData);
             if (status != angle::Result::Continue)
             {
                 return std::make_unique<LinkEventDone>(status);
@@ -715,11 +742,12 @@ void ProgramExecutableVk::save(ContextVk *contextVk,
     if (!isSeparable)
     {
         angle::MemoryBuffer cacheData;
-        GetPipelineCacheData(contextVk, mPipelineCache, &cacheData);
 
+        GetPipelineCacheData(contextVk, mPipelineCache, &cacheData);
         stream->writeInt(cacheData.size());
         if (cacheData.size() > 0)
         {
+            stream->writeBool(contextVk->getFeatures().enablePipelineCacheDataCompression.enabled);
             stream->writeBytes(cacheData.data(), cacheData.size());
         }
     }
@@ -1092,6 +1120,66 @@ angle::Result ProgramExecutableVk::addTextureDescriptorSetDesc(
     return angle::Result::Continue;
 }
 
+void ProgramExecutableVk::initializeWriteDescriptorDesc(ContextVk *contextVk,
+                                                        const gl::ProgramExecutable &glExecutable)
+{
+    const gl::ShaderBitSet &linkedShaderStages = glExecutable.getLinkedShaderStages();
+
+    // Update mShaderResourceWriteDescriptorDescBuilder
+    mShaderResourceWriteDescriptorDescBuilder.reset();
+    for (gl::ShaderType shaderType : linkedShaderStages)
+    {
+        mShaderResourceWriteDescriptorDescBuilder.updateShaderBuffers(
+            shaderType, ShaderVariableType::UniformBuffer, mVariableInfoMap,
+            glExecutable.getUniformBlocks(), getUniformBufferDescriptorType());
+        mShaderResourceWriteDescriptorDescBuilder.updateShaderBuffers(
+            shaderType, ShaderVariableType::ShaderStorageBuffer, mVariableInfoMap,
+            glExecutable.getShaderStorageBlocks(), getStorageBufferDescriptorType());
+        mShaderResourceWriteDescriptorDescBuilder.updateAtomicCounters(
+            shaderType, mVariableInfoMap, glExecutable.getAtomicCounterBuffers());
+        mShaderResourceWriteDescriptorDescBuilder.updateImages(shaderType, glExecutable,
+                                                               mVariableInfoMap);
+    }
+
+    // Update mTextureWriteDescriptors
+    mTextureWriteDescriptorDescBuilder.reset();
+    for (gl::ShaderType shaderType : linkedShaderStages)
+    {
+        mTextureWriteDescriptorDescBuilder.updateExecutableActiveTexturesForShader(
+            shaderType, mVariableInfoMap, glExecutable);
+    }
+
+    // Update mDefaultUniformWriteDescriptors
+    mDefaultUniformWriteDescriptorDescBuilder.reset();
+    for (gl::ShaderType shaderType : linkedShaderStages)
+    {
+        mDefaultUniformWriteDescriptorDescBuilder.updateDefaultUniform(shaderType, mVariableInfoMap,
+                                                                       glExecutable);
+    }
+
+    mDefaultUniformAndXfbWriteDescriptorDescBuilder.reset();
+    if (glExecutable.hasTransformFeedbackOutput() &&
+        contextVk->getRenderer()->getFeatures().emulateTransformFeedback.enabled)
+    {
+        // Update mDefaultUniformAndXfbWriteDescriptorDescs for the emulation code path.
+        for (gl::ShaderType shaderType : linkedShaderStages)
+        {
+            mDefaultUniformAndXfbWriteDescriptorDescBuilder.updateDefaultUniform(
+                shaderType, mVariableInfoMap, glExecutable);
+            if (shaderType == gl::ShaderType::Vertex)
+            {
+                mDefaultUniformAndXfbWriteDescriptorDescBuilder.updateTransformFeedbackWrite(
+                    mVariableInfoMap, glExecutable);
+            }
+        }
+    }
+    else
+    {
+        // Otherwise it will be the same as default uniform
+        mDefaultUniformAndXfbWriteDescriptorDescBuilder = mDefaultUniformWriteDescriptorDescBuilder;
+    }
+}
+
 ProgramTransformOptions ProgramExecutableVk::getTransformOptions(
     ContextVk *contextVk,
     const vk::GraphicsPipelineDesc &desc,
@@ -1107,6 +1195,8 @@ ProgramTransformOptions ProgramExecutableVk::getTransformOptions(
     const bool hasFramebufferFetch = glExecutable.usesFramebufferFetch();
     const bool isMultisampled      = drawFrameBuffer->getSamples() > 1;
     transformOptions.multiSampleFramebufferFetch = hasFramebufferFetch && isMultisampled;
+    transformOptions.enableSampleShading =
+        contextVk->getState().isSampleShadingEnabled() && isMultisampled;
 
     return transformOptions;
 }
@@ -1463,6 +1553,8 @@ angle::Result ProgramExecutableVk::createPipelineLayout(
         ANGLE_TRY(contextVk->switchToFramebufferFetchMode(true));
     }
 
+    initializeWriteDescriptorDesc(contextVk, glExecutable);
+
     return angle::Result::Continue;
 }
 
@@ -1512,6 +1604,7 @@ angle::Result ProgramExecutableVk::getOrAllocateDescriptorSet(
     UpdateDescriptorSetsBuilder *updateBuilder,
     vk::CommandBufferHelperCommon *commandBufferHelper,
     const vk::DescriptorSetDescBuilder &descriptorSetDesc,
+    const vk::WriteDescriptorDescs &writeDescriptorDescs,
     DescriptorSetIndex setIndex,
     vk::SharedDescriptorSetCacheKey *newSharedCacheKeyOut)
 {
@@ -1524,7 +1617,8 @@ angle::Result ProgramExecutableVk::getOrAllocateDescriptorSet(
     if (*newSharedCacheKeyOut != nullptr)
     {
         // Cache miss. A new cache entry has been created.
-        descriptorSetDesc.updateDescriptorSet(context, updateBuilder, mDescriptorSets[setIndex]);
+        descriptorSetDesc.updateDescriptorSet(context, writeDescriptorDescs, updateBuilder,
+                                              mDescriptorSets[setIndex]);
     }
     else
     {
@@ -1537,6 +1631,7 @@ angle::Result ProgramExecutableVk::getOrAllocateDescriptorSet(
 angle::Result ProgramExecutableVk::updateShaderResourcesDescriptorSet(
     vk::Context *context,
     UpdateDescriptorSetsBuilder *updateBuilder,
+    const vk::WriteDescriptorDescs &writeDescriptorDescs,
     vk::CommandBufferHelperCommon *commandBufferHelper,
     const vk::DescriptorSetDescBuilder &shaderResourcesDesc,
     vk::SharedDescriptorSetCacheKey *newSharedCacheKeyOut)
@@ -1548,8 +1643,8 @@ angle::Result ProgramExecutableVk::updateShaderResourcesDescriptorSet(
     }
 
     ANGLE_TRY(getOrAllocateDescriptorSet(context, updateBuilder, commandBufferHelper,
-                                         shaderResourcesDesc, DescriptorSetIndex::ShaderResource,
-                                         newSharedCacheKeyOut));
+                                         shaderResourcesDesc, writeDescriptorDescs,
+                                         DescriptorSetIndex::ShaderResource, newSharedCacheKeyOut));
 
     size_t numOffsets = shaderResourcesDesc.getDynamicOffsetsSize();
     mDynamicShaderResourceDescriptorOffsets.resize(numOffsets);
@@ -1562,22 +1657,33 @@ angle::Result ProgramExecutableVk::updateShaderResourcesDescriptorSet(
     return angle::Result::Continue;
 }
 
+void ProgramExecutableVk::updateShaderResourcesDynamicOffsets(
+    const vk::DescriptorSetDescBuilder &shaderResourcesDesc)
+{
+    size_t numOffsets = shaderResourcesDesc.getDynamicOffsetsSize();
+    mDynamicShaderResourceDescriptorOffsets.resize(numOffsets);
+    if (numOffsets > 0)
+    {
+        memcpy(mDynamicShaderResourceDescriptorOffsets.data(),
+               shaderResourcesDesc.getDynamicOffsets(), numOffsets * sizeof(uint32_t));
+    }
+}
+
 angle::Result ProgramExecutableVk::updateUniformsAndXfbDescriptorSet(
     vk::Context *context,
     UpdateDescriptorSetsBuilder *updateBuilder,
+    const vk::WriteDescriptorDescs &writeDescriptorDescs,
     vk::CommandBufferHelperCommon *commandBufferHelper,
     vk::BufferHelper *defaultUniformBuffer,
-    vk::DescriptorSetDescBuilder *uniformsAndXfbDesc)
+    vk::DescriptorSetDescBuilder *uniformsAndXfbDesc,
+    vk::SharedDescriptorSetCacheKey *sharedCacheKeyOut)
 {
     mCurrentDefaultUniformBufferSerial =
         defaultUniformBuffer ? defaultUniformBuffer->getBufferSerial() : vk::kInvalidBufferSerial;
 
-    vk::SharedDescriptorSetCacheKey newSharedCacheKey;
-    ANGLE_TRY(getOrAllocateDescriptorSet(context, updateBuilder, commandBufferHelper,
-                                         *uniformsAndXfbDesc, DescriptorSetIndex::UniformsAndXfb,
-                                         &newSharedCacheKey));
-    uniformsAndXfbDesc->updateImagesAndBuffersWithSharedCacheKey(newSharedCacheKey);
-    return angle::Result::Continue;
+    return getOrAllocateDescriptorSet(context, updateBuilder, commandBufferHelper,
+                                      *uniformsAndXfbDesc, writeDescriptorDescs,
+                                      DescriptorSetIndex::UniformsAndXfb, sharedCacheKeyOut);
 }
 
 angle::Result ProgramExecutableVk::updateTexturesDescriptorSet(
@@ -1603,11 +1709,11 @@ angle::Result ProgramExecutableVk::updateTexturesDescriptorSet(
     {
         vk::DescriptorSetDescBuilder fullDesc;
         // Cache miss. A new cache entry has been created.
-        ANGLE_TRY(fullDesc.updateFullActiveTextures(context, mVariableInfoMap, executable, textures,
-                                                    samplers, emulateSeamfulCubeMapSampling,
-                                                    pipelineType, newSharedCacheKey));
-        fullDesc.updateDescriptorSet(context, updateBuilder,
-                                     mDescriptorSets[DescriptorSetIndex::Texture]);
+        ANGLE_TRY(fullDesc.updateFullActiveTextures(
+            context, mVariableInfoMap, mTextureWriteDescriptorDescBuilder.getDescs(), executable,
+            textures, samplers, emulateSeamfulCubeMapSampling, pipelineType, newSharedCacheKey));
+        fullDesc.updateDescriptorSet(context, mTextureWriteDescriptorDescBuilder.getDescs(),
+                                     updateBuilder, mDescriptorSets[DescriptorSetIndex::Texture]);
     }
     else
     {
@@ -1772,13 +1878,26 @@ angle::Result ProgramExecutableVk::updateUniforms(
         // We need to reinitialize the descriptor sets if we newly allocated buffers since we can't
         // modify the descriptor sets once initialized.
         vk::DescriptorSetDescBuilder uniformsAndXfbDesc;
+        const vk::WriteDescriptorDescs writeDescriptorDescs =
+            getDefaultUniformWriteDescriptorDescs(transformFeedbackVk);
         uniformsAndXfbDesc.updateUniformsAndXfb(
-            context, glExecutable, *this, defaultUniformBuffer, *emptyBuffer,
+            context, glExecutable, *this, writeDescriptorDescs, defaultUniformBuffer, *emptyBuffer,
             isTransformFeedbackActiveUnpaused,
             glExecutable.hasTransformFeedbackOutput() ? transformFeedbackVk : nullptr);
 
-        ANGLE_TRY(updateUniformsAndXfbDescriptorSet(context, updateBuilder, commandBufferHelper,
-                                                    defaultUniformBuffer, &uniformsAndXfbDesc));
+        vk::SharedDescriptorSetCacheKey newSharedCacheKey;
+        ANGLE_TRY(updateUniformsAndXfbDescriptorSet(context, updateBuilder, writeDescriptorDescs,
+                                                    commandBufferHelper, defaultUniformBuffer,
+                                                    &uniformsAndXfbDesc, &newSharedCacheKey));
+        if (newSharedCacheKey)
+        {
+            defaultUniformBuffer->getBufferBlock()->onNewDescriptorSet(newSharedCacheKey);
+            if (glExecutable.hasTransformFeedbackOutput() &&
+                context->getFeatures().emulateTransformFeedback.enabled)
+            {
+                transformFeedbackVk->onNewDescriptorSet(glExecutable, newSharedCacheKey);
+            }
+        }
     }
 
     return angle::Result::Continue;

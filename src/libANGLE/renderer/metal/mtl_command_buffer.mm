@@ -379,7 +379,7 @@ inline void UseResourceCmd(id<MTLRenderCommandEncoder> encoder, IntermediateComm
     mtl::RenderStages stages = stream->fetch<mtl::RenderStages>();
     ANGLE_UNUSED_VARIABLE(stages);
 #if defined(__IPHONE_13_0) || defined(__MAC_10_15)
-    if (ANGLE_APPLE_AVAILABLE_XCI(10.15, 13.0, 13.0))
+    if (ANGLE_APPLE_AVAILABLE_XCI(10.15, 13.1, 13.0))
     {
         [encoder useResource:resource usage:usage stages:stages];
     }
@@ -402,7 +402,7 @@ inline void MemoryBarrierCmd(id<MTLRenderCommandEncoder> encoder, IntermediateCo
     ANGLE_UNUSED_VARIABLE(after);
     ANGLE_UNUSED_VARIABLE(before);
 #if defined(__MAC_10_14) && (TARGET_OS_OSX || TARGET_OS_MACCATALYST)
-    if (ANGLE_APPLE_AVAILABLE_XC(10.14, 13.0))
+    if (ANGLE_APPLE_AVAILABLE_XC(10.14, 13.1))
     {
         [encoder memoryBarrierWithScope:scope afterStages:after beforeStages:before];
     }
@@ -418,7 +418,7 @@ inline void MemoryBarrierWithResourceCmd(id<MTLRenderCommandEncoder> encoder,
     ANGLE_UNUSED_VARIABLE(after);
     ANGLE_UNUSED_VARIABLE(before);
 #if defined(__MAC_10_14) && (TARGET_OS_OSX || TARGET_OS_MACCATALYST)
-    if (ANGLE_APPLE_AVAILABLE_XC(10.14, 13.0))
+    if (ANGLE_APPLE_AVAILABLE_XC(10.14, 13.1))
     {
         [encoder memoryBarrierWithResources:&resource
                                       count:1
@@ -620,6 +620,11 @@ void CommandQueue::onCommandBufferCompleted(id<MTLCommandBuffer> buf,
     mCompletedBufferSerial.store(
         std::max(mCompletedBufferSerial.load(std::memory_order_relaxed), serial),
         std::memory_order_relaxed);
+}
+
+uint64_t CommandQueue::getNextRenderEncoderSerial()
+{
+    return ++mRenderEncoderCounter;
 }
 
 uint64_t CommandQueue::allocateTimeElapsedEntry()
@@ -1243,7 +1248,9 @@ void RenderCommandEncoderStates::reset()
 // RenderCommandEncoder implemtation
 RenderCommandEncoder::RenderCommandEncoder(CommandBuffer *cmdBuffer,
                                            const OcclusionQueryPool &queryPool)
-    : CommandEncoder(cmdBuffer, RENDER), mOcclusionQueryPool(queryPool)
+    : CommandEncoder(cmdBuffer, RENDER),
+      mOcclusionQueryPool(queryPool),
+      mSerial(cmdBuffer->cmdQueue().getNextRenderEncoderSerial())
 {
     ANGLE_MTL_OBJC_SCOPE
     {
@@ -1777,6 +1784,7 @@ RenderCommandEncoder &RenderCommandEncoder::setBufferForWrite(gl::ShaderType sha
         return *this;
     }
 
+    buffer->setLastWritingRenderEncoderSerial(mSerial);
     cmdBuffer().setWriteDependency(buffer);
 
     id<MTLBuffer> mtlBuffer = (buffer ? buffer->get() : nil);
@@ -2426,10 +2434,14 @@ BlitCommandEncoder &BlitCommandEncoder::synchronizeResource(Buffer *buffer)
     }
 
 #if TARGET_OS_OSX || TARGET_OS_MACCATALYST
-    // Only MacOS has separated storage for resource on CPU and GPU and needs explicit
-    // synchronization
-    cmdBuffer().setReadDependency(buffer);
-    [get() synchronizeResource:buffer->get()];
+    if (buffer->get().storageMode == MTLStorageModeManaged)
+    {
+        // Only MacOS has separated storage for resource on CPU and GPU and needs explicit
+        // synchronization
+        cmdBuffer().setReadDependency(buffer);
+
+        [get() synchronizeResource:buffer->get()];
+    }
 #endif
     return *this;
 }

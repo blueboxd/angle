@@ -982,6 +982,10 @@ angle::Result ProgramMtl::getSpecializedShader(ContextMtl *context,
         setConstantValue:&(context->getDisplay()->getFeatures().allowSamplerCompareLod.enabled)
                     type:MTLDataTypeBool
                 withName:@"ANGLEUseSampleCompareLod"];
+    [funcConstants
+        setConstantValue:&(context->getDisplay()->getFeatures().emulateAlphaToCoverage.enabled)
+                    type:MTLDataTypeBool
+                withName:@"ANGLEEmulateAlphaToCoverage"];
     // Create Metal shader object
     ANGLE_MTL_OBJC_SCOPE
     {
@@ -1828,7 +1832,7 @@ angle::Result ProgramMtl::legalizeUniformBufferOffsets(
             // Has the content of the buffer has changed since last conversion?
             if (conversion->dirty)
             {
-                const uint8_t *srcBytes = bufferMtl->getClientShadowCopyData(context);
+                const uint8_t *srcBytes = bufferMtl->getBufferDataReadOnly(context);
                 srcBytes += srcOffset;
                 size_t sizeToCopy = bufferMtl->size() - srcOffset;
 

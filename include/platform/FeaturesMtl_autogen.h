@@ -243,6 +243,31 @@ struct FeaturesMtl : FeatureSetBase
         "When uploading data to IOSurface-backed textures, use a staging buffer.", &members,
         "http://anglebug.com/7573"};
 
+    FeatureInfo alwaysUseStagedBufferUpdates = {
+        "alwaysUseStagedBufferUpdates", FeatureCategory::MetalFeatures,
+        "Always update buffers by copying the data to a staging buffer and then blitting it to the "
+        "actual buffer",
+        &members, "http://anglebug.com/7544"};
+
+    FeatureInfo useShadowBuffersWhenAppropriate = {
+        "useShadowBuffersWhenAppropriate", FeatureCategory::MetalFeatures,
+        "On some architectures using a shadow buffer can be faster for certain size buffers",
+        &members, "http://anglebug.com/7544"};
+
+    FeatureInfo alwaysUseManagedStorageModeForBuffers = {
+        "alwaysUseManagedStorageModeForBuffers", FeatureCategory::MetalFeatures,
+        "Metal buffers can be managed, shared, or private. Sometimes managed is fastest", &members,
+        "http://anglebug.com/7544"};
+
+    FeatureInfo alwaysUseSharedStorageModeForBuffers = {
+        "alwaysUseSharedStorageModeForBuffers", FeatureCategory::MetalFeatures,
+        "Metal buffers can be managed, shared, or private. Sometimes shared is fastest", &members,
+        "http://anglebug.com/7544"};
+
+    FeatureInfo preferCpuForBuffersubdata = {
+        "preferCpuForBuffersubdata", FeatureCategory::MetalFeatures,
+        "Makes bufferSubData always update via CPU", &members, "http://anglebug.com/7544"};
+
     FeatureInfo disableProgrammableBlending = {
         "disableProgrammableBlending", FeatureCategory::MetalFeatures,
         "Disable programmable blending in order to test read_write pixel local storage textures",
@@ -292,6 +317,30 @@ struct FeaturesMtl : FeatureSetBase
     FeatureInfo printMetalShaders = {"printMetalShaders", FeatureCategory::MetalFeatures,
                                      "Prints the source to a shader before it's compiled.",
                                      &members, "http://crbug.com/1423136"};
+
+    FeatureInfo generateShareableShaders = {
+        "generateShareableShaders", FeatureCategory::MetalFeatures,
+        "Attempts to generate shaders that are shareable. More specifically, shaders"
+        " end up with conditionals that are decided at run time via input parameters vs"
+        " compile time. This results in bigger shaders.",
+        &members, "http://crbug.com/1423136"};
+
+    FeatureInfo disableMetalOnGpuFamily1 = {
+        "disableMetalOnGpuFamily1", FeatureCategory::MetalFeatures,
+        "GPUs that don't support Mac GPU family 2 or greater are unsupported by the Metal backend.",
+        &members, "http://anglebug.com/7952"};
+
+    FeatureInfo disableMetalOnNvidia = {
+        "disableMetalOnNvidia", FeatureCategory::MetalFeatures,
+        "NVIDIA GPUs are unsupported due to scarcity of the hardware.", &members,
+        "http://anglebug.com/8170"};
+
+    FeatureInfo flushAfterStreamVertexData = {
+        "flushAfterStreamVertexData",
+        FeatureCategory::MetalFeatures,
+        "Flush after calls to StreamVertexData to work around driver bugs.",
+        &members,
+    };
 };
 
 inline FeaturesMtl::FeaturesMtl()  = default;

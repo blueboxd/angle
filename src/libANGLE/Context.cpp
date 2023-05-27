@@ -1094,14 +1094,38 @@ void Context::deleteProgram(ShaderProgramID program)
     mState.mShaderProgramManager->deleteProgram(this, program);
 }
 
-void Context::deleteTexture(TextureID texture)
+void Context::deleteTexture(TextureID textureID)
 {
-    if (mState.mTextureManager->getTexture(texture))
+    // If a texture object is deleted while its image is bound to a pixel local storage plane on the
+    // currently bound draw framebuffer, and pixel local storage is active, then it is as if
+    // EndPixelLocalStorageANGLE() had been called with <n>=PIXEL_LOCAL_STORAGE_ACTIVE_PLANES_ANGLE
+    // and <storeops> of STORE_OP_STORE_ANGLE.
+    if (mState.getPixelLocalStorageActivePlanes() != 0)
     {
-        detachTexture(texture);
+        PixelLocalStorage *pls = mState.getDrawFramebuffer()->peekPixelLocalStorage();
+        // Even though there is a nonzero number of active PLS planes, peekPixelLocalStorage() may
+        // still return null if we are in the middle of deleting the active framebuffer.
+        if (pls != nullptr)
+        {
+            for (GLuint i = 0; i < mState.mCaps.maxPixelLocalStoragePlanes; ++i)
+            {
+                if (pls->getPlane(i).getTextureID() == textureID)
+                {
+                    endPixelLocalStorageWithStoreOpsStore();
+                    break;
+                }
+            }
+        }
     }
 
-    mState.mTextureManager->deleteObject(this, texture);
+    Texture *texture = mState.mTextureManager->getTexture(textureID);
+    if (texture != nullptr)
+    {
+        texture->onStateChange(angle::SubjectMessage::TextureIDDeleted);
+        detachTexture(textureID);
+    }
+
+    mState.mTextureManager->deleteObject(this, textureID);
 }
 
 void Context::deleteRenderbuffer(RenderbufferID renderbuffer)
@@ -4226,6 +4250,10 @@ void Context::initCaps()
         INFO() << "Disabling GL_NV_framebuffer_blit during capture, which is not "
                   "supported on some native drivers";
         mState.mExtensions.framebufferBlitNV = false;
+
+        INFO() << "Disabling GL_EXT_texture_mirror_clamp_to_edge during capture, which is not "
+                  "supported on some native drivers";
+        mState.mExtensions.textureMirrorClampToEdgeEXT = false;
 
         // NVIDIA's Vulkan driver only supports 4 draw buffers
         constexpr GLint maxDrawBuffers = 4;
@@ -9403,6 +9431,15 @@ void Context::endPixelLocalStorage(GLsizei n, const GLenum storeops[])
     mState.setPixelLocalStorageActivePlanes(0);
 }
 
+void Context::endPixelLocalStorageWithStoreOpsStore()
+{
+    GLsizei n = mState.getPixelLocalStorageActivePlanes();
+    ASSERT(n >= 1);
+    angle::FixedVector<GLenum, IMPLEMENTATION_MAX_PIXEL_LOCAL_STORAGE_PLANES> storeops(
+        n, GL_STORE_OP_STORE_ANGLE);
+    endPixelLocalStorage(n, storeops.data());
+}
+
 void Context::pixelLocalStorageBarrier()
 {
     if (getExtensions().shaderPixelLocalStorageCoherentANGLE)
@@ -9494,7 +9531,7 @@ void Context::getFramebufferPixelLocalStorageParameterivRobust(GLint plane,
             {
                 *length = 1;
             }
-            *params = pls.getPlane(plane).getIntegeri(this, pname);
+            *params = pls.getPlane(plane).getIntegeri(pname);
             break;
         case GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE:
             if (length != nullptr)
