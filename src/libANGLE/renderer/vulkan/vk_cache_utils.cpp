@@ -3356,7 +3356,10 @@ void GraphicsPipelineDesc::initializePipelineVertexInputState(
     }
     if (context->getFeatures().supportsExtendedDynamicState2.enabled)
     {
-        dynamicStateListOut->push_back(VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE);
+        if (!context->getFeatures().forceStaticPrimitiveRestartState.enabled)
+        {
+            dynamicStateListOut->push_back(VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE);
+        }
     }
 }
 
@@ -5679,7 +5682,8 @@ void UpdatePreCacheActiveTextures(const gl::ProgramExecutable &executable,
                     ImageOrBufferViewSubresourceSerial imageViewSerial =
                         textureVk->getImageViewSubresourceSerial(samplerState);
 
-                    // Layout is implicit.
+                    ImageLayout imageLayout = textureVk->getImage().getCurrentImageLayout();
+                    SetBitField(infoDesc.imageLayoutOrRange, imageLayout);
 
                     infoDesc.imageViewSerialOrOffset = imageViewSerial.viewSerial.getValue();
                     infoDesc.samplerOrBufferSerial   = samplerHelper.getSamplerSerial().getValue();

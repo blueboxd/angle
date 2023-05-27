@@ -1133,6 +1133,8 @@ angle::Result ContextMtl::popDebugGroup(const gl::Context *context)
 angle::Result ContextMtl::syncState(const gl::Context *context,
                                     const gl::State::DirtyBits &dirtyBits,
                                     const gl::State::DirtyBits &bitMask,
+                                    const gl::State::ExtendedDirtyBits &extendedDirtyBits,
+                                    const gl::State::ExtendedDirtyBits &extendedBitMask,
                                     gl::Command command)
 {
     const gl::State &glState = context->getState();
@@ -1199,11 +1201,16 @@ angle::Result ContextMtl::syncState(const gl::Context *context,
                 break;
             }
             case gl::State::DIRTY_BIT_SAMPLE_ALPHA_TO_COVERAGE_ENABLED:
-                invalidateRenderPipeline();
+                if (getDisplay()->getFeatures().emulateAlphaToCoverage.enabled)
+                {
+                    invalidateDriverUniforms();
+                }
+                else
+                {
+                    invalidateRenderPipeline();
+                }
                 break;
             case gl::State::DIRTY_BIT_SAMPLE_COVERAGE_ENABLED:
-                invalidateRenderPipeline();
-                break;
             case gl::State::DIRTY_BIT_SAMPLE_COVERAGE:
                 invalidateDriverUniforms();
                 break;
@@ -1361,7 +1368,7 @@ angle::Result ContextMtl::syncState(const gl::Context *context,
             case gl::State::DIRTY_BIT_PROVOKING_VERTEX:
                 break;
             case gl::State::DIRTY_BIT_EXTENDED:
-                updateExtendedState(glState);
+                updateExtendedState(glState, extendedDirtyBits);
                 break;
             case gl::State::DIRTY_BIT_SAMPLE_SHADING:
                 // Nothing to do until OES_sample_shading is implemented.
@@ -1378,9 +1385,9 @@ angle::Result ContextMtl::syncState(const gl::Context *context,
     return angle::Result::Continue;
 }
 
-void ContextMtl::updateExtendedState(const gl::State &glState)
+void ContextMtl::updateExtendedState(const gl::State &glState,
+                                     const gl::State::ExtendedDirtyBits &extendedDirtyBits)
 {
-    gl::State::ExtendedDirtyBits extendedDirtyBits = glState.getAndResetExtendedDirtyBits();
     for (size_t extendedDirtyBit : extendedDirtyBits)
     {
         switch (extendedDirtyBit)
@@ -2745,22 +2752,34 @@ angle::Result ContextMtl::handleDirtyDriverUniforms(const gl::Context *context,
     const uint32_t transformDepth = !mState.isClipDepthModeZeroToOne();
     ASSERT((transformDepth & ~sh::vk::kDriverUniformsMiscTransformDepthMask) == 0);
 
+    // GL_SAMPLE_ALPHA_TO_COVERAGE
+    const uint32_t alphaToCoverage = mState.isSampleAlphaToCoverageEnabled();
+    ASSERT((alphaToCoverage & ~sh::vk::kDriverUniformsMiscAlphaToCoverageMask) == 0);
+
     mDriverUniforms.misc =
         (enabledClipDistances << sh::vk::kDriverUniformsMiscEnabledClipPlanesOffset) |
-        (transformDepth << sh::vk::kDriverUniformsMiscTransformDepthOffset);
+        (transformDepth << sh::vk::kDriverUniformsMiscTransformDepthOffset) |
+        (alphaToCoverage << sh::vk::kDriverUniformsMiscAlphaToCoverageOffset);
 
     // Sample coverage mask
-    const uint32_t sampleBitCount = mDrawFramebuffer->getSamples();
-    const uint32_t coverageSampleBitCount =
-        static_cast<uint32_t>(std::round(mState.getSampleCoverageValue() * sampleBitCount));
-    ASSERT(sampleBitCount < 32);
-    const uint32_t sampleMask = (1u << sampleBitCount) - 1;
-    uint32_t coverageMask     = (1u << coverageSampleBitCount) - 1;
-    if (mState.getSampleCoverageInvert())
+    if (mState.isSampleCoverageEnabled())
     {
-        coverageMask = sampleMask & (~coverageMask);
+        const uint32_t sampleBitCount = mDrawFramebuffer->getSamples();
+        ASSERT(sampleBitCount < 32);
+        const uint32_t coverageSampleBitCount =
+            static_cast<uint32_t>(std::round(mState.getSampleCoverageValue() * sampleBitCount));
+        uint32_t coverageMask = (1u << coverageSampleBitCount) - 1;
+        if (mState.getSampleCoverageInvert())
+        {
+            const uint32_t sampleMask = (1u << sampleBitCount) - 1;
+            coverageMask              = sampleMask & (~coverageMask);
+        }
+        mDriverUniforms.coverageMask = coverageMask;
     }
-    mDriverUniforms.coverageMask = coverageMask;
+    else
+    {
+        mDriverUniforms.coverageMask = 0xFFFFFFFFu;
+    }
 
     ANGLE_TRY(
         fillDriverXFBUniforms(drawCallFirstVertex, verticesPerInstance, /** skippedInstances */ 0));
@@ -2877,8 +2896,9 @@ angle::Result ContextMtl::checkIfPipelineChanged(const gl::Context *context,
             mRenderPipelineDesc.rasterizationType = mtl::RenderPipelineRasterization::Enabled;
         }
         mRenderPipelineDesc.inputPrimitiveTopology = topologyClass;
-        mRenderPipelineDesc.alphaToCoverageEnabled = mState.isSampleAlphaToCoverageEnabled();
-        mRenderPipelineDesc.emulateCoverageMask    = mState.isSampleCoverageEnabled();
+        mRenderPipelineDesc.alphaToCoverageEnabled =
+            mState.isSampleAlphaToCoverageEnabled() &&
+            !getDisplay()->getFeatures().emulateAlphaToCoverage.enabled;
 
         mRenderPipelineDesc.outputDescriptor.updateEnabledDrawBuffers(
             mDrawFramebuffer->getState().getEnabledDrawBuffers());

@@ -20,6 +20,7 @@
 #include "libANGLE/renderer/vulkan/OverlayVk.h"
 #include "libANGLE/renderer/vulkan/PersistentCommandPool.h"
 #include "libANGLE/renderer/vulkan/RendererVk.h"
+#include "libANGLE/renderer/vulkan/ShareGroupVk.h"
 #include "libANGLE/renderer/vulkan/vk_helpers.h"
 
 namespace angle
@@ -278,6 +279,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     angle::Result syncState(const gl::Context *context,
                             const gl::State::DirtyBits &dirtyBits,
                             const gl::State::DirtyBits &bitMask,
+                            const gl::State::ExtendedDirtyBits &extendedDirtyBits,
+                            const gl::State::ExtendedDirtyBits &extendedBitMask,
                             gl::Command command) override;
 
     // Disjoint timer queries
@@ -593,6 +596,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                      const vk::PackedClearValuesArray &clearValues,
                                      vk::RenderPassCommandBuffer **commandBufferOut);
 
+    void disableRenderPassReactivation() { mAllowRenderPassToReactivate = false; }
+
     // Only returns true if we have a started RP and we've run setupDraw.
     bool hasActiveRenderPass() const
     {
@@ -624,11 +629,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     bool isRenderPassStartedAndUsesImage(const vk::ImageHelper &image) const
     {
         return mRenderPassCommands->started() && mRenderPassCommands->usesImage(image);
-    }
-
-    bool hasActiveRenderPassWithCommands() const
-    {
-        return hasActiveRenderPass() && !mRenderPassCommands->getCommandBuffer().empty();
     }
 
     vk::RenderPassCommandBufferHelper &getStartedRenderPassCommands()
@@ -791,6 +791,13 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     }
 
     const QueueSerial &getLastSubmittedQueueSerial() const { return mLastSubmittedQueueSerial; }
+
+    // Uploading mutable mipmap textures is currently restricted to single-context applications.
+    bool isEligibleForMutableTextureFlush() const
+    {
+        return getFeatures().mutableMipmapTextureUpload.enabled && !hasDisplayTextureShareGroup() &&
+               mShareGroupVk->getContextCount() == 1;
+    }
 
   private:
     // Dirty bits.
@@ -1542,6 +1549,9 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // of the GENERAL layout instead of COLOR_ATTACHMENT_OPTIMAL, but has definite benefits of
     // avoiding render pass breaks when a framebuffer fetch program is used mid render pass.
     bool mIsInFramebufferFetchMode;
+
+    // True if current started render pass is allowed to reactivate.
+    bool mAllowRenderPassToReactivate;
 
     // The size of copy commands issued between buffers and images. Used to submit the command
     // buffer for the outside render pass.

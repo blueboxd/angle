@@ -2499,18 +2499,6 @@ TEST_P(Texture2DTest, TexStorage)
 // initialized the image with a default color.
 TEST_P(Texture2DTest, TexStorageWithPBO)
 {
-    // http://anglebug.com/4126
-    ANGLE_SKIP_TEST_IF(IsOSX() && IsOpenGL());
-
-    // http://anglebug.com/5081
-    ANGLE_SKIP_TEST_IF(IsWindows() && IsNVIDIA() && IsOpenGL());
-
-    // http://anglebug.com/5651
-    ANGLE_SKIP_TEST_IF(IsLinux() && IsNVIDIA() && IsOpenGL());
-
-    // http://anglebug.com/5097
-    ANGLE_SKIP_TEST_IF(IsLinux() && IsOpenGL() && IsTSan());
-
     if (getClientMajorVersion() < 3)
     {
         ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_texture_storage"));
@@ -2561,8 +2549,7 @@ TEST_P(Texture2DTest, TexStorageWithPBO)
     drawQuad(mProgram, "position", 0.5f);
     glDeleteBuffers(1, &pbo);
     EXPECT_GL_NO_ERROR();
-    EXPECT_PIXEL_EQ(3 * width / 4, 3 * height / 4, 0, 0, 0, 255);
-    EXPECT_PIXEL_EQ(width / 4, height / 4, 255, 0, 0, 255);
+    EXPECT_PIXEL_RECT_EQ(0, 0, width / 2, height / 2, GLColor(255, 0, 0, 255));
 }
 
 // Test that glTexSubImage2D combined with a PBO works properly after deleting the PBO
@@ -11344,6 +11331,48 @@ TEST_P(TextureBufferTestES31, QueryWidthAfterBufferResize)
         ASSERT_GL_NO_ERROR();
         EXPECT_EQ(queryResult, modifiedSize / 4);
     }
+}
+
+// Test that glTexBufferEXT can be used in two draw calls.
+// Covers a bug where TextureVk::setBuffer releases buffer views and doesn't init them.
+TEST_P(TextureBufferTestES31, TexBufferDrawTwice)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_texture_buffer"));
+
+    // TODO(http://anglebug.com/5832): Claims to support GL_OES_texture_buffer, but fails
+    // compilation of shader because "extension 'GL_OES_texture_buffer' is not supported".
+    ANGLE_SKIP_TEST_IF(IsQualcomm() && IsOpenGLES());
+
+    const std::array<GLColor, 1> kTexData = {GLColor::red};
+
+    GLBuffer buffer;
+    glBindBuffer(GL_TEXTURE_BUFFER, buffer);
+    glBufferData(GL_TEXTURE_BUFFER, sizeof(kTexData), kTexData.data(), GL_DYNAMIC_DRAW);
+    EXPECT_GL_NO_ERROR();
+
+    constexpr char kSamplerBuffer[] = R"(#version 310 es
+#extension GL_OES_texture_buffer : require
+precision mediump float;
+uniform highp samplerBuffer s;
+out vec4 colorOut;
+void main()
+{
+    colorOut = texelFetch(s, 0);
+})";
+
+    ANGLE_GL_PROGRAM(program, essl31_shaders::vs::Simple(), kSamplerBuffer);
+
+    // Draw once
+    glTexBufferEXT(GL_TEXTURE_BUFFER, GL_RGBA8, buffer);
+    drawQuad(program, essl31_shaders::PositionAttrib(), 0.5);
+    EXPECT_GL_NO_ERROR();
+
+    // Draw twice
+    glTexBufferEXT(GL_TEXTURE_BUFFER, GL_RGBA8, buffer);
+    drawQuad(program, essl31_shaders::PositionAttrib(), 0.5);
+    EXPECT_GL_NO_ERROR();
+
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
 }
 
 // Test that uploading data to buffer that's in use then using it as texture buffer works.

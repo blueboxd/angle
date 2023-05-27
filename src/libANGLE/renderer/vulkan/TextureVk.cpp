@@ -675,8 +675,7 @@ angle::Result TextureVk::setSubImageImpl(const gl::Context *context,
             ANGLE_TRY(contextVk->submitStagedTextureUpdates());
         }
     }
-    else if (contextVk->getFeatures().mutableMipmapTextureUpload.enabled &&
-             !contextVk->hasDisplayTextureShareGroup() && !mState.getImmutableFormat())
+    else if (contextVk->isEligibleForMutableTextureFlush() && !mState.getImmutableFormat())
     {
         // Check if we should flush any mutable textures from before.
         ANGLE_TRY(contextVk->getShareGroup()->onMutableTextureUpload(contextVk, this));
@@ -1618,7 +1617,11 @@ void TextureVk::releaseAndDeleteImageAndViews(ContextVk *contextVk)
         contextVk->getShareGroup()->onTextureRelease(this);
     }
 
-    mBufferViews.release(contextVk);
+    if (mBufferViews.isInitialized())
+    {
+        mBufferViews.release(contextVk);
+        onStateChange(angle::SubjectMessage::SubjectChanged);
+    }
     mRedefinedLevels.reset();
     mDescriptorSetCacheManager.releaseKeys(contextVk);
 }

@@ -23,6 +23,7 @@
 #include "common/platform.h"
 #include "common/string_utils.h"
 #include "common/system_utils.h"
+#include "common/tls.h"
 #include "common/utilities.h"
 #include "image_util/loadimage.h"
 #include "libANGLE/Buffer.h"
@@ -420,31 +421,49 @@ bool CanSupportAEP(const gl::Version &version, const gl::Extensions &extensions)
 // TODO(angleproject:6479): Due to a bug in Apple's dyld loader, `thread_local` will cause
 // excessive memory use. Temporarily avoid it by using pthread's thread
 // local storage instead.
-static TLSIndex GetCurrentValidContextTLSIndex()
+static angle::TLSIndex GetCurrentValidContextTLSIndex()
 {
-    static TLSIndex CurrentValidContextIndex = TLS_INVALID_INDEX;
+    static angle::TLSIndex CurrentValidContextIndex = TLS_INVALID_INDEX;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
       ASSERT(CurrentValidContextIndex == TLS_INVALID_INDEX);
-      CurrentValidContextIndex = CreateTLSIndex(nullptr);
+      CurrentValidContextIndex = angle::CreateTLSIndex(nullptr);
     });
     return CurrentValidContextIndex;
 }
 Context *GetCurrentValidContextTLS()
 {
-    TLSIndex CurrentValidContextIndex = GetCurrentValidContextTLSIndex();
+    angle::TLSIndex CurrentValidContextIndex = GetCurrentValidContextTLSIndex();
     ASSERT(CurrentValidContextIndex != TLS_INVALID_INDEX);
-    return static_cast<Context *>(GetTLSValue(CurrentValidContextIndex));
+    return static_cast<Context *>(angle::GetTLSValue(CurrentValidContextIndex));
 }
 void SetCurrentValidContextTLS(Context *context)
 {
-    TLSIndex CurrentValidContextIndex = GetCurrentValidContextTLSIndex();
+    angle::TLSIndex CurrentValidContextIndex = GetCurrentValidContextTLSIndex();
     ASSERT(CurrentValidContextIndex != TLS_INVALID_INDEX);
-    SetTLSValue(CurrentValidContextIndex, context);
+    angle::SetTLSValue(CurrentValidContextIndex, context);
 }
 #else
 thread_local Context *gCurrentValidContext = nullptr;
 #endif
+
+// Handle setting the current context in TLS on different platforms
+extern void SetCurrentValidContext(Context *context)
+{
+#if defined(ANGLE_USE_ANDROID_TLS_SLOT)
+    if (angle::gUseAndroidOpenGLTlsSlot)
+    {
+        ANGLE_ANDROID_GET_GL_TLS()[angle::kAndroidOpenGLTlsSlot] = static_cast<void *>(context);
+        return;
+    }
+#endif
+
+#if defined(ANGLE_PLATFORM_APPLE)
+    SetCurrentValidContextTLS(context);
+#else
+    gCurrentValidContext = context;
+#endif
+}
 
 Context::Context(egl::Display *display,
                  const egl::Config *config,
@@ -685,6 +704,7 @@ void Context::initializeDefaultResources()
 
     // Initialize dirty bit masks
     mAllDirtyBits.set();
+    mAllExtendedDirtyBits.set();
 
     mDrawDirtyObjects.set(State::DIRTY_OBJECT_ACTIVE_TEXTURES);
     mDrawDirtyObjects.set(State::DIRTY_OBJECT_DRAW_FRAMEBUFFER);
@@ -697,7 +717,6 @@ void Context::initializeDefaultResources()
 
     mTexImageDirtyBits.set(State::DIRTY_BIT_UNPACK_STATE);
     mTexImageDirtyBits.set(State::DIRTY_BIT_UNPACK_BUFFER_BINDING);
-    mTexImageDirtyBits.set(State::DIRTY_BIT_EXTENDED);
     // No dirty objects.
 
     // Readpixels uses the pack state and read FBO
@@ -2990,11 +3009,7 @@ void Context::setContextLost()
     mSkipValidation = false;
 
     // Make sure we update TLS.
-#if defined(ANGLE_PLATFORM_APPLE)
-    SetCurrentValidContextTLS(nullptr);
-#else
-    gCurrentValidContext = nullptr;
-#endif
+    SetCurrentValidContext(nullptr);
 }
 
 GLenum Context::getGraphicsResetStatus()
@@ -4526,7 +4541,7 @@ angle::Result Context::prepareForClearBuffer(GLenum buffer, GLint drawbuffer)
 ANGLE_INLINE angle::Result Context::prepareForCopyImage()
 {
     ANGLE_TRY(syncDirtyObjects(mCopyImageDirtyObjects, Command::CopyImage));
-    return syncDirtyBits(mCopyImageDirtyBits, Command::CopyImage);
+    return syncDirtyBits(mCopyImageDirtyBits, mCopyImageExtendedDirtyBits, Command::CopyImage);
 }
 
 ANGLE_INLINE angle::Result Context::prepareForDispatch()
@@ -4548,7 +4563,7 @@ ANGLE_INLINE angle::Result Context::prepareForDispatch()
     }
 
     ANGLE_TRY(syncDirtyObjects(mComputeDirtyObjects, Command::Dispatch));
-    return syncDirtyBits(mComputeDirtyBits, Command::Dispatch);
+    return syncDirtyBits(mComputeDirtyBits, mComputeExtendedDirtyBits, Command::Dispatch);
 }
 
 angle::Result Context::prepareForInvalidate(GLenum target)
@@ -4561,17 +4576,22 @@ angle::Result Context::prepareForInvalidate(GLenum target)
         effectiveTarget = GL_DRAW_FRAMEBUFFER;
     }
     ANGLE_TRY(mState.syncDirtyObject(this, effectiveTarget));
-    return syncDirtyBits(effectiveTarget == GL_READ_FRAMEBUFFER ? mReadInvalidateDirtyBits
-                                                                : mDrawInvalidateDirtyBits,
-                         Command::Invalidate);
+    const State::DirtyBits &dirtyBits                 = effectiveTarget == GL_READ_FRAMEBUFFER
+                                                            ? mReadInvalidateDirtyBits
+                                                            : mDrawInvalidateDirtyBits;
+    const State::ExtendedDirtyBits &extendedDirtyBits = effectiveTarget == GL_READ_FRAMEBUFFER
+                                                            ? mReadInvalidateExtendedDirtyBits
+                                                            : mDrawInvalidateExtendedDirtyBits;
+    return syncDirtyBits(dirtyBits, extendedDirtyBits, Command::Invalidate);
 }
 
 angle::Result Context::syncState(const State::DirtyBits &bitMask,
+                                 const State::ExtendedDirtyBits &extendedBitMask,
                                  const State::DirtyObjects &objectMask,
                                  Command command)
 {
     ANGLE_TRY(syncDirtyObjects(objectMask, command));
-    ANGLE_TRY(syncDirtyBits(bitMask, command));
+    ANGLE_TRY(syncDirtyBits(bitMask, extendedBitMask, command));
     return angle::Result::Continue;
 }
 
@@ -5767,12 +5787,14 @@ void Context::flushMappedBufferRange(BufferBinding /*target*/,
 
 angle::Result Context::syncStateForReadPixels()
 {
-    return syncState(mReadPixelsDirtyBits, mReadPixelsDirtyObjects, Command::ReadPixels);
+    return syncState(mReadPixelsDirtyBits, mReadPixelsExtendedDirtyBits, mReadPixelsDirtyObjects,
+                     Command::ReadPixels);
 }
 
 angle::Result Context::syncStateForTexImage()
 {
-    return syncState(mTexImageDirtyBits, mTexImageDirtyObjects, Command::TexImage);
+    return syncState(mTexImageDirtyBits, mTexImageExtendedDirtyBits, mTexImageDirtyObjects,
+                     Command::TexImage);
 }
 
 angle::Result Context::syncStateForBlit(GLbitfield mask)
@@ -5793,12 +5815,12 @@ angle::Result Context::syncStateForBlit(GLbitfield mask)
 
     Command command = static_cast<Command>(static_cast<uint32_t>(Command::Blit) + commandMask);
 
-    return syncState(mBlitDirtyBits, mBlitDirtyObjects, command);
+    return syncState(mBlitDirtyBits, mBlitExtendedDirtyBits, mBlitDirtyObjects, command);
 }
 
 angle::Result Context::syncStateForClear()
 {
-    return syncState(mClearDirtyBits, mClearDirtyObjects, Command::Clear);
+    return syncState(mClearDirtyBits, mClearExtendedDirtyBits, mClearDirtyObjects, Command::Clear);
 }
 
 angle::Result Context::syncTextureForCopy(Texture *texture)
@@ -10195,6 +10217,7 @@ void Context::drawPixelLocalStorageEXTEnable(GLsizei n,
     ASSERT(mImplementation->getNativePixelLocalStorageOptions().type ==
            ShPixelLocalStorageType::PixelLocalStorageEXT);
     ANGLE_CONTEXT_TRY(syncState(mPixelLocalStorageEXTEnableDisableDirtyBits,
+                                mPixelLocalStorageEXTEnableDisableExtendedDirtyBits,
                                 mPixelLocalStorageEXTEnableDisableDirtyObjects, Command::Draw));
     ANGLE_CONTEXT_TRY(mImplementation->drawPixelLocalStorageEXTEnable(this, n, planes, loadops));
 }
@@ -10205,6 +10228,7 @@ void Context::drawPixelLocalStorageEXTDisable(const PixelLocalStoragePlane plane
     ASSERT(mImplementation->getNativePixelLocalStorageOptions().type ==
            ShPixelLocalStorageType::PixelLocalStorageEXT);
     ANGLE_CONTEXT_TRY(syncState(mPixelLocalStorageEXTEnableDisableDirtyBits,
+                                mPixelLocalStorageEXTEnableDisableExtendedDirtyBits,
                                 mPixelLocalStorageEXTEnableDisableDirtyObjects, Command::Draw));
     ANGLE_CONTEXT_TRY(mImplementation->drawPixelLocalStorageEXTDisable(this, planes, storeops));
 }
@@ -10246,10 +10270,13 @@ void ErrorSet::validationError(angle::EntryPoint entryPoint, GLenum errorCode, c
 {
     ASSERT(errorCode != GL_NO_ERROR);
     mErrors.insert(errorCode);
-
+    gl::LogSeverity severity = gl::LOG_INFO;
+#if defined(ANGLE_ENABLE_ASSERTS)
+    severity = gl::LOG_WARN;
+#endif  // defined(ANGLE_ENABLE_ASSERTS)
     mContext->getState().getDebug().insertMessage(GL_DEBUG_SOURCE_API, GL_DEBUG_TYPE_ERROR,
                                                   errorCode, GL_DEBUG_SEVERITY_HIGH, message,
-                                                  gl::LOG_INFO, entryPoint);
+                                                  severity, entryPoint);
 }
 
 bool ErrorSet::empty() const

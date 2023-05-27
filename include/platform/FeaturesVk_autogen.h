@@ -20,6 +20,12 @@ struct FeaturesVk : FeatureSetBase
     FeaturesVk();
     ~FeaturesVk();
 
+    FeatureInfo appendAliasedMemoryDecorationsToSsbo = {
+        "appendAliasedMemoryDecorationsToSsbo", FeatureCategory::VulkanWorkarounds,
+        "Append aliased memory decoration to ssbo in SpirV if the ssbo in GLSL is not declared "
+        "with restrict memory qualifier",
+        &members, "b/266235549"};
+
     FeatureInfo bresenhamLineRasterization = {
         "bresenhamLineRasterization",
         FeatureCategory::VulkanFeatures,
@@ -621,11 +627,11 @@ struct FeaturesVk : FeatureSetBase
         "emulateAdvancedBlendEquations", FeatureCategory::VulkanFeatures,
         "Emulate GL_KHR_blend_equation_advanced", &members, "http://anglebug.com/3586"};
 
-    FeatureInfo precisionSafeDivision = {
-        "precisionSafeDivision",
+    FeatureInfo doubleDepthBiasConstantFactor = {
+        "doubleDepthBiasConstantFactor",
         FeatureCategory::VulkanWorkarounds,
-        "Special case handling for platforms that do not generate 1.0f even when the dividend and "
-        "divisor have the same value",
+        "Due to a Vulkan spec ambiguity, some drivers interpret depthBiasConstantFactor as half "
+        "the expected value",
         &members,
     };
 
@@ -660,6 +666,12 @@ struct FeaturesVk : FeatureSetBase
         "driver bugs",
         &members, "https://bugs.fuchsia.dev/p/fuchsia/issues/detail?id=107106"};
 
+    FeatureInfo forceStaticPrimitiveRestartState = {
+        "forceStaticPrimitiveRestartState", FeatureCategory::VulkanWorkarounds,
+        "Force static state for VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE due to "
+        "driver bugs",
+        &members, "https://issuetracker.google.com/275210062"};
+
     FeatureInfo supportsExtendedDynamicState = {
         "supportsExtendedDynamicState", FeatureCategory::VulkanFeatures,
         "VkDevice supports VK_EXT_extended_dynamic_state extension", &members,
@@ -693,6 +705,11 @@ struct FeaturesVk : FeatureSetBase
         "Explicitly enable per-sample shading if the fragment shader contains the "
         "sample qualifier",
         &members, "http://anglebug.com/6876"};
+
+    FeatureInfo explicitlyCastMediumpFloatTo16Bit = {
+        "explicitlyCastMediumpFloatTo16Bit", FeatureCategory::VulkanWorkarounds,
+        "Explicitly cast mediump floating point values to 16 bit", &members,
+        "https://issuetracker.google.com/274859104"};
 
     FeatureInfo forceContinuousRefreshOnSharedPresent = {
         "forceContinuousRefreshOnSharedPresent", FeatureCategory::VulkanFeatures,
