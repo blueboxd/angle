@@ -364,7 +364,6 @@ class SPIRVBuilder : angle::NonCopyable
     void addCapability(spv::Capability capability);
     void addExecutionMode(spv::ExecutionMode executionMode);
     void addExtension(SPIRVExtensions extension);
-    void setEntryPointId(spirv::IdRef id);
     void addEntryPointInterfaceVariableId(spirv::IdRef id);
     void writePerVertexBuiltIns(const TType &type, spirv::IdRef typeId);
     void writeInterfaceVariableDecorations(const TType &type, spirv::IdRef variableId);
@@ -432,6 +431,7 @@ class SPIRVBuilder : angle::NonCopyable
     spirv::Blob getSpirv();
 
   private:
+    void predefineCommonTypes();
     SpirvTypeData declareType(const SpirvType &type, const TSymbol *block);
 
     uint32_t calculateBaseAlignmentAndSize(const SpirvType &type, uint32_t *sizeInStorageBlockOut);
@@ -464,6 +464,7 @@ class SPIRVBuilder : angle::NonCopyable
     void writeExecutionModes(spirv::Blob *blob);
     void writeExtensions(spirv::Blob *blob);
     void writeSourceExtensions(spirv::Blob *blob);
+    void writeNonSemanticOverview(spirv::Blob *blob, spirv::IdRef id);
 
     ANGLE_MAYBE_UNUSED_PRIVATE_FIELD TCompiler *mCompiler;
     const ShCompileOptions &mCompileOptions;
@@ -479,10 +480,9 @@ class SPIRVBuilder : angle::NonCopyable
     // Extensions used by the shader.
     angle::PackedEnumBitSet<SPIRVExtensions> mExtensions;
 
-    // The list of interface variables and the id of main() populated as the instructions are
-    // generated.  Used for the OpEntryPoint instruction.
+    // The list of interface variables populated as the instructions are generated.  Used for the
+    // OpEntryPoint instruction.
     spirv::IdRefList mEntryPointInterfaceList;
-    spirv::IdRef mEntryPointId;
 
     // Id of imported instructions, if used.
     spirv::IdRef mExtInstImportIdStd;

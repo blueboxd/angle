@@ -36,6 +36,13 @@ namespace spv
 
 namespace sh
 {
+namespace vk
+{
+const char kXfbEmulationGetOffsetsFunctionName[] = "ANGLEGetXfbOffsets";
+const char kXfbEmulationCaptureFunctionName[]    = "ANGLECaptureXfb";
+const char kTransformPositionFunctionName[]      = "ANGLETransformPosition";
+}  // namespace vk
+
 namespace
 {
 // A struct to hold either SPIR-V ids or literal constants.   If id is not valid, a literal is
@@ -5714,12 +5721,28 @@ void OutputSPIRVTraverser::visitFunctionPrototype(TIntermFunctionPrototype *node
     //
     // Apply decorations to the return value of the function by applying them to the OpFunction
     // instruction.
-    ids.functionId = mBuilder.getNewId(mBuilder.getDecorations(function->getReturnType()));
-
-    // Remember the ID of main() for the sake of OpEntryPoint.
+    //
+    // Note that some functions have predefined ids.
+    const bool isAngleInternal = function->symbolType() == SymbolType::AngleInternal;
     if (function->isMain())
     {
-        mBuilder.setEntryPointId(ids.functionId);
+        ids.functionId = spirv::IdRef(vk::spirv::kIdEntryPoint);
+    }
+    else if (isAngleInternal && function->name() == vk::kXfbEmulationGetOffsetsFunctionName)
+    {
+        ids.functionId = spirv::IdRef(vk::spirv::kIdXfbEmulationGetOffsetsFunction);
+    }
+    else if (isAngleInternal && function->name() == vk::kXfbEmulationCaptureFunctionName)
+    {
+        ids.functionId = spirv::IdRef(vk::spirv::kIdXfbEmulationCaptureFunction);
+    }
+    else if (isAngleInternal && function->name() == vk::kTransformPositionFunctionName)
+    {
+        ids.functionId = spirv::IdRef(vk::spirv::kIdTransformPositionFunction);
+    }
+    else
+    {
+        ids.functionId = mBuilder.getNewId(mBuilder.getDecorations(function->getReturnType()));
     }
 
     // Remember the id of the function for future look up.
@@ -6098,11 +6121,22 @@ bool OutputSPIRVTraverser::visitDeclaration(Visit visit, TIntermDeclaration *nod
         spirv::WriteDecorate(mBuilder.getSpirvDecorations(), nonArrayTypeId, decoration, {});
 
         if (type.getQualifier() == EvqBuffer && !memoryQualifier.restrictQualifier &&
-            mCompileOptions.aliasedSSBOUnlessRestrict)
+            mCompileOptions.aliasedUnlessRestrict)
         {
-            // If GLSL does not specify the SSBO has restrict memory qualifier, assume the memory
-            // qualifier is aliased
+            // If GLSL does not specify the SSBO has restrict memory qualifier, assume the
+            // memory qualifier is aliased
             // issuetracker.google.com/266235549
+            spirv::WriteDecorate(mBuilder.getSpirvDecorations(), variableId, spv::DecorationAliased,
+                                 {});
+        }
+    }
+    else if (IsImage(type.getBasicType()) && type.getQualifier() == EvqUniform)
+    {
+        // If GLSL does not specify the image has restrict memory qualifier, assume the memory
+        // qualifier is aliased
+        // issuetracker.google.com/266235549
+        if (!memoryQualifier.restrictQualifier && mCompileOptions.aliasedUnlessRestrict)
+        {
             spirv::WriteDecorate(mBuilder.getSpirvDecorations(), variableId, spv::DecorationAliased,
                                  {});
         }

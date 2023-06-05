@@ -1331,7 +1331,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // avoided however, as on the affected driver that would disable certain optimizations.
     void updateStencilWriteWorkaround();
 
-    angle::Result updateShaderResourcesDescriptorDesc(PipelineType pipelineType);
     void updateShaderResourcesWithSharedCacheKey(
         const vk::SharedDescriptorSetCacheKey &sharedCacheKey);
 
@@ -1655,10 +1654,7 @@ ANGLE_INLINE angle::Result ContextVk::onVertexAttributeChange(size_t attribIndex
                                                               GLuint relativeOffset,
                                                               const vk::BufferHelper *vertexBuffer)
 {
-    const GLuint staticStride = getFeatures().supportsExtendedDynamicState.enabled &&
-                                        !getFeatures().forceStaticVertexStrideState.enabled
-                                    ? 0
-                                    : stride;
+    const GLuint staticStride = mRenderer->useVertexInputBindingStrideDynamicState() ? 0 : stride;
 
     invalidateCurrentGraphicsPipeline();
 

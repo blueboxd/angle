@@ -1309,14 +1309,6 @@ void Program::resolveLinkImpl(const Context *context)
         return;
     }
 
-    if (linkingState->linkingFromBinary)
-    {
-        // All internal Program state is already loaded from the binary.
-        return;
-    }
-
-    initInterfaceBlockBindings();
-
     // According to GLES 3.0/3.1 spec for LinkProgram and UseProgram,
     // Only successfully linked program can replace the executables.
     ASSERT(mLinked);
@@ -1328,6 +1320,12 @@ void Program::resolveLinkImpl(const Context *context)
 
     // Must be called after markUnusedUniformLocations.
     postResolveLink(context);
+
+    if (linkingState->linkingFromBinary)
+    {
+        // All internal Program state is already loaded from the binary.
+        return;
+    }
 
     // Save to the program cache.
     std::lock_guard<std::mutex> cacheLock(context->getProgramCacheMutex());
@@ -2634,9 +2632,27 @@ const InterfaceBlock &Program::getShaderStorageBlockByIndex(GLuint index) const
 void Program::bindUniformBlock(UniformBlockIndex uniformBlockIndex, GLuint uniformBlockBinding)
 {
     ASSERT(!mLinkingState);
+
+    if (mState.mExecutable->mActiveUniformBlockBindings[uniformBlockIndex.value])
+    {
+        GLuint previousBinding =
+            mState.mExecutable->mUniformBlocks[uniformBlockIndex.value].binding;
+        if (previousBinding >= mUniformBlockBindingMasks.size())
+        {
+            mUniformBlockBindingMasks.resize(previousBinding + 1, UniformBlockBindingMask());
+        }
+        mUniformBlockBindingMasks[previousBinding].reset(uniformBlockIndex.value);
+    }
+
     mState.mExecutable->mUniformBlocks[uniformBlockIndex.value].binding = uniformBlockBinding;
+    if (uniformBlockBinding >= mUniformBlockBindingMasks.size())
+    {
+        mUniformBlockBindingMasks.resize(uniformBlockBinding + 1, UniformBlockBindingMask());
+    }
+    mUniformBlockBindingMasks[uniformBlockBinding].set(uniformBlockIndex.value);
     mState.mExecutable->mActiveUniformBlockBindings.set(uniformBlockIndex.value,
                                                         uniformBlockBinding != 0);
+
     mDirtyBits.set(DIRTY_BIT_UNIFORM_BLOCK_BINDING_0 + uniformBlockIndex.value);
 }
 
@@ -3671,7 +3687,6 @@ angle::Result Program::deserialize(const Context *context,
         mState.mExecutable->updateTransformFeedbackStrides();
     }
 
-    postResolveLink(context);
     mState.mExecutable->updateCanDrawWith();
 
     if (context->getShareGroup()->getFrameCaptureShared()->enabled())
@@ -3696,6 +3711,8 @@ angle::Result Program::deserialize(const Context *context,
 
 void Program::postResolveLink(const gl::Context *context)
 {
+    initInterfaceBlockBindings();
+
     mState.updateActiveSamplers();
     mState.mExecutable->mActiveImageShaderBits.fill({});
     mState.mExecutable->updateActiveImages(getExecutable());

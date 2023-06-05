@@ -26,7 +26,7 @@
 
 // Version number for shader translation API.
 // It is incremented every time the API changes.
-#define ANGLE_SH_VERSION 329
+#define ANGLE_SH_VERSION 333
 
 enum ShShaderSpec
 {
@@ -147,8 +147,9 @@ struct ShCompileOptions
     // calling sh::GetObjectCode().
     uint64_t objectCode : 1;
 
-    // Extracts attributes, uniforms, and varyings.  Can be queried by calling ShGetVariableInfo().
-    uint64_t variables : 1;
+    // Unused.  Kept to avoid unnecessarily changing the layout of this structure and tripping up
+    // the fuzzer's hash->bug map.
+    uint64_t unused2 : 1;
 
     // Tracks the source path for shaders.  Can be queried with getSourcePath().
     uint64_t sourcePath : 1;
@@ -425,7 +426,7 @@ struct ShCompileOptions
 
     // issuetracker.google.com/266235549 add aliased memory decoration to ssbo if the variable is
     // not declared with "restrict" memory qualifier in GLSL
-    uint64_t aliasedSSBOUnlessRestrict : 1;
+    uint64_t aliasedUnlessRestrict : 1;
 
     // Use fragment shaders to compute and set coverage mask based on the alpha value
     uint64_t emulateAlphaToCoverage : 1;
@@ -960,6 +961,93 @@ enum ColorAttachmentDitherControl
     kDitherControlDither565  = 3,
 };
 
+namespace spirv
+{
+enum NonSemanticInstruction
+{
+    // The overview instruction containing information such as what predefined ids are present in
+    // the SPIR-V.  Simultaneously, this instruction identifies the location where the
+    // types/constants/variables section ends and the functions section starts.
+    kNonSemanticOverview,
+    // The instruction identifying the entry to the shader, i.e. at the start of main()
+    kNonSemanticEnter,
+    // The instruction identifying where vertex data is output.  This is before return from main()
+    // in vertex and tessellation shaders, and before OpEmitVertex in geometry shaders.
+    kNonSemanticVertexOutput,
+    // The instruction identifying the location where transform feedback emulation should be
+    // written.
+    kNonSemanticTransformFeedbackEmulation,
+};
+
+enum OverviewFlags
+{
+    kOverviewHasSampleRateShading,
+};
+
+enum ReservedIds
+{
+    kIdInvalid = 0,
+
+    // Ids that may or may not be declared in the shader.  A bitmask of these ids is returned in the
+    // kNonSemanticOverview instruction for the information of the SPIR-V transformer.
+
+    // Per-vertex
+    kIdInputPerVertexBlock,
+    kIdOutputPerVertexBlock,
+    kIdOutputPerVertexVar,
+
+    // Multisampling support
+    kIdSampleID,
+
+    // Ids that are fixed and are always present in the SPIR-V where applicable.  The SPIR-V
+    // transformer can thus reliably use these ids.
+
+    // Global information
+    kIdNonSemanticInstructionSet,
+    kIdEntryPoint,
+    kIdDeclaredIdsConstant,
+    kIdOverviewFlagsConstant,
+
+    // Basic types
+    kIdVoid,
+    kIdFloat,
+    kIdVec2,
+    kIdVec3,
+    kIdVec4,
+    kIdMat2,
+    kIdMat3,
+    kIdMat4,
+    kIdInt,
+    kIdIVec4,
+    kIdUint,
+
+    // Common constants
+    kIdIntZero,
+    kIdIntOne,
+    kIdIntTwo,
+    kIdIntThree,
+
+    // Type pointers
+    kIdIntInputTypePointer,
+    kIdVec4OutputTypePointer,
+    kIdIVec4FunctionTypePointer,
+
+    // Pre-rotation and Z-correction support
+    kIdTransformPositionFunction,
+
+    // Transform feedback support
+    kIdXfbExtensionPosition,
+    kIdXfbEmulationGetOffsetsFunction,
+    kIdXfbEmulationCaptureFunction,
+    kIdXfbEmulationBufferZero,
+    kIdXfbEmulationBufferOne,
+    kIdXfbEmulationBufferTwo,
+    kIdXfbEmulationBufferThree,
+
+    kIdFirstUnreserved,
+};
+}  // namespace spirv
+
 // Interface block name containing the aggregate default uniforms
 extern const char kDefaultUniformsNameVS[];
 extern const char kDefaultUniformsNameTCS[];
@@ -996,17 +1084,12 @@ constexpr uint32_t kDriverUniformsMiscAlphaToCoverageMask         = 0x1;
 extern const char kAtomicCountersBlockName[];
 
 // Transform feedback emulation support
-extern const char kXfbEmulationGetOffsetsFunctionName[];
-extern const char kXfbEmulationCaptureFunctionName[];
 extern const char kXfbEmulationBufferBlockName[];
 extern const char kXfbEmulationBufferName[];
 extern const char kXfbEmulationBufferFieldName[];
 
 // Transform feedback extension support
 extern const char kXfbExtensionPositionOutName[];
-
-// Pre-rotation support
-extern const char kTransformPositionFunctionName[];
 
 // EXT_shader_framebuffer_fetch and EXT_shader_framebuffer_fetch_non_coherent
 extern const char kInputAttachmentName[];
