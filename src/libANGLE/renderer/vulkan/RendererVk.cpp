@@ -244,6 +244,8 @@ constexpr const char *kSkippedMessages[] = {
     "VUID-vkCmdDraw-None-07848",
     // https://anglebug.com/8128#c3
     "VUID-VkBufferViewCreateInfo-buffer-00934",
+    // https://anglebug.com/8203
+    "VUID-VkVertexInputBindingDivisorDescriptionEXT-divisor-01870",
 };
 
 // Validation messages that should be ignored only when VK_EXT_primitive_topology_list_restart is
@@ -4433,14 +4435,18 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // By default, use all state from VK_EXT_extended_dynamic_state, unless they hit driver bugs.
     ANGLE_FEATURE_CONDITION(&mFeatures, useVertexInputBindingStrideDynamicState,
                             mFeatures.supportsExtendedDynamicState.enabled && !isARM);
+    // http://issuetracker.google.com/285196249
+    // Dynamic cull mode not working on some ARM drivers
     ANGLE_FEATURE_CONDITION(&mFeatures, useCullModeDynamicState,
-                            mFeatures.supportsExtendedDynamicState.enabled);
+                            mFeatures.supportsExtendedDynamicState.enabled && !isARM);
     ANGLE_FEATURE_CONDITION(&mFeatures, useDepthCompareOpDynamicState,
                             mFeatures.supportsExtendedDynamicState.enabled);
     ANGLE_FEATURE_CONDITION(&mFeatures, useDepthTestEnableDynamicState,
                             mFeatures.supportsExtendedDynamicState.enabled);
+    // http://issuetracker.google.com/286224923
+    // Dynamic depth write not working on some ARM drivers
     ANGLE_FEATURE_CONDITION(&mFeatures, useDepthWriteEnableDynamicState,
-                            mFeatures.supportsExtendedDynamicState.enabled);
+                            mFeatures.supportsExtendedDynamicState.enabled && !isARM);
     ANGLE_FEATURE_CONDITION(&mFeatures, useFrontFaceDynamicState,
                             mFeatures.supportsExtendedDynamicState.enabled);
     ANGLE_FEATURE_CONDITION(&mFeatures, useStencilOpDynamicState,
