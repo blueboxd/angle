@@ -21,6 +21,7 @@
 #include "libANGLE/Query.h"
 #include "libANGLE/TransformFeedback.h"
 #include "libANGLE/VertexArray.h"
+#include "libANGLE/histogram_macros.h"
 #include "libANGLE/renderer/gl/BufferGL.h"
 #include "libANGLE/renderer/gl/FramebufferGL.h"
 #include "libANGLE/renderer/gl/FunctionsGL.h"
@@ -30,6 +31,7 @@
 #include "libANGLE/renderer/gl/TextureGL.h"
 #include "libANGLE/renderer/gl/TransformFeedbackGL.h"
 #include "libANGLE/renderer/gl/VertexArrayGL.h"
+#include "platform/PlatformMethods.h"
 
 namespace rx
 {
@@ -104,6 +106,7 @@ StateManagerGL::StateManagerGL(const FunctionsGL *functions,
       mFramebuffers(angle::FramebufferBindingSingletonMax, 0),
       mRenderbuffer(0),
       mPlaceholderFbo(0),
+      mPlaceholderRbo(0),
       mScissorTestEnabled(false),
       mScissor(0, 0, 0, 0),
       mViewport(0, 0, 0, 0),
@@ -231,6 +234,10 @@ StateManagerGL::~StateManagerGL()
     if (mPlaceholderFbo != 0)
     {
         deleteFramebuffer(mPlaceholderFbo);
+    }
+    if (mPlaceholderRbo != 0)
+    {
+        deleteRenderbuffer(mPlaceholderRbo);
     }
     if (mDefaultVAO != 0)
     {
@@ -775,19 +782,40 @@ void StateManagerGL::beginQuery(gl::QueryType type, QueryGL *queryObject, GLuint
     ASSERT(mQueries[type] == nullptr);
     ASSERT(queryId != 0);
 
-    if (mFeatures.bindFramebufferForTimerQueries.enabled &&
-        mFramebuffers[angle::FramebufferBindingDraw] == 0 &&
+    GLuint oldFramebufferBindingDraw = mFramebuffers[angle::FramebufferBindingDraw];
+    if (mFeatures.bindCompleteFramebufferForTimerQueries.enabled &&
+        (mFramebuffers[angle::FramebufferBindingDraw] == 0 ||
+         mFunctions->checkFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) &&
         (type == gl::QueryType::TimeElapsed || type == gl::QueryType::Timestamp))
     {
         if (!mPlaceholderFbo)
         {
             mFunctions->genFramebuffers(1, &mPlaceholderFbo);
         }
-        bindFramebuffer(GL_FRAMEBUFFER, mPlaceholderFbo);
+        bindFramebuffer(GL_DRAW_FRAMEBUFFER, mPlaceholderFbo);
+
+        if (!mPlaceholderRbo)
+        {
+            GLuint oldRenderBufferBinding = mRenderbuffer;
+            mFunctions->genRenderbuffers(1, &mPlaceholderRbo);
+            bindRenderbuffer(GL_RENDERBUFFER, mPlaceholderRbo);
+            mFunctions->renderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 2, 2);
+            mFunctions->framebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                                GL_RENDERBUFFER, mPlaceholderRbo);
+            bindRenderbuffer(GL_RENDERBUFFER, oldRenderBufferBinding);
+
+            // This ensures renderbuffer attachment is not lazy.
+            mFunctions->checkFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+        }
     }
 
     mQueries[type] = queryObject;
     mFunctions->beginQuery(ToGLenum(type), queryId);
+
+    if (oldFramebufferBindingDraw != mPlaceholderFbo)
+    {
+        bindFramebuffer(GL_DRAW_FRAMEBUFFER, oldFramebufferBindingDraw);
+    }
 }
 
 void StateManagerGL::endQuery(gl::QueryType type, QueryGL *queryObject, GLuint queryId)
@@ -2872,6 +2900,9 @@ void StateManagerGL::syncFromNativeContext(const gl::Extensions &extensions,
 {
     ASSERT(mFunctions->getError() == GL_NO_ERROR);
 
+    auto *platform   = ANGLEPlatformCurrent();
+    double startTime = platform->currentTime(platform);
+
     get(GL_VIEWPORT, &state->viewport);
     if (mViewport != state->viewport)
     {
@@ -3113,6 +3144,10 @@ void StateManagerGL::syncFromNativeContext(const gl::Extensions &extensions,
     syncTextureUnitsFromNativeContext(extensions, state);
 
     ASSERT(mFunctions->getError() == GL_NO_ERROR);
+
+    double delta = platform->currentTime(platform) - startTime;
+    int us       = static_cast<int>(delta * 1000000.0);
+    ANGLE_HISTOGRAM_COUNTS("GPU.ANGLE.SyncFromNativeContextMicroseconds", us);
 }
 
 void StateManagerGL::restoreNativeContext(const gl::Extensions &extensions,
