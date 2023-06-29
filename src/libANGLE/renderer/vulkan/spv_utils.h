@@ -43,7 +43,6 @@ struct SpvTransformOptions
 {
     gl::ShaderType shaderType           = gl::ShaderType::InvalidEnum;
     bool negativeViewportSupported      = false;
-    bool removeDebugInfo                = false;
     bool isLastPreFragmentStage         = false;
     bool isTransformFeedbackStage       = false;
     bool isTransformFeedbackEmulated    = false;
@@ -52,21 +51,6 @@ struct SpvTransformOptions
     bool validate                       = true;
     bool useSpirvVaryingPrecisionFixer  = false;
 };
-
-struct UniformBindingInfo final
-{
-    UniformBindingInfo();
-    UniformBindingInfo(uint32_t bindingIndex,
-                       uint32_t idInFrontShader,
-                       gl::ShaderBitSet shaderBitSet,
-                       gl::ShaderType frontShaderType);
-    uint32_t bindingIndex          = 0;
-    uint32_t idInFrontShader       = 0;
-    gl::ShaderBitSet shaderBitSet  = gl::ShaderBitSet();
-    gl::ShaderType frontShaderType = gl::ShaderType::InvalidEnum;
-};
-
-using UniformBindingIndexMap = angle::HashMap<std::string, UniformBindingInfo>;
 
 struct ShaderInterfaceVariableXfbInfo
 {
@@ -124,22 +108,15 @@ struct ShaderInterfaceVariableInfo
     // vertex attribute aliasing transformation only.
     uint8_t attributeComponentCount = 0;
     uint8_t attributeLocationCount  = 0;
-    // Indicate if this variable has been deduplicated.
-    bool isDuplicate = false;
 };
-
-bool GetImageNameWithoutIndices(std::string *name);
 
 uint32_t SpvGetXfbBufferBlockId(const uint32_t bufferIndex);
 
 void SpvAssignLocations(const SpvSourceOptions &options,
                         const gl::ProgramExecutable &programExecutable,
                         const gl::ProgramVaryingPacking &varyingPacking,
-                        const gl::ShaderType shaderType,
-                        const gl::ShaderType frontShaderType,
-                        bool isTransformFeedbackStage,
+                        const gl::ShaderType transformFeedbackStage,
                         SpvProgramInterfaceInfo *programInterfaceInfo,
-                        UniformBindingIndexMap *uniformBindingIndexMapOut,
                         ShaderInterfaceVariableInfoMap *variableInfoMapOut);
 
 void SpvAssignTransformFeedbackLocations(gl::ShaderType shaderType,

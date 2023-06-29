@@ -506,8 +506,6 @@ void SpirvTypeSpec::onVectorComponentSelection()
 
 SPIRVBuilder::SPIRVBuilder(TCompiler *compiler,
                            const ShCompileOptions &compileOptions,
-                           ShHashFunction64 hashFunction,
-                           NameMap &nameMap,
                            const angle::HashMap<int, uint32_t> &uniqueToSpirvIdMap,
                            uint32_t firstUnusedSpirvId)
     : mCompiler(compiler),
@@ -515,8 +513,6 @@ SPIRVBuilder::SPIRVBuilder(TCompiler *compiler,
       mShaderType(gl::FromGLenum<gl::ShaderType>(compiler->getShaderType())),
       mUniqueToSpirvIdMap(uniqueToSpirvIdMap),
       mNextAvailableId(firstUnusedSpirvId),
-      mHashFunction(hashFunction),
-      mNameMap(nameMap),
       mNextUnusedBinding(0),
       mNextUnusedInputLocation(0),
       mNextUnusedOutputLocation(0),
@@ -900,6 +896,36 @@ void SPIRVBuilder::predefineCommonTypes()
     }
 }
 
+void SPIRVBuilder::writeDebugName(spirv::IdRef id, const char *name)
+{
+    if (mCompileOptions.outputDebugInfo && name[0] != '\0')
+    {
+        spirv::WriteName(&mSpirvDebug, id, name);
+    }
+}
+
+void SPIRVBuilder::writeBlockDebugNames(const TFieldListCollection *block,
+                                        spirv::IdRef typeId,
+                                        const char *name)
+{
+    if (!mCompileOptions.outputDebugInfo)
+    {
+        return;
+    }
+
+    if (name[0] != '\0')
+    {
+        spirv::WriteName(&mSpirvDebug, typeId, name);
+    }
+
+    uint32_t fieldIndex = 0;
+    for (const TField *field : block->fields())
+    {
+        spirv::WriteMemberName(&mSpirvDebug, typeId, spirv::LiteralInteger(fieldIndex++),
+                               getFieldName(field).data());
+    }
+}
+
 SpirvTypeData SPIRVBuilder::declareType(const SpirvType &type, const TSymbol *block)
 {
     // Recursively declare the type.  Type id is allocated afterwards purely for better id order in
@@ -1050,21 +1076,9 @@ SpirvTypeData SPIRVBuilder::declareType(const SpirvType &type, const TSymbol *bl
     }
 
     // If this was a block declaration, add debug information for its type and field names.
-    //
-    // TODO: make this conditional to a compiler flag.  Instead of outputting the debug info
-    // unconditionally and having the SPIR-V transformer remove them, it's better to avoid
-    // generating them in the first place.  This both simplifies the transformer and reduces SPIR-V
-    // binary size that gets written to disk cache.  http://anglebug.com/4889
-    if (block != nullptr && type.arraySizes.empty())
+    if (mCompileOptions.outputDebugInfo && block != nullptr && type.arraySizes.empty())
     {
-        spirv::WriteName(&mSpirvDebug, typeId, hashName(block).data());
-
-        uint32_t fieldIndex = 0;
-        for (const TField *field : type.block->fields())
-        {
-            spirv::WriteMemberName(&mSpirvDebug, typeId, spirv::LiteralInteger(fieldIndex++),
-                                   hashFieldName(field).data());
-        }
+        writeBlockDebugNames(type.block, typeId, getName(block).data());
     }
 
     // Write decorations for interface block fields.
@@ -1630,7 +1644,7 @@ void SPIRVBuilder::startNewFunction(spirv::IdRef functionId, const TFunction *fu
     mSpirvCurrentFunctionBlocks.back().labelId = getNewId({});
 
     // Output debug information.
-    spirv::WriteName(&mSpirvDebug, functionId, hashFunctionName(func).data());
+    writeDebugName(functionId, getName(func).data());
 }
 
 void SPIRVBuilder::assembleSpirvFunctionBlocks()
@@ -1699,7 +1713,7 @@ spirv::IdRef SPIRVBuilder::declareVariable(spirv::IdRef typeId,
     // Output debug information.
     if (name)
     {
-        spirv::WriteName(&mSpirvDebug, variableId, name);
+        writeDebugName(variableId, name);
     }
 
     return variableId;
@@ -1731,7 +1745,7 @@ spirv::IdRef SPIRVBuilder::declareSpecConst(TBasicType type, int id, const char 
     // Output debug information.
     if (name)
     {
-        spirv::WriteName(&mSpirvDebug, specConstId, name);
+        writeDebugName(specConstId, name);
     }
 
     return specConstId;
@@ -2281,35 +2295,15 @@ void SPIRVBuilder::writeInterpolationDecoration(TQualifier qualifier,
     }
 }
 
-ImmutableString SPIRVBuilder::hashName(const TSymbol *symbol)
+ImmutableString SPIRVBuilder::getName(const TSymbol *symbol)
 {
-    return HashName(symbol, mHashFunction, &mNameMap);
+    return symbol->symbolType() == SymbolType::Empty ? ImmutableString("") : symbol->name();
 }
 
-ImmutableString SPIRVBuilder::hashTypeName(const TType &type)
-{
-    return GetTypeName(type, mHashFunction, &mNameMap);
-}
-
-ImmutableString SPIRVBuilder::hashFieldName(const TField *field)
+ImmutableString SPIRVBuilder::getFieldName(const TField *field)
 {
     ASSERT(field->symbolType() != SymbolType::Empty);
-    if (field->symbolType() == SymbolType::UserDefined)
-    {
-        return HashName(field->name(), mHashFunction, &mNameMap);
-    }
-
     return field->name();
-}
-
-ImmutableString SPIRVBuilder::hashFunctionName(const TFunction *func)
-{
-    if (func->isMain())
-    {
-        return func->name();
-    }
-
-    return hashName(func);
 }
 
 spirv::Blob SPIRVBuilder::getSpirv()
@@ -2538,6 +2532,17 @@ void SPIRVBuilder::writeNonSemanticOverview(spirv::Blob *blob, spirv::IdRef id)
     spirv::WriteExtInst(blob, spirv::IdResultType(kIdVoid), id,
                         spirv::IdRef(kIdNonSemanticInstructionSet),
                         spirv::LiteralExtInstInteger(overview), {});
+}
+
+void SPIRVBuilder::writeNonSemanticInstruction(vk::spirv::NonSemanticInstruction instruction)
+{
+    using namespace vk::spirv;
+
+    const spirv::IdRef id = getNewId({});
+
+    spirv::WriteExtInst(getSpirvCurrentFunctionBlock(), spirv::IdResultType(kIdVoid), id,
+                        spirv::IdRef(kIdNonSemanticInstructionSet),
+                        spirv::LiteralExtInstInteger(instruction), {});
 }
 
 }  // namespace sh

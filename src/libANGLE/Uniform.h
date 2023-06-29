@@ -29,7 +29,7 @@ struct ActiveVariable
 
     ActiveVariable &operator=(const ActiveVariable &rhs);
 
-    ShaderType getFirstShaderTypeWhereActive() const
+    ShaderType getFirstActiveShaderType() const
     {
         return static_cast<ShaderType>(ScanForward(mActiveUseBits.bits()));
     }
@@ -40,6 +40,7 @@ struct ActiveVariable
         ASSERT(shaderType != ShaderType::InvalidEnum);
         return mActiveUseBits[shaderType];
     }
+    const ShaderMap<uint32_t> &getIds() const { return mIds; }
     uint32_t getId(ShaderType shaderType) const { return mIds[shaderType]; }
     ShaderBitSet activeShaders() const { return mActiveUseBits; }
     GLuint activeShaderCount() const { return static_cast<GLuint>(mActiveUseBits.count()); }
