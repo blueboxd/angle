@@ -2571,6 +2571,9 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
 
     // http://anglebug.com/8172
     ANGLE_FEATURE_CONDITION(features, disableBaseInstanceVertex, IsMaliValhall(functions));
+
+    // http://crbug.com/1420130
+    ANGLE_FEATURE_CONDITION(features, scalarizeVecAndMatConstructorArgs, isMali);
 }
 
 void InitializeFrontendFeatures(const FunctionsGL *functions, angle::FrontendFeatures *features)
@@ -2871,9 +2874,17 @@ angle::Result CheckError(const gl::Context *context,
                          const char *function,
                          unsigned int line)
 {
-    const FunctionsGL *functions = GetFunctionsGL(context);
+    return HandleError(context, GetFunctionsGL(context)->getError(), call, file, function, line);
+}
 
-    GLenum error = functions->getError();
+angle::Result HandleError(const gl::Context *context,
+                          GLenum error,
+                          const char *call,
+                          const char *file,
+                          const char *function,
+                          unsigned int line)
+{
+    const FunctionsGL *functions = GetFunctionsGL(context);
     if (ANGLE_UNLIKELY(error != GL_NO_ERROR))
     {
         ContextGL *contextGL = GetImplAs<ContextGL>(context);

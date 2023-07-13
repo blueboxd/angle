@@ -155,19 +155,21 @@ class StateCache final : angle::NonCopyable
     // 4. onVertexArrayStateChange.
     // 5. onVertexArrayBufferStateChange.
     // 6. onDrawFramebufferChange.
-    // 7. onContextCapChange.
-    // 8. onStencilStateChange.
-    // 9. onDefaultVertexAttributeChange.
+    // 7. onContextLocalCapChange.
+    // 8. onContextLocalStencilStateChange.
+    // 9. onContextLocalDefaultVertexAttributeChange.
     // 10. onActiveTextureChange.
     // 11. onQueryChange.
     // 12. onActiveTransformFeedbackChange.
     // 13. onUniformBufferStateChange.
-    // 14. onColorMaskChange.
+    // 14. onContextLocalColorMaskChange.
     // 15. onBufferBindingChange.
-    // 16. onBlendFuncIndexedChange.
+    // 16. onContextLocalBlendFuncIndexedChange.
+    // 17. onContextLocalBlendEquationChange.
     intptr_t getBasicDrawStatesErrorString(const Context *context) const
     {
-        if (mCachedBasicDrawStatesErrorString != kInvalidPointer)
+        if (mIsCachedBasicDrawStatesErrorValid &&
+            mCachedBasicDrawStatesErrorString != kInvalidPointer)
         {
             return mCachedBasicDrawStatesErrorString;
         }
@@ -274,19 +276,23 @@ class StateCache final : angle::NonCopyable
     void onVertexArrayBufferStateChange(Context *context);
     void onGLES1ClientStateChange(Context *context);
     void onDrawFramebufferChange(Context *context);
-    void onContextCapChange(Context *context);
-    void onStencilStateChange(Context *context);
-    void onDefaultVertexAttributeChange(Context *context);
     void onActiveTextureChange(Context *context);
     void onQueryChange(Context *context);
     void onActiveTransformFeedbackChange(Context *context);
     void onUniformBufferStateChange(Context *context);
     void onAtomicCounterBufferStateChange(Context *context);
     void onShaderStorageBufferStateChange(Context *context);
-    void onColorMaskChange(Context *context);
     void onBufferBindingChange(Context *context);
-    void onBlendFuncIndexedChange(Context *context);
-    void onBlendEquationChange(Context *context);
+    // The following state change notifications are only called from context-local state change
+    // functions.  They only affect the draw validation cache which is also context-local (i.e. not
+    // accessed by other contexts in the share group).  Note that context-local state change
+    // functions are called without holding the share group lock.
+    void onContextLocalCapChange(Context *context);
+    void onContextLocalColorMaskChange(Context *context);
+    void onContextLocalDefaultVertexAttributeChange(Context *context);
+    void onContextLocalBlendFuncIndexedChange(Context *context);
+    void onContextLocalBlendEquationChange(Context *context);
+    void onContextLocalStencilStateChange(Context *context);
 
   private:
     // Cache update functions.
@@ -357,6 +363,14 @@ class StateCache final : angle::NonCopyable
         mCachedIntegerVertexAttribTypesValidation;
 
     bool mCachedCanDraw;
+
+    // mCachedBasicDrawStatesError* may be invalidated through numerous calls (see the comment on
+    // getBasicDrawStatesErrorString), some of which may originate from other contexts (through the
+    // observer interface).  However, ContextLocal* helpers may also need to invalidate the draw
+    // states, but they are called without holding the share group lock.  The following tracks
+    // whether mCachedBasicDrawStatesError* values are valid and is accessed only by the context
+    // itself.
+    mutable bool mIsCachedBasicDrawStatesErrorValid;
 };
 
 using VertexArrayMap       = ResourceMap<VertexArray, VertexArrayID>;
@@ -558,6 +572,25 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     const Limitations &getLimitations() const { return mState.getLimitations(); }
     bool isGLES1() const;
 
+    // To be used **only** directly by the entry points.
+    LocalState *getMutableLocalState() { return mState.getMutableLocalState(); }
+    GLES1State *getMutableGLES1State() { return mState.getMutableGLES1State(); }
+    void onContextLocalCapChange() { mStateCache.onContextLocalCapChange(this); }
+    void onContextLocalColorMaskChange() { mStateCache.onContextLocalColorMaskChange(this); }
+    void onContextLocalDefaultVertexAttributeChange()
+    {
+        mStateCache.onContextLocalDefaultVertexAttributeChange(this);
+    }
+    void onContextLocalBlendFuncIndexedChange()
+    {
+        mStateCache.onContextLocalBlendFuncIndexedChange(this);
+    }
+    void onContextLocalBlendEquationChange()
+    {
+        mStateCache.onContextLocalBlendEquationChange(this);
+    }
+    void onContextLocalStencilStateChange() { mStateCache.onContextLocalStencilStateChange(this); }
+
     bool skipValidation() const
     {
         // Ensure we don't skip validation when context becomes lost, since implementations
@@ -690,8 +723,12 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     bool isDestroyed() const { return mIsDestroyed; }
     void setIsDestroyed() { mIsDestroyed = true; }
 
-    void setLogicOpEnabled(bool enabled) { mState.setLogicOpEnabled(enabled); }
-    void setLogicOp(LogicalOperation opcode) { mState.setLogicOp(opcode); }
+    // This function acts as glEnable(GL_COLOR_LOGIC_OP), but it's called from the GLES1 emulation
+    // code to implement logicOp using the non-GLES1 functionality (i.e. GL_ANGLE_logic_op).  The
+    // ContextLocalEnable() entry point implementation cannot be used (as ContextLocal* functions
+    // are typically used by other frontend-emulated features) because it forwards this back to
+    // GLES1.
+    void setLogicOpEnabledForGLES1(bool enabled);
 
     // Needed by capture serialization logic that works with a "const" Context pointer.
     void finishImmutable() const;
@@ -721,13 +758,13 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     angle::Result prepareForDraw(PrimitiveMode mode);
     angle::Result prepareForClear(GLbitfield mask);
     angle::Result prepareForClearBuffer(GLenum buffer, GLint drawbuffer);
-    angle::Result syncState(const state::DirtyBits &bitMask,
-                            const state::ExtendedDirtyBits &extendedBitMask,
+    angle::Result syncState(const state::DirtyBits bitMask,
+                            const state::ExtendedDirtyBits extendedBitMask,
                             const state::DirtyObjects &objectMask,
                             Command command);
     angle::Result syncAllDirtyBits(Command command);
-    angle::Result syncDirtyBits(const state::DirtyBits &bitMask,
-                                const state::ExtendedDirtyBits &extendedBitMask,
+    angle::Result syncDirtyBits(const state::DirtyBits bitMask,
+                                const state::ExtendedDirtyBits extendedBitMask,
                                 Command command);
     angle::Result syncDirtyObjects(const state::DirtyObjects &objectMask, Command command);
     angle::Result syncStateForReadPixels();
@@ -845,32 +882,13 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
 
     StateCache mStateCache;
 
-    state::DirtyBits mAllDirtyBits;
-    state::ExtendedDirtyBits mAllExtendedDirtyBits;
-    state::DirtyBits mTexImageDirtyBits;
-    state::ExtendedDirtyBits mTexImageExtendedDirtyBits;
     state::DirtyObjects mTexImageDirtyObjects;
-    state::DirtyBits mReadPixelsDirtyBits;
-    state::ExtendedDirtyBits mReadPixelsExtendedDirtyBits;
     state::DirtyObjects mReadPixelsDirtyObjects;
-    state::DirtyBits mClearDirtyBits;
-    state::ExtendedDirtyBits mClearExtendedDirtyBits;
     state::DirtyObjects mClearDirtyObjects;
-    state::DirtyBits mBlitDirtyBits;
-    state::ExtendedDirtyBits mBlitExtendedDirtyBits;
     state::DirtyObjects mBlitDirtyObjects;
-    state::DirtyBits mComputeDirtyBits;
-    state::ExtendedDirtyBits mComputeExtendedDirtyBits;
     state::DirtyObjects mComputeDirtyObjects;
     state::DirtyBits mCopyImageDirtyBits;
-    state::ExtendedDirtyBits mCopyImageExtendedDirtyBits;
     state::DirtyObjects mCopyImageDirtyObjects;
-    state::DirtyBits mReadInvalidateDirtyBits;
-    state::ExtendedDirtyBits mReadInvalidateExtendedDirtyBits;
-    state::DirtyBits mDrawInvalidateDirtyBits;
-    state::ExtendedDirtyBits mDrawInvalidateExtendedDirtyBits;
-    state::DirtyBits mPixelLocalStorageEXTEnableDisableDirtyBits;
-    state::ExtendedDirtyBits mPixelLocalStorageEXTEnableDisableExtendedDirtyBits;
     state::DirtyObjects mPixelLocalStorageEXTEnableDisableDirtyObjects;
 
     // Binding to container objects that use dependent state updates.
