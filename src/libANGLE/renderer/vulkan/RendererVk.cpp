@@ -208,9 +208,6 @@ constexpr const char *kSkippedMessages[] = {
     // framebuffer that's accessed by the command buffer is identically laid out.
     // http://anglebug.com/6811
     "VUID-vkCmdExecuteCommands-pCommandBuffers-00099",
-    // http://anglebug.com/7105
-    "VUID-vkCmdDraw-None-06538",
-    "VUID-vkCmdDrawIndexed-None-06538",
     // http://anglebug.com/7325
     "VUID-vkCmdBindVertexBuffers2-pStrides-06209",
     // http://anglebug.com/7729
@@ -232,11 +229,7 @@ constexpr const char *kSkippedMessages[] = {
     // http://anglebug.com/8119
     "VUID-VkGraphicsPipelineCreateInfo-Input-07904",
     "VUID-VkGraphicsPipelineCreateInfo-Input-07905",
-    "VUID-vkCmdDraw-None-02859",
-    "VUID-vkCmdDrawIndexed-None-02859",
     "VUID-vkCmdDrawIndexed-None-07835",
-    "VUID-vkCmdDrawIndexedIndirect-None-02859",
-    "VUID-vkCmdDrawIndirect-None-02859",
     "VUID-VkGraphicsPipelineCreateInfo-Input-08733",
     // http://anglebug.com/8151
     "VUID-vkCmdDraw-None-07844",
@@ -2300,6 +2293,7 @@ void RendererVk::appendDeviceExtensionFeaturesPromotedTo11(
 // - VK_KHR_shader_subgroup_extended_types: shaderSubgroupExtendedTypes (feature)
 // - VK_EXT_host_query_reset:               hostQueryReset (feature)
 // - VK_KHR_imageless_framebuffer:          imagelessFramebuffer (feature)
+// - VK_KHR_timeline_semaphore:             timelineSemaphore (feature)
 //
 // Note that supportedDepthResolveModes is used just to check if the property struct is populated.
 // ANGLE always uses VK_RESOLVE_MODE_SAMPLE_ZERO_BIT for both depth and stencil, and support for
@@ -2338,6 +2332,11 @@ void RendererVk::appendDeviceExtensionFeaturesPromotedTo12(
     if (ExtensionFound(VK_KHR_IMAGELESS_FRAMEBUFFER_EXTENSION_NAME, deviceExtensionNames))
     {
         vk::AddToPNextChain(deviceFeatures, &mImagelessFramebufferFeatures);
+    }
+
+    if (ExtensionFound(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME, deviceExtensionNames))
+    {
+        vk::AddToPNextChain(deviceFeatures, &mTimelineSemaphoreFeatures);
     }
 }
 
@@ -2533,6 +2532,10 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
     mDrmProperties       = {};
     mDrmProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT;
 
+    mTimelineSemaphoreFeatures = {};
+    mTimelineSemaphoreFeatures.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
+
     if (!vkGetPhysicalDeviceProperties2KHR || !vkGetPhysicalDeviceFeatures2KHR)
     {
         return;
@@ -2600,6 +2603,7 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
     mSwapchainMaintenance1Features.pNext                    = nullptr;
     mDitheringFeatures.pNext                                = nullptr;
     mDrmProperties.pNext                                    = nullptr;
+    mTimelineSemaphoreFeatures.pNext                        = nullptr;
 }
 
 // See comment above appendDeviceExtensionFeaturesNotPromoted.  Additional extensions are enabled
@@ -3041,6 +3045,12 @@ void RendererVk::enableDeviceExtensionsPromotedTo12(
     {
         mEnabledDeviceExtensions.push_back(VK_KHR_IMAGELESS_FRAMEBUFFER_EXTENSION_NAME);
         vk::AddToPNextChain(&mEnabledFeatures, &mImagelessFramebufferFeatures);
+    }
+
+    if (mFeatures.supportsTimelineSemaphore.enabled)
+    {
+        mEnabledDeviceExtensions.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+        vk::AddToPNextChain(&mEnabledFeatures, &mTimelineSemaphoreFeatures);
     }
 }
 
@@ -4065,7 +4075,7 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
         &mFeatures, supportsExternalFenceFd,
         ExtensionFound(VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME, deviceExtensionNames));
 
-#if defined(ANGLE_PLATFORM_ANDROID)
+#if defined(ANGLE_PLATFORM_ANDROID) || defined(ANGLE_PLATFORM_LINUX)
     if (mFeatures.supportsExternalFenceCapabilities.enabled &&
         mFeatures.supportsExternalSemaphoreCapabilities.enabled)
     {
@@ -4102,7 +4112,7 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
                                 (mFeatures.supportsExternalFenceFd.enabled &&
                                  mFeatures.supportsExternalSemaphoreFd.enabled));
     }
-#endif  // defined(ANGLE_PLATFORM_ANDROID)
+#endif  // defined(ANGLE_PLATFORM_ANDROID) || defined(ANGLE_PLATFORM_LINUX)
 
     ANGLE_FEATURE_CONDITION(
         &mFeatures, supportsShaderStencilExport,
@@ -4426,6 +4436,13 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsLegacyDithering,
                             mDitheringFeatures.legacyDithering == VK_TRUE);
 
+    // Applications on Android have come to rely on hardware dithering, and visually regress without
+    // it.  On desktop GPUs, OpenGL's dithering is a no-op.  The following setting mimics that
+    // behavior.  Dithering is also currently not enabled on SwiftShader, but can be as needed
+    // (which would require Chromium and Capture/Replay test expectations updates).
+    ANGLE_FEATURE_CONDITION(&mFeatures, emulateDithering,
+                            IsAndroid() && !mFeatures.supportsLegacyDithering.enabled);
+
     // http://anglebug.com/6872
     // On ARM hardware, framebuffer-fetch-like behavior on Vulkan is already coherent, so we can
     // expose the coherent version of the GL extension despite unofficial Vulkan support.
@@ -4453,12 +4470,6 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // http://anglebug.com/6878
     // Android needs swapbuffers to update image and present to display.
     ANGLE_FEATURE_CONDITION(&mFeatures, swapbuffersOnFlushOrFinishWithSingleBuffer, IsAndroid());
-
-    // Applications on Android have come to rely on hardware dithering, and visually regress without
-    // it.  On desktop GPUs, OpenGL's dithering is a no-op.  The following setting mimics that
-    // behavior.  Dithering is also currently not enabled on SwiftShader, but can be as needed
-    // (which would require Chromium and Capture/Replay test expectations updates).
-    ANGLE_FEATURE_CONDITION(&mFeatures, emulateDithering, IsAndroid());
 
     // Workaround a Qualcomm imprecision with dithering
     ANGLE_FEATURE_CONDITION(&mFeatures, roundOutputAfterDithering, isQualcomm);
@@ -4661,7 +4672,7 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // workaround, per-sample shading is inferred by ANGLE and explicitly enabled by the API.
     ANGLE_FEATURE_CONDITION(&mFeatures, explicitlyEnablePerSampleShading, isARM);
 
-    ANGLE_FEATURE_CONDITION(&mFeatures, explicitlyCastMediumpFloatTo16Bit, isARM);
+    ANGLE_FEATURE_CONDITION(&mFeatures, explicitlyCastMediumpFloatTo16Bit, isARM && !isVenus);
 
     // Force to create swapchain with continuous refresh on shared present. Disabled by default.
     // Only enable it on integrations without EGL_FRONT_BUFFER_AUTO_REFRESH_ANDROID passthrough.
@@ -4745,6 +4756,9 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, mapUnspecifiedColorSpaceToPassThrough, isVenus);
 
     ANGLE_FEATURE_CONDITION(&mFeatures, enablePipelineCacheDataCompression, true);
+
+    ANGLE_FEATURE_CONDITION(&mFeatures, supportsTimelineSemaphore,
+                            mTimelineSemaphoreFeatures.timelineSemaphore == VK_TRUE);
 
     ApplyFeatureOverrides(&mFeatures, displayVk->getState());
 

@@ -14,8 +14,8 @@
 #include "libANGLE/Context.h"
 #include "libANGLE/Context.inl.h"
 #include "libANGLE/capture/capture_gl_3_autogen.h"
-#include "libANGLE/context_local_call_gl_autogen.h"
-#include "libANGLE/context_local_call_gles_autogen.h"
+#include "libANGLE/context_private_call_gl_autogen.h"
+#include "libANGLE/context_private_call_gles_autogen.h"
 #include "libANGLE/entry_points_utils.h"
 #include "libANGLE/validationEGL.h"
 #include "libANGLE/validationES.h"
@@ -42,11 +42,13 @@ void GL_APIENTRY GL_BeginConditionalRender(GLuint id, GLenum mode)
     if (context)
     {
         SCOPED_SHARE_CONTEXT_LOCK(context);
-        bool isCallValid = (context->skipValidation() ||
-                            (ValidatePixelLocalStorageInactive(
-                                 context, angle::EntryPoint::GLBeginConditionalRender) &&
-                             ValidateBeginConditionalRender(
-                                 context, angle::EntryPoint::GLBeginConditionalRender, id, mode)));
+        bool isCallValid =
+            (context->skipValidation() ||
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLBeginConditionalRender) &&
+              ValidateBeginConditionalRender(context, angle::EntryPoint::GLBeginConditionalRender,
+                                             id, mode)));
         if (isCallValid)
         {
             context->beginConditionalRender(id, mode);
@@ -73,7 +75,8 @@ void GL_APIENTRY GL_BindFragDataLocation(GLuint program, GLuint color, const GLc
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context,
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
                                                 angle::EntryPoint::GLBindFragDataLocation) &&
               ValidateBindFragDataLocation(context, angle::EntryPoint::GLBindFragDataLocation,
                                            programPacked, color, name)));
@@ -101,7 +104,9 @@ void GL_APIENTRY GL_ClampColor(GLenum target, GLenum clamp)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLClampColor) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLClampColor) &&
               ValidateClampColor(context, angle::EntryPoint::GLClampColor, target, clamp)));
         if (isCallValid)
         {
@@ -126,7 +131,8 @@ void GL_APIENTRY GL_EndConditionalRender()
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context,
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
                                                 angle::EntryPoint::GLEndConditionalRender) &&
               ValidateEndConditionalRender(context, angle::EntryPoint::GLEndConditionalRender)));
         if (isCallValid)
@@ -160,12 +166,14 @@ void GL_APIENTRY GL_FramebufferTexture1D(GLenum target,
         TextureTarget textargetPacked = PackParam<TextureTarget>(textarget);
         TextureID texturePacked       = PackParam<TextureID>(texture);
         SCOPED_SHARE_CONTEXT_LOCK(context);
-        bool isCallValid = (context->skipValidation() ||
-                            (ValidatePixelLocalStorageInactive(
-                                 context, angle::EntryPoint::GLFramebufferTexture1D) &&
-                             ValidateFramebufferTexture1D(
-                                 context, angle::EntryPoint::GLFramebufferTexture1D, target,
-                                 attachment, textargetPacked, texturePacked, level)));
+        bool isCallValid =
+            (context->skipValidation() ||
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLFramebufferTexture1D) &&
+              ValidateFramebufferTexture1D(context, angle::EntryPoint::GLFramebufferTexture1D,
+                                           target, attachment, textargetPacked, texturePacked,
+                                           level)));
         if (isCallValid)
         {
             context->framebufferTexture1D(target, attachment, textargetPacked, texturePacked,
@@ -201,12 +209,14 @@ void GL_APIENTRY GL_FramebufferTexture3D(GLenum target,
         TextureTarget textargetPacked = PackParam<TextureTarget>(textarget);
         TextureID texturePacked       = PackParam<TextureID>(texture);
         SCOPED_SHARE_CONTEXT_LOCK(context);
-        bool isCallValid = (context->skipValidation() ||
-                            (ValidatePixelLocalStorageInactive(
-                                 context, angle::EntryPoint::GLFramebufferTexture3D) &&
-                             ValidateFramebufferTexture3D(
-                                 context, angle::EntryPoint::GLFramebufferTexture3D, target,
-                                 attachment, textargetPacked, texturePacked, level, zoffset)));
+        bool isCallValid =
+            (context->skipValidation() ||
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLFramebufferTexture3D) &&
+              ValidateFramebufferTexture3D(context, angle::EntryPoint::GLFramebufferTexture3D,
+                                           target, attachment, textargetPacked, texturePacked,
+                                           level, zoffset)));
         if (isCallValid)
         {
             context->framebufferTexture3D(target, attachment, textargetPacked, texturePacked, level,
@@ -231,10 +241,13 @@ void GL_APIENTRY GL_VertexAttribI1i(GLuint index, GLint x)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI1i(context, angle::EntryPoint::GLVertexAttribI1i, index, x));
+             ValidateVertexAttribI1i(context->getPrivateState(),
+                                     context->getMutableErrorSetForValidation(),
+                                     angle::EntryPoint::GLVertexAttribI1i, index, x));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI1i(context, index, x);
+            ContextPrivateVertexAttribI1i(context->getMutablePrivateState(),
+                                          context->getMutablePrivateStateCache(), index, x);
         }
         ANGLE_CAPTURE_GL(VertexAttribI1i, isCallValid, context, index, x);
     }
@@ -255,10 +268,13 @@ void GL_APIENTRY GL_VertexAttribI1iv(GLuint index, const GLint *v)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI1iv(context, angle::EntryPoint::GLVertexAttribI1iv, index, v));
+             ValidateVertexAttribI1iv(context->getPrivateState(),
+                                      context->getMutableErrorSetForValidation(),
+                                      angle::EntryPoint::GLVertexAttribI1iv, index, v));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI1iv(context, index, v);
+            ContextPrivateVertexAttribI1iv(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, v);
         }
         ANGLE_CAPTURE_GL(VertexAttribI1iv, isCallValid, context, index, v);
     }
@@ -278,10 +294,13 @@ void GL_APIENTRY GL_VertexAttribI1ui(GLuint index, GLuint x)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI1ui(context, angle::EntryPoint::GLVertexAttribI1ui, index, x));
+             ValidateVertexAttribI1ui(context->getPrivateState(),
+                                      context->getMutableErrorSetForValidation(),
+                                      angle::EntryPoint::GLVertexAttribI1ui, index, x));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI1ui(context, index, x);
+            ContextPrivateVertexAttribI1ui(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, x);
         }
         ANGLE_CAPTURE_GL(VertexAttribI1ui, isCallValid, context, index, x);
     }
@@ -302,10 +321,13 @@ void GL_APIENTRY GL_VertexAttribI1uiv(GLuint index, const GLuint *v)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI1uiv(context, angle::EntryPoint::GLVertexAttribI1uiv, index, v));
+             ValidateVertexAttribI1uiv(context->getPrivateState(),
+                                       context->getMutableErrorSetForValidation(),
+                                       angle::EntryPoint::GLVertexAttribI1uiv, index, v));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI1uiv(context, index, v);
+            ContextPrivateVertexAttribI1uiv(context->getMutablePrivateState(),
+                                            context->getMutablePrivateStateCache(), index, v);
         }
         ANGLE_CAPTURE_GL(VertexAttribI1uiv, isCallValid, context, index, v);
     }
@@ -326,10 +348,13 @@ void GL_APIENTRY GL_VertexAttribI2i(GLuint index, GLint x, GLint y)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI2i(context, angle::EntryPoint::GLVertexAttribI2i, index, x, y));
+             ValidateVertexAttribI2i(context->getPrivateState(),
+                                     context->getMutableErrorSetForValidation(),
+                                     angle::EntryPoint::GLVertexAttribI2i, index, x, y));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI2i(context, index, x, y);
+            ContextPrivateVertexAttribI2i(context->getMutablePrivateState(),
+                                          context->getMutablePrivateStateCache(), index, x, y);
         }
         ANGLE_CAPTURE_GL(VertexAttribI2i, isCallValid, context, index, x, y);
     }
@@ -350,10 +375,13 @@ void GL_APIENTRY GL_VertexAttribI2iv(GLuint index, const GLint *v)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI2iv(context, angle::EntryPoint::GLVertexAttribI2iv, index, v));
+             ValidateVertexAttribI2iv(context->getPrivateState(),
+                                      context->getMutableErrorSetForValidation(),
+                                      angle::EntryPoint::GLVertexAttribI2iv, index, v));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI2iv(context, index, v);
+            ContextPrivateVertexAttribI2iv(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, v);
         }
         ANGLE_CAPTURE_GL(VertexAttribI2iv, isCallValid, context, index, v);
     }
@@ -374,10 +402,13 @@ void GL_APIENTRY GL_VertexAttribI2ui(GLuint index, GLuint x, GLuint y)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI2ui(context, angle::EntryPoint::GLVertexAttribI2ui, index, x, y));
+             ValidateVertexAttribI2ui(context->getPrivateState(),
+                                      context->getMutableErrorSetForValidation(),
+                                      angle::EntryPoint::GLVertexAttribI2ui, index, x, y));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI2ui(context, index, x, y);
+            ContextPrivateVertexAttribI2ui(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, x, y);
         }
         ANGLE_CAPTURE_GL(VertexAttribI2ui, isCallValid, context, index, x, y);
     }
@@ -398,10 +429,13 @@ void GL_APIENTRY GL_VertexAttribI2uiv(GLuint index, const GLuint *v)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI2uiv(context, angle::EntryPoint::GLVertexAttribI2uiv, index, v));
+             ValidateVertexAttribI2uiv(context->getPrivateState(),
+                                       context->getMutableErrorSetForValidation(),
+                                       angle::EntryPoint::GLVertexAttribI2uiv, index, v));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI2uiv(context, index, v);
+            ContextPrivateVertexAttribI2uiv(context->getMutablePrivateState(),
+                                            context->getMutablePrivateStateCache(), index, v);
         }
         ANGLE_CAPTURE_GL(VertexAttribI2uiv, isCallValid, context, index, v);
     }
@@ -420,12 +454,15 @@ void GL_APIENTRY GL_VertexAttribI3i(GLuint index, GLint x, GLint y, GLint z)
 
     if (context)
     {
-        bool isCallValid = (context->skipValidation() ||
-                            ValidateVertexAttribI3i(context, angle::EntryPoint::GLVertexAttribI3i,
-                                                    index, x, y, z));
+        bool isCallValid =
+            (context->skipValidation() ||
+             ValidateVertexAttribI3i(context->getPrivateState(),
+                                     context->getMutableErrorSetForValidation(),
+                                     angle::EntryPoint::GLVertexAttribI3i, index, x, y, z));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI3i(context, index, x, y, z);
+            ContextPrivateVertexAttribI3i(context->getMutablePrivateState(),
+                                          context->getMutablePrivateStateCache(), index, x, y, z);
         }
         ANGLE_CAPTURE_GL(VertexAttribI3i, isCallValid, context, index, x, y, z);
     }
@@ -446,10 +483,13 @@ void GL_APIENTRY GL_VertexAttribI3iv(GLuint index, const GLint *v)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI3iv(context, angle::EntryPoint::GLVertexAttribI3iv, index, v));
+             ValidateVertexAttribI3iv(context->getPrivateState(),
+                                      context->getMutableErrorSetForValidation(),
+                                      angle::EntryPoint::GLVertexAttribI3iv, index, v));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI3iv(context, index, v);
+            ContextPrivateVertexAttribI3iv(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, v);
         }
         ANGLE_CAPTURE_GL(VertexAttribI3iv, isCallValid, context, index, v);
     }
@@ -468,12 +508,15 @@ void GL_APIENTRY GL_VertexAttribI3ui(GLuint index, GLuint x, GLuint y, GLuint z)
 
     if (context)
     {
-        bool isCallValid = (context->skipValidation() ||
-                            ValidateVertexAttribI3ui(context, angle::EntryPoint::GLVertexAttribI3ui,
-                                                     index, x, y, z));
+        bool isCallValid =
+            (context->skipValidation() ||
+             ValidateVertexAttribI3ui(context->getPrivateState(),
+                                      context->getMutableErrorSetForValidation(),
+                                      angle::EntryPoint::GLVertexAttribI3ui, index, x, y, z));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI3ui(context, index, x, y, z);
+            ContextPrivateVertexAttribI3ui(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, x, y, z);
         }
         ANGLE_CAPTURE_GL(VertexAttribI3ui, isCallValid, context, index, x, y, z);
     }
@@ -494,10 +537,13 @@ void GL_APIENTRY GL_VertexAttribI3uiv(GLuint index, const GLuint *v)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI3uiv(context, angle::EntryPoint::GLVertexAttribI3uiv, index, v));
+             ValidateVertexAttribI3uiv(context->getPrivateState(),
+                                       context->getMutableErrorSetForValidation(),
+                                       angle::EntryPoint::GLVertexAttribI3uiv, index, v));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI3uiv(context, index, v);
+            ContextPrivateVertexAttribI3uiv(context->getMutablePrivateState(),
+                                            context->getMutablePrivateStateCache(), index, v);
         }
         ANGLE_CAPTURE_GL(VertexAttribI3uiv, isCallValid, context, index, v);
     }
@@ -518,10 +564,13 @@ void GL_APIENTRY GL_VertexAttribI4bv(GLuint index, const GLbyte *v)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI4bv(context, angle::EntryPoint::GLVertexAttribI4bv, index, v));
+             ValidateVertexAttribI4bv(context->getPrivateState(),
+                                      context->getMutableErrorSetForValidation(),
+                                      angle::EntryPoint::GLVertexAttribI4bv, index, v));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI4bv(context, index, v);
+            ContextPrivateVertexAttribI4bv(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, v);
         }
         ANGLE_CAPTURE_GL(VertexAttribI4bv, isCallValid, context, index, v);
     }
@@ -542,10 +591,13 @@ void GL_APIENTRY GL_VertexAttribI4sv(GLuint index, const GLshort *v)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI4sv(context, angle::EntryPoint::GLVertexAttribI4sv, index, v));
+             ValidateVertexAttribI4sv(context->getPrivateState(),
+                                      context->getMutableErrorSetForValidation(),
+                                      angle::EntryPoint::GLVertexAttribI4sv, index, v));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI4sv(context, index, v);
+            ContextPrivateVertexAttribI4sv(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, v);
         }
         ANGLE_CAPTURE_GL(VertexAttribI4sv, isCallValid, context, index, v);
     }
@@ -566,10 +618,13 @@ void GL_APIENTRY GL_VertexAttribI4ubv(GLuint index, const GLubyte *v)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI4ubv(context, angle::EntryPoint::GLVertexAttribI4ubv, index, v));
+             ValidateVertexAttribI4ubv(context->getPrivateState(),
+                                       context->getMutableErrorSetForValidation(),
+                                       angle::EntryPoint::GLVertexAttribI4ubv, index, v));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI4ubv(context, index, v);
+            ContextPrivateVertexAttribI4ubv(context->getMutablePrivateState(),
+                                            context->getMutablePrivateStateCache(), index, v);
         }
         ANGLE_CAPTURE_GL(VertexAttribI4ubv, isCallValid, context, index, v);
     }
@@ -590,10 +645,13 @@ void GL_APIENTRY GL_VertexAttribI4usv(GLuint index, const GLushort *v)
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribI4usv(context, angle::EntryPoint::GLVertexAttribI4usv, index, v));
+             ValidateVertexAttribI4usv(context->getPrivateState(),
+                                       context->getMutableErrorSetForValidation(),
+                                       angle::EntryPoint::GLVertexAttribI4usv, index, v));
         if (isCallValid)
         {
-            ContextLocalVertexAttribI4usv(context, index, v);
+            ContextPrivateVertexAttribI4usv(context->getMutablePrivateState(),
+                                            context->getMutablePrivateStateCache(), index, v);
         }
         ANGLE_CAPTURE_GL(VertexAttribI4usv, isCallValid, context, index, v);
     }
@@ -648,11 +706,13 @@ void GL_APIENTRY GL_PrimitiveRestartIndex(GLuint index)
     if (context)
     {
         SCOPED_SHARE_CONTEXT_LOCK(context);
-        bool isCallValid = (context->skipValidation() ||
-                            (ValidatePixelLocalStorageInactive(
-                                 context, angle::EntryPoint::GLPrimitiveRestartIndex) &&
-                             ValidatePrimitiveRestartIndex(
-                                 context, angle::EntryPoint::GLPrimitiveRestartIndex, index)));
+        bool isCallValid =
+            (context->skipValidation() ||
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLPrimitiveRestartIndex) &&
+              ValidatePrimitiveRestartIndex(context, angle::EntryPoint::GLPrimitiveRestartIndex,
+                                            index)));
         if (isCallValid)
         {
             context->primitiveRestartIndex(index);
@@ -687,12 +747,14 @@ void GL_APIENTRY GL_MultiDrawElementsBaseVertex(GLenum mode,
         PrimitiveMode modePacked    = PackParam<PrimitiveMode>(mode);
         DrawElementsType typePacked = PackParam<DrawElementsType>(type);
         SCOPED_SHARE_CONTEXT_LOCK(context);
-        bool isCallValid = (context->skipValidation() ||
-                            (ValidatePixelLocalStorageInactive(
-                                 context, angle::EntryPoint::GLMultiDrawElementsBaseVertex) &&
-                             ValidateMultiDrawElementsBaseVertex(
-                                 context, angle::EntryPoint::GLMultiDrawElementsBaseVertex,
-                                 modePacked, count, typePacked, indices, drawcount, basevertex)));
+        bool isCallValid =
+            (context->skipValidation() ||
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLMultiDrawElementsBaseVertex) &&
+              ValidateMultiDrawElementsBaseVertex(
+                  context, angle::EntryPoint::GLMultiDrawElementsBaseVertex, modePacked, count,
+                  typePacked, indices, drawcount, basevertex)));
         if (isCallValid)
         {
             context->multiDrawElementsBaseVertex(modePacked, count, typePacked, indices, drawcount,
@@ -719,11 +781,16 @@ void GL_APIENTRY GL_ProvokingVertex(GLenum mode)
         ProvokingVertexConvention modePacked = PackParam<ProvokingVertexConvention>(mode);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLProvokingVertex) &&
-              ValidateProvokingVertex(context, angle::EntryPoint::GLProvokingVertex, modePacked)));
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLProvokingVertex) &&
+              ValidateProvokingVertex(context->getPrivateState(),
+                                      context->getMutableErrorSetForValidation(),
+                                      angle::EntryPoint::GLProvokingVertex, modePacked)));
         if (isCallValid)
         {
-            ContextLocalProvokingVertex(context, modePacked);
+            ContextPrivateProvokingVertex(context->getMutablePrivateState(),
+                                          context->getMutablePrivateStateCache(), modePacked);
         }
         ANGLE_CAPTURE_GL(ProvokingVertex, isCallValid, context, modePacked);
     }
@@ -752,12 +819,14 @@ void GL_APIENTRY GL_TexImage2DMultisample(GLenum target,
     if (context)
     {
         SCOPED_SHARE_CONTEXT_LOCK(context);
-        bool isCallValid = (context->skipValidation() ||
-                            (ValidatePixelLocalStorageInactive(
-                                 context, angle::EntryPoint::GLTexImage2DMultisample) &&
-                             ValidateTexImage2DMultisample(
-                                 context, angle::EntryPoint::GLTexImage2DMultisample, target,
-                                 samples, internalformat, width, height, fixedsamplelocations)));
+        bool isCallValid =
+            (context->skipValidation() ||
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLTexImage2DMultisample) &&
+              ValidateTexImage2DMultisample(context, angle::EntryPoint::GLTexImage2DMultisample,
+                                            target, samples, internalformat, width, height,
+                                            fixedsamplelocations)));
         if (isCallValid)
         {
             context->texImage2DMultisample(target, samples, internalformat, width, height,
@@ -794,7 +863,8 @@ void GL_APIENTRY GL_TexImage3DMultisample(GLenum target,
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context,
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
                                                 angle::EntryPoint::GLTexImage3DMultisample) &&
               ValidateTexImage3DMultisample(context, angle::EntryPoint::GLTexImage3DMultisample,
                                             target, samples, internalformat, width, height, depth,
@@ -829,12 +899,14 @@ void GL_APIENTRY GL_BindFragDataLocationIndexed(GLuint program,
     {
         ShaderProgramID programPacked = PackParam<ShaderProgramID>(program);
         SCOPED_SHARE_CONTEXT_LOCK(context);
-        bool isCallValid = (context->skipValidation() ||
-                            (ValidatePixelLocalStorageInactive(
-                                 context, angle::EntryPoint::GLBindFragDataLocationIndexed) &&
-                             ValidateBindFragDataLocationIndexed(
-                                 context, angle::EntryPoint::GLBindFragDataLocationIndexed,
-                                 programPacked, colorNumber, index, name)));
+        bool isCallValid =
+            (context->skipValidation() ||
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLBindFragDataLocationIndexed) &&
+              ValidateBindFragDataLocationIndexed(context,
+                                                  angle::EntryPoint::GLBindFragDataLocationIndexed,
+                                                  programPacked, colorNumber, index, name)));
         if (isCallValid)
         {
             context->bindFragDataLocationIndexed(programPacked, colorNumber, index, name);
@@ -860,7 +932,9 @@ void GL_APIENTRY GL_ColorP3ui(GLenum type, GLuint color)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLColorP3ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLColorP3ui) &&
               ValidateColorP3ui(context, angle::EntryPoint::GLColorP3ui, type, color)));
         if (isCallValid)
         {
@@ -886,7 +960,9 @@ void GL_APIENTRY GL_ColorP3uiv(GLenum type, const GLuint *color)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLColorP3uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLColorP3uiv) &&
               ValidateColorP3uiv(context, angle::EntryPoint::GLColorP3uiv, type, color)));
         if (isCallValid)
         {
@@ -912,7 +988,9 @@ void GL_APIENTRY GL_ColorP4ui(GLenum type, GLuint color)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLColorP4ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLColorP4ui) &&
               ValidateColorP4ui(context, angle::EntryPoint::GLColorP4ui, type, color)));
         if (isCallValid)
         {
@@ -938,7 +1016,9 @@ void GL_APIENTRY GL_ColorP4uiv(GLenum type, const GLuint *color)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLColorP4uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLColorP4uiv) &&
               ValidateColorP4uiv(context, angle::EntryPoint::GLColorP4uiv, type, color)));
         if (isCallValid)
         {
@@ -1053,7 +1133,9 @@ void GL_APIENTRY GL_MultiTexCoordP1ui(GLenum texture, GLenum type, GLuint coords
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLMultiTexCoordP1ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLMultiTexCoordP1ui) &&
               ValidateMultiTexCoordP1ui(context, angle::EntryPoint::GLMultiTexCoordP1ui, texture,
                                         type, coords)));
         if (isCallValid)
@@ -1082,7 +1164,9 @@ void GL_APIENTRY GL_MultiTexCoordP1uiv(GLenum texture, GLenum type, const GLuint
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLMultiTexCoordP1uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLMultiTexCoordP1uiv) &&
               ValidateMultiTexCoordP1uiv(context, angle::EntryPoint::GLMultiTexCoordP1uiv, texture,
                                          type, coords)));
         if (isCallValid)
@@ -1110,7 +1194,9 @@ void GL_APIENTRY GL_MultiTexCoordP2ui(GLenum texture, GLenum type, GLuint coords
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLMultiTexCoordP2ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLMultiTexCoordP2ui) &&
               ValidateMultiTexCoordP2ui(context, angle::EntryPoint::GLMultiTexCoordP2ui, texture,
                                         type, coords)));
         if (isCallValid)
@@ -1139,7 +1225,9 @@ void GL_APIENTRY GL_MultiTexCoordP2uiv(GLenum texture, GLenum type, const GLuint
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLMultiTexCoordP2uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLMultiTexCoordP2uiv) &&
               ValidateMultiTexCoordP2uiv(context, angle::EntryPoint::GLMultiTexCoordP2uiv, texture,
                                          type, coords)));
         if (isCallValid)
@@ -1167,7 +1255,9 @@ void GL_APIENTRY GL_MultiTexCoordP3ui(GLenum texture, GLenum type, GLuint coords
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLMultiTexCoordP3ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLMultiTexCoordP3ui) &&
               ValidateMultiTexCoordP3ui(context, angle::EntryPoint::GLMultiTexCoordP3ui, texture,
                                         type, coords)));
         if (isCallValid)
@@ -1196,7 +1286,9 @@ void GL_APIENTRY GL_MultiTexCoordP3uiv(GLenum texture, GLenum type, const GLuint
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLMultiTexCoordP3uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLMultiTexCoordP3uiv) &&
               ValidateMultiTexCoordP3uiv(context, angle::EntryPoint::GLMultiTexCoordP3uiv, texture,
                                          type, coords)));
         if (isCallValid)
@@ -1224,7 +1316,9 @@ void GL_APIENTRY GL_MultiTexCoordP4ui(GLenum texture, GLenum type, GLuint coords
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLMultiTexCoordP4ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLMultiTexCoordP4ui) &&
               ValidateMultiTexCoordP4ui(context, angle::EntryPoint::GLMultiTexCoordP4ui, texture,
                                         type, coords)));
         if (isCallValid)
@@ -1253,7 +1347,9 @@ void GL_APIENTRY GL_MultiTexCoordP4uiv(GLenum texture, GLenum type, const GLuint
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLMultiTexCoordP4uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLMultiTexCoordP4uiv) &&
               ValidateMultiTexCoordP4uiv(context, angle::EntryPoint::GLMultiTexCoordP4uiv, texture,
                                          type, coords)));
         if (isCallValid)
@@ -1280,7 +1376,9 @@ void GL_APIENTRY GL_NormalP3ui(GLenum type, GLuint coords)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLNormalP3ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLNormalP3ui) &&
               ValidateNormalP3ui(context, angle::EntryPoint::GLNormalP3ui, type, coords)));
         if (isCallValid)
         {
@@ -1306,7 +1404,9 @@ void GL_APIENTRY GL_NormalP3uiv(GLenum type, const GLuint *coords)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLNormalP3uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLNormalP3uiv) &&
               ValidateNormalP3uiv(context, angle::EntryPoint::GLNormalP3uiv, type, coords)));
         if (isCallValid)
         {
@@ -1334,7 +1434,9 @@ void GL_APIENTRY GL_QueryCounter(GLuint id, GLenum target)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLQueryCounter) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLQueryCounter) &&
               ValidateQueryCounter(context, angle::EntryPoint::GLQueryCounter, idPacked,
                                    targetPacked)));
         if (isCallValid)
@@ -1361,7 +1463,9 @@ void GL_APIENTRY GL_SecondaryColorP3ui(GLenum type, GLuint color)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLSecondaryColorP3ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLSecondaryColorP3ui) &&
               ValidateSecondaryColorP3ui(context, angle::EntryPoint::GLSecondaryColorP3ui, type,
                                          color)));
         if (isCallValid)
@@ -1386,11 +1490,13 @@ void GL_APIENTRY GL_SecondaryColorP3uiv(GLenum type, const GLuint *color)
     if (context)
     {
         SCOPED_SHARE_CONTEXT_LOCK(context);
-        bool isCallValid = (context->skipValidation() ||
-                            (ValidatePixelLocalStorageInactive(
-                                 context, angle::EntryPoint::GLSecondaryColorP3uiv) &&
-                             ValidateSecondaryColorP3uiv(
-                                 context, angle::EntryPoint::GLSecondaryColorP3uiv, type, color)));
+        bool isCallValid =
+            (context->skipValidation() ||
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLSecondaryColorP3uiv) &&
+              ValidateSecondaryColorP3uiv(context, angle::EntryPoint::GLSecondaryColorP3uiv, type,
+                                          color)));
         if (isCallValid)
         {
             context->secondaryColorP3uiv(type, color);
@@ -1415,7 +1521,9 @@ void GL_APIENTRY GL_TexCoordP1ui(GLenum type, GLuint coords)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLTexCoordP1ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLTexCoordP1ui) &&
               ValidateTexCoordP1ui(context, angle::EntryPoint::GLTexCoordP1ui, type, coords)));
         if (isCallValid)
         {
@@ -1441,7 +1549,9 @@ void GL_APIENTRY GL_TexCoordP1uiv(GLenum type, const GLuint *coords)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLTexCoordP1uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLTexCoordP1uiv) &&
               ValidateTexCoordP1uiv(context, angle::EntryPoint::GLTexCoordP1uiv, type, coords)));
         if (isCallValid)
         {
@@ -1467,7 +1577,9 @@ void GL_APIENTRY GL_TexCoordP2ui(GLenum type, GLuint coords)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLTexCoordP2ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLTexCoordP2ui) &&
               ValidateTexCoordP2ui(context, angle::EntryPoint::GLTexCoordP2ui, type, coords)));
         if (isCallValid)
         {
@@ -1493,7 +1605,9 @@ void GL_APIENTRY GL_TexCoordP2uiv(GLenum type, const GLuint *coords)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLTexCoordP2uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLTexCoordP2uiv) &&
               ValidateTexCoordP2uiv(context, angle::EntryPoint::GLTexCoordP2uiv, type, coords)));
         if (isCallValid)
         {
@@ -1519,7 +1633,9 @@ void GL_APIENTRY GL_TexCoordP3ui(GLenum type, GLuint coords)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLTexCoordP3ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLTexCoordP3ui) &&
               ValidateTexCoordP3ui(context, angle::EntryPoint::GLTexCoordP3ui, type, coords)));
         if (isCallValid)
         {
@@ -1545,7 +1661,9 @@ void GL_APIENTRY GL_TexCoordP3uiv(GLenum type, const GLuint *coords)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLTexCoordP3uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLTexCoordP3uiv) &&
               ValidateTexCoordP3uiv(context, angle::EntryPoint::GLTexCoordP3uiv, type, coords)));
         if (isCallValid)
         {
@@ -1571,7 +1689,9 @@ void GL_APIENTRY GL_TexCoordP4ui(GLenum type, GLuint coords)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLTexCoordP4ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLTexCoordP4ui) &&
               ValidateTexCoordP4ui(context, angle::EntryPoint::GLTexCoordP4ui, type, coords)));
         if (isCallValid)
         {
@@ -1597,7 +1717,9 @@ void GL_APIENTRY GL_TexCoordP4uiv(GLenum type, const GLuint *coords)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLTexCoordP4uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLTexCoordP4uiv) &&
               ValidateTexCoordP4uiv(context, angle::EntryPoint::GLTexCoordP4uiv, type, coords)));
         if (isCallValid)
         {
@@ -1622,12 +1744,16 @@ void GL_APIENTRY GL_VertexAttribP1ui(GLuint index, GLenum type, GLboolean normal
 
     if (context)
     {
-        bool isCallValid = (context->skipValidation() ||
-                            ValidateVertexAttribP1ui(context, angle::EntryPoint::GLVertexAttribP1ui,
-                                                     index, type, normalized, value));
+        bool isCallValid =
+            (context->skipValidation() ||
+             ValidateVertexAttribP1ui(
+                 context->getPrivateState(), context->getMutableErrorSetForValidation(),
+                 angle::EntryPoint::GLVertexAttribP1ui, index, type, normalized, value));
         if (isCallValid)
         {
-            ContextLocalVertexAttribP1ui(context, index, type, normalized, value);
+            ContextPrivateVertexAttribP1ui(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, type,
+                                           normalized, value);
         }
         ANGLE_CAPTURE_GL(VertexAttribP1ui, isCallValid, context, index, type, normalized, value);
     }
@@ -1653,11 +1779,14 @@ void GL_APIENTRY GL_VertexAttribP1uiv(GLuint index,
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribP1uiv(context, angle::EntryPoint::GLVertexAttribP1uiv, index, type,
-                                       normalized, value));
+             ValidateVertexAttribP1uiv(
+                 context->getPrivateState(), context->getMutableErrorSetForValidation(),
+                 angle::EntryPoint::GLVertexAttribP1uiv, index, type, normalized, value));
         if (isCallValid)
         {
-            ContextLocalVertexAttribP1uiv(context, index, type, normalized, value);
+            ContextPrivateVertexAttribP1uiv(context->getMutablePrivateState(),
+                                            context->getMutablePrivateStateCache(), index, type,
+                                            normalized, value);
         }
         ANGLE_CAPTURE_GL(VertexAttribP1uiv, isCallValid, context, index, type, normalized, value);
     }
@@ -1678,12 +1807,16 @@ void GL_APIENTRY GL_VertexAttribP2ui(GLuint index, GLenum type, GLboolean normal
 
     if (context)
     {
-        bool isCallValid = (context->skipValidation() ||
-                            ValidateVertexAttribP2ui(context, angle::EntryPoint::GLVertexAttribP2ui,
-                                                     index, type, normalized, value));
+        bool isCallValid =
+            (context->skipValidation() ||
+             ValidateVertexAttribP2ui(
+                 context->getPrivateState(), context->getMutableErrorSetForValidation(),
+                 angle::EntryPoint::GLVertexAttribP2ui, index, type, normalized, value));
         if (isCallValid)
         {
-            ContextLocalVertexAttribP2ui(context, index, type, normalized, value);
+            ContextPrivateVertexAttribP2ui(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, type,
+                                           normalized, value);
         }
         ANGLE_CAPTURE_GL(VertexAttribP2ui, isCallValid, context, index, type, normalized, value);
     }
@@ -1709,11 +1842,14 @@ void GL_APIENTRY GL_VertexAttribP2uiv(GLuint index,
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribP2uiv(context, angle::EntryPoint::GLVertexAttribP2uiv, index, type,
-                                       normalized, value));
+             ValidateVertexAttribP2uiv(
+                 context->getPrivateState(), context->getMutableErrorSetForValidation(),
+                 angle::EntryPoint::GLVertexAttribP2uiv, index, type, normalized, value));
         if (isCallValid)
         {
-            ContextLocalVertexAttribP2uiv(context, index, type, normalized, value);
+            ContextPrivateVertexAttribP2uiv(context->getMutablePrivateState(),
+                                            context->getMutablePrivateStateCache(), index, type,
+                                            normalized, value);
         }
         ANGLE_CAPTURE_GL(VertexAttribP2uiv, isCallValid, context, index, type, normalized, value);
     }
@@ -1734,12 +1870,16 @@ void GL_APIENTRY GL_VertexAttribP3ui(GLuint index, GLenum type, GLboolean normal
 
     if (context)
     {
-        bool isCallValid = (context->skipValidation() ||
-                            ValidateVertexAttribP3ui(context, angle::EntryPoint::GLVertexAttribP3ui,
-                                                     index, type, normalized, value));
+        bool isCallValid =
+            (context->skipValidation() ||
+             ValidateVertexAttribP3ui(
+                 context->getPrivateState(), context->getMutableErrorSetForValidation(),
+                 angle::EntryPoint::GLVertexAttribP3ui, index, type, normalized, value));
         if (isCallValid)
         {
-            ContextLocalVertexAttribP3ui(context, index, type, normalized, value);
+            ContextPrivateVertexAttribP3ui(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, type,
+                                           normalized, value);
         }
         ANGLE_CAPTURE_GL(VertexAttribP3ui, isCallValid, context, index, type, normalized, value);
     }
@@ -1765,11 +1905,14 @@ void GL_APIENTRY GL_VertexAttribP3uiv(GLuint index,
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribP3uiv(context, angle::EntryPoint::GLVertexAttribP3uiv, index, type,
-                                       normalized, value));
+             ValidateVertexAttribP3uiv(
+                 context->getPrivateState(), context->getMutableErrorSetForValidation(),
+                 angle::EntryPoint::GLVertexAttribP3uiv, index, type, normalized, value));
         if (isCallValid)
         {
-            ContextLocalVertexAttribP3uiv(context, index, type, normalized, value);
+            ContextPrivateVertexAttribP3uiv(context->getMutablePrivateState(),
+                                            context->getMutablePrivateStateCache(), index, type,
+                                            normalized, value);
         }
         ANGLE_CAPTURE_GL(VertexAttribP3uiv, isCallValid, context, index, type, normalized, value);
     }
@@ -1790,12 +1933,16 @@ void GL_APIENTRY GL_VertexAttribP4ui(GLuint index, GLenum type, GLboolean normal
 
     if (context)
     {
-        bool isCallValid = (context->skipValidation() ||
-                            ValidateVertexAttribP4ui(context, angle::EntryPoint::GLVertexAttribP4ui,
-                                                     index, type, normalized, value));
+        bool isCallValid =
+            (context->skipValidation() ||
+             ValidateVertexAttribP4ui(
+                 context->getPrivateState(), context->getMutableErrorSetForValidation(),
+                 angle::EntryPoint::GLVertexAttribP4ui, index, type, normalized, value));
         if (isCallValid)
         {
-            ContextLocalVertexAttribP4ui(context, index, type, normalized, value);
+            ContextPrivateVertexAttribP4ui(context->getMutablePrivateState(),
+                                           context->getMutablePrivateStateCache(), index, type,
+                                           normalized, value);
         }
         ANGLE_CAPTURE_GL(VertexAttribP4ui, isCallValid, context, index, type, normalized, value);
     }
@@ -1821,11 +1968,14 @@ void GL_APIENTRY GL_VertexAttribP4uiv(GLuint index,
     {
         bool isCallValid =
             (context->skipValidation() ||
-             ValidateVertexAttribP4uiv(context, angle::EntryPoint::GLVertexAttribP4uiv, index, type,
-                                       normalized, value));
+             ValidateVertexAttribP4uiv(
+                 context->getPrivateState(), context->getMutableErrorSetForValidation(),
+                 angle::EntryPoint::GLVertexAttribP4uiv, index, type, normalized, value));
         if (isCallValid)
         {
-            ContextLocalVertexAttribP4uiv(context, index, type, normalized, value);
+            ContextPrivateVertexAttribP4uiv(context->getMutablePrivateState(),
+                                            context->getMutablePrivateStateCache(), index, type,
+                                            normalized, value);
         }
         ANGLE_CAPTURE_GL(VertexAttribP4uiv, isCallValid, context, index, type, normalized, value);
     }
@@ -1847,7 +1997,9 @@ void GL_APIENTRY GL_VertexP2ui(GLenum type, GLuint value)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLVertexP2ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLVertexP2ui) &&
               ValidateVertexP2ui(context, angle::EntryPoint::GLVertexP2ui, type, value)));
         if (isCallValid)
         {
@@ -1873,7 +2025,9 @@ void GL_APIENTRY GL_VertexP2uiv(GLenum type, const GLuint *value)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLVertexP2uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLVertexP2uiv) &&
               ValidateVertexP2uiv(context, angle::EntryPoint::GLVertexP2uiv, type, value)));
         if (isCallValid)
         {
@@ -1899,7 +2053,9 @@ void GL_APIENTRY GL_VertexP3ui(GLenum type, GLuint value)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLVertexP3ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLVertexP3ui) &&
               ValidateVertexP3ui(context, angle::EntryPoint::GLVertexP3ui, type, value)));
         if (isCallValid)
         {
@@ -1925,7 +2081,9 @@ void GL_APIENTRY GL_VertexP3uiv(GLenum type, const GLuint *value)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLVertexP3uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLVertexP3uiv) &&
               ValidateVertexP3uiv(context, angle::EntryPoint::GLVertexP3uiv, type, value)));
         if (isCallValid)
         {
@@ -1951,7 +2109,9 @@ void GL_APIENTRY GL_VertexP4ui(GLenum type, GLuint value)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLVertexP4ui) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLVertexP4ui) &&
               ValidateVertexP4ui(context, angle::EntryPoint::GLVertexP4ui, type, value)));
         if (isCallValid)
         {
@@ -1977,7 +2137,9 @@ void GL_APIENTRY GL_VertexP4uiv(GLenum type, const GLuint *value)
         SCOPED_SHARE_CONTEXT_LOCK(context);
         bool isCallValid =
             (context->skipValidation() ||
-             (ValidatePixelLocalStorageInactive(context, angle::EntryPoint::GLVertexP4uiv) &&
+             (ValidatePixelLocalStorageInactive(context->getPrivateState(),
+                                                context->getMutableErrorSetForValidation(),
+                                                angle::EntryPoint::GLVertexP4uiv) &&
               ValidateVertexP4uiv(context, angle::EntryPoint::GLVertexP4uiv, type, value)));
         if (isCallValid)
         {
