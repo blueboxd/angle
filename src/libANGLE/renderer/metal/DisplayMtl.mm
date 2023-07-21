@@ -322,9 +322,9 @@ egl::Error DisplayMtl::waitNative(const gl::Context *context, EGLint engine)
 
 egl::Error DisplayMtl::waitUntilWorkScheduled()
 {
-    for (auto context : mState.contextSet)
+    for (auto context : mState.contextMap)
     {
-        auto contextMtl = GetImplAs<ContextMtl>(context);
+        auto contextMtl = GetImplAs<ContextMtl>(context.second);
         contextMtl->flushCommandBuffer(mtl::WaitUntilScheduled);
     }
     return egl::NoError();
@@ -928,6 +928,7 @@ void DisplayMtl::initializeExtensions() const
     mNativeExtensions.framebufferBlitANGLE          = true;
     mNativeExtensions.framebufferBlitNV             = true;
     mNativeExtensions.framebufferMultisampleANGLE   = true;
+    mNativeExtensions.polygonModeANGLE              = true;
     mNativeExtensions.polygonOffsetClampEXT         = true;
     mNativeExtensions.stencilTexturingANGLE         = true;
     mNativeExtensions.copyTextureCHROMIUM           = true;
@@ -1008,6 +1009,30 @@ void DisplayMtl::initializeExtensions() const
     mNativeExtensions.texture3DOES = true;
 
     mNativeExtensions.sampleVariablesOES = true;
+
+    if (ANGLE_APPLE_AVAILABLE_XCI(11.0, 14.0, 14.0))
+    {
+        mNativeExtensions.shaderMultisampleInterpolationOES =
+            [mMetalDevice supportsPullModelInterpolation];
+        if (mNativeExtensions.shaderMultisampleInterpolationOES)
+        {
+            mNativeCaps.subPixelInterpolationOffsetBits = 4;
+            if (supportsAppleGPUFamily(1))
+            {
+                mNativeCaps.minInterpolationOffset = -0.5f;
+                mNativeCaps.maxInterpolationOffset = +0.5f;
+            }
+            else
+            {
+                // On non-Apple GPUs, the actual range is usually
+                // [-0.5, +0.4375] but due to framebuffer Y-flip
+                // the effective range for the Y direction will be
+                // [-0.4375, +0.5] when the default FBO is bound.
+                mNativeCaps.minInterpolationOffset = -0.4375f;  // -0.5 + (2 ^ -4)
+                mNativeCaps.maxInterpolationOffset = +0.4375f;  // +0.5 - (2 ^ -4)
+            }
+        }
+    }
 
     mNativeExtensions.shaderNoperspectiveInterpolationNV = true;
 
@@ -1277,6 +1302,8 @@ void DisplayMtl::initializeFeatures()
     ANGLE_FEATURE_CONDITION(&mFeatures, alwaysPreferStagedTextureUploads, true);
     ANGLE_FEATURE_CONDITION(&mFeatures, disableStagedInitializationOfPackedTextureFormats,
                             isIntel() || isAMD());
+
+    ANGLE_FEATURE_CONDITION((&mFeatures), generateShareableShaders, true);
 
     ApplyFeatureOverrides(&mFeatures, getState());
 }

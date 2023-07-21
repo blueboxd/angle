@@ -969,6 +969,14 @@
             "issue": "https://anglebug.com/7320"
         },
         {
+            "name": "supports_sampler_2d_view_of_3d",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the sampler2DViewOf3D feature of VK_EXT_image_2d_view_of_3d"
+            ],
+            "issue": "https://anglebug.com/7320"
+        },
+        {
             "name": "supports_imageless_framebuffer",
             "category": "Features",
             "description": [
@@ -1204,6 +1212,20 @@
                 "Use VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT for initializing ",
                 "SecondaryCommandPools when using VulkanSecondaryCommandBuffer. "
             ]
+        },
+        {
+            "name": "enable_pipeline_cache_data_compression",
+            "category": "Features",
+            "description":["enable pipeline cache data compression."],
+            "issue": "https://issuetracker.google.com/258207403"
+        },
+        {
+            "name": "limit_sample_count_to_2",
+            "category": "Workarounds",
+            "description": [
+              "Limit sample count to 2 to save memory on low end devices."
+            ],
+            "issue": "http://anglebug.com/8162"
         }
     ]
 }

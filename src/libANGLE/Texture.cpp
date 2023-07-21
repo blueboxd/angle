@@ -16,6 +16,7 @@
 #include "libANGLE/State.h"
 #include "libANGLE/Surface.h"
 #include "libANGLE/formatutils.h"
+#include "libANGLE/renderer/ContextImpl.h"
 #include "libANGLE/renderer/GLImplFactory.h"
 #include "libANGLE/renderer/TextureImpl.h"
 
@@ -123,12 +124,12 @@ TextureState::TextureState(TextureType type)
       mMaxLevel(kInitialMaxLevel),
       mDepthStencilTextureMode(GL_DEPTH_COMPONENT),
       mHasBeenBoundAsImage(false),
-      mIs3DAndHasBeenBoundAs2DImage(false),
       mHasBeenBoundAsAttachment(false),
       mImmutableFormat(false),
       mImmutableLevels(0),
       mUsage(GL_NONE),
       mHasProtectedContent(false),
+      mRenderabilityValidation(true),
       mImageDescs((IMPLEMENTATION_MAX_TEXTURE_LEVELS + 1) * (type == TextureType::CubeMap ? 6 : 1)),
       mCropRect(0, 0, 0, 0),
       mGenerateMipmapHint(GL_FALSE),
@@ -770,6 +771,8 @@ Texture::Texture(rx::GLImplFactory *factory, TextureID id, TextureType type)
 
 void Texture::onDestroy(const Context *context)
 {
+    onStateChange(angle::SubjectMessage::TextureIDDeleted);
+
     if (mBoundSurface)
     {
         ANGLE_SWALLOW_ERR(mBoundSurface->releaseTexImage(context, EGL_BACK_BUFFER));
@@ -1101,6 +1104,12 @@ void Texture::setProtectedContent(Context *context, bool hasProtectedContent)
 bool Texture::hasProtectedContent() const
 {
     return mState.mHasProtectedContent;
+}
+
+void Texture::setRenderabilityValidation(Context *context, bool renderabilityValidation)
+{
+    mState.mRenderabilityValidation = renderabilityValidation;
+    signalDirtyState(DIRTY_BIT_RENDERABILITY_VALIDATION_ANGLE);
 }
 
 const TextureState &Texture::getTextureState() const
@@ -2013,6 +2022,19 @@ bool Texture::isRenderable(const Context *context,
         return true;
     }
 
+    // Skip the renderability checks if it is set via glTexParameteri and current
+    // context is less than GLES3. Note that we should not skip the check if the
+    // texture is not renderable at all. Otherwise we would end up rendering to
+    // textures like compressed textures that are not really renderable.
+    if (context->getImplementation()
+            ->getNativeTextureCaps()
+            .get(getAttachmentFormat(binding, imageIndex).info->sizedInternalFormat)
+            .textureAttachment &&
+        !mState.renderabilityValidation() && context->getClientMajorVersion() < 3)
+    {
+        return true;
+    }
+
     return getAttachmentFormat(binding, imageIndex)
         .info->textureAttachmentSupport(context->getClientVersion(), context->getExtensions());
 }
@@ -2485,15 +2507,6 @@ void Texture::onBindAsImageTexture()
     {
         mDirtyBits.set(DIRTY_BIT_BOUND_AS_IMAGE);
         mState.mHasBeenBoundAsImage = true;
-    }
-}
-
-void Texture::onBind3DTextureAs2DImage()
-{
-    if (!mState.mIs3DAndHasBeenBoundAs2DImage)
-    {
-        mDirtyBits.set(DIRTY_BIT_BOUND_AS_IMAGE);
-        mState.mIs3DAndHasBeenBoundAs2DImage = true;
     }
 }
 

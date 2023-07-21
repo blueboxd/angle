@@ -447,6 +447,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     void updateMissingOutputsMask();
     void updateBlendFuncsAndEquations();
     void updateSampleMaskWithRasterizationSamples(const uint32_t rasterizationSamples);
+    void updateAlphaToCoverageWithRasterizationSamples(const uint32_t rasterizationSamples);
     void updateFrameBufferFetchSamples(const uint32_t prevSamples, const uint32_t curSamples);
 
     void handleError(VkResult errorCode,
@@ -457,6 +458,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     angle::Result onIndexBufferChange(const vk::BufferHelper *currentIndexBuffer);
 
     angle::Result flushImpl(const vk::Semaphore *semaphore,
+                            const vk::SharedExternalFence *externalFence,
                             RenderPassClosureReason renderPassClosureReason);
     angle::Result finishImpl(RenderPassClosureReason renderPassClosureReason);
 
@@ -791,6 +793,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     }
 
     const QueueSerial &getLastSubmittedQueueSerial() const { return mLastSubmittedQueueSerial; }
+    const vk::ResourceUse &getSubmittedResourceUse() const { return mSubmittedResourceUse; }
 
     // Uploading mutable mipmap textures is currently restricted to single-context applications.
     bool isEligibleForMutableTextureFlush() const
@@ -1223,7 +1226,9 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
         AllCommands,
     };
 
-    angle::Result submitCommands(const vk::Semaphore *signalSemaphore, Submit submission);
+    angle::Result submitCommands(const vk::Semaphore *signalSemaphore,
+                                 const vk::SharedExternalFence *externalFence,
+                                 Submit submission);
 
     angle::Result synchronizeCpuGpuTime();
     angle::Result traceGpuEventImpl(vk::OutsideRenderPassCommandBuffer *commandBuffer,
@@ -1272,10 +1277,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     angle::Result endRenderPassIfTransformFeedbackBuffer(const vk::BufferHelper *buffer);
     angle::Result endRenderPassIfComputeReadAfterTransformFeedbackWrite();
     angle::Result endRenderPassIfComputeAccessAfterGraphicsImageAccess();
-
-    void populateTransformFeedbackBufferSet(
-        size_t bufferCount,
-        const gl::TransformFeedbackBuffersArray<vk::BufferHelper *> &buffers);
 
     // Update framebuffer's read-only depth feedback loop mode.  Typically called from
     // handleDirtyGraphicsReadOnlyDepthFeedbackLoopMode, but can be called from UtilsVk in functions
@@ -1480,6 +1481,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     QueueSerial mLastSubmittedQueueSerial;
     // All submitted queue serials over the life time of this context.
     vk::ResourceUse mSubmittedResourceUse;
+    // Current active transform feedback buffer queue serial. Invalid if TF not active.
+    QueueSerial mCurrentTransformFeedbackQueueSerial;
 
     // The garbage list for single context use objects. The list will be GPU tracked by next
     // submission queueSerial. Note: Resource based shared object should always be added to
@@ -1506,11 +1509,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // is complete, the front-end calls ContextVk::endEventLogForQuery(), which needs to know which
     // command buffer to call endDebugUtilsLabelEXT() for.
     GraphicsEventCmdBuf mQueryEventType;
-
-    // Transform feedback buffers.
-    angle::FlatUnorderedSet<const vk::BufferHelper *,
-                            gl::IMPLEMENTATION_MAX_TRANSFORM_FEEDBACK_BUFFERS>
-        mCurrentTransformFeedbackBuffers;
 
     // Internal shader library.
     vk::ShaderLibrary mShaderLibrary;
@@ -1612,7 +1610,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 ANGLE_INLINE angle::Result ContextVk::endRenderPassIfTransformFeedbackBuffer(
     const vk::BufferHelper *buffer)
 {
-    if (!buffer || !mCurrentTransformFeedbackBuffers.contains(buffer))
+    if (!mCurrentTransformFeedbackQueueSerial.valid() || !buffer ||
+        !buffer->writtenByCommandBuffer(mCurrentTransformFeedbackQueueSerial))
     {
         return angle::Result::Continue;
     }
@@ -1659,7 +1658,9 @@ ANGLE_INLINE angle::Result ContextVk::onVertexAttributeChange(size_t attribIndex
 
 ANGLE_INLINE bool ContextVk::hasUnsubmittedUse(const vk::ResourceUse &use) const
 {
-    return mCurrentQueueSerialIndex != kInvalidQueueSerialIndex && use > mLastSubmittedQueueSerial;
+    return mCurrentQueueSerialIndex != kInvalidQueueSerialIndex &&
+           use > QueueSerial(mCurrentQueueSerialIndex,
+                             mRenderer->getLastSubmittedSerial(mCurrentQueueSerialIndex));
 }
 
 ANGLE_INLINE bool UseLineRaster(const ContextVk *contextVk, gl::PrimitiveMode mode)

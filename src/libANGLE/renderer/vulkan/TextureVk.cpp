@@ -1520,35 +1520,6 @@ angle::Result TextureVk::setEGLImageTarget(const gl::Context *context,
 
     ANGLE_TRY(initImageViews(contextVk, getImageViewLevelCount()));
 
-    // Transfer the image to this queue if needed
-    uint32_t rendererQueueFamilyIndex = renderer->getQueueFamilyIndex();
-    if (mImage->isQueueChangeNeccesary(rendererQueueFamilyIndex))
-    {
-        vk::ImageLayout newLayout = vk::ImageLayout::AllGraphicsShadersWrite;
-        if (mImage->getUsage() & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
-        {
-            newLayout = vk::ImageLayout::ColorWrite;
-        }
-        else if (mImage->getUsage() & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
-        {
-            newLayout = vk::ImageLayout::DepthWriteStencilWrite;
-        }
-        else if (mImage->getUsage() &
-                 (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT))
-        {
-            newLayout = vk::ImageLayout::AllGraphicsShadersReadOnly;
-        }
-
-        vk::OutsideRenderPassCommandBuffer *commandBuffer;
-        vk::CommandBufferAccess access;
-        access.onExternalAcquireRelease(mImage);
-        ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(access, &commandBuffer));
-        mImage->changeLayoutAndQueue(contextVk, mImage->getAspectFlags(), newLayout,
-                                     rendererQueueFamilyIndex, commandBuffer);
-
-        ANGLE_TRY(contextVk->onEGLImageQueueChange());
-    }
-
     return angle::Result::Continue;
 }
 
@@ -1603,7 +1574,10 @@ void TextureVk::releaseAndDeleteImageAndViews(ContextVk *contextVk)
 {
     if (mImage)
     {
-        releaseStagedUpdates(contextVk);
+        if (mOwnsImage)
+        {
+            releaseStagedUpdates(contextVk);
+        }
         releaseImage(contextVk);
         mImageObserverBinding.bind(nullptr);
         mRequiresMutableStorage = false;
@@ -2448,6 +2422,8 @@ angle::Result TextureVk::getAttachmentRenderTarget(const gl::Context *context,
                             ImageMipLevels::EnabledLevels));
     }
 
+    ANGLE_TRY(performImageQueueTransferIfNecessary(contextVk));
+
     const bool hasRenderToTextureEXT =
         contextVk->getFeatures().supportsMultisampledRenderToSingleSampled.enabled ||
         contextVk->getFeatures().supportsMultisampledRenderToSingleSampledGOOGLEX.enabled;
@@ -2544,6 +2520,40 @@ angle::Result TextureVk::flushImageStagedUpdates(ContextVk *contextVk)
     return mImage->flushStagedUpdates(contextVk, firstLevelGL,
                                       firstLevelGL + getImageViewLevelCount(), firstLayer,
                                       firstLayer + getImageViewLayerCount(), mRedefinedLevels);
+}
+
+angle::Result TextureVk::performImageQueueTransferIfNecessary(ContextVk *contextVk)
+{
+    const RendererVk *renderer = contextVk->getRenderer();
+
+    const uint32_t rendererQueueFamilyIndex = renderer->getQueueFamilyIndex();
+    if (mImage->valid() && mImage->isQueueChangeNeccesary(rendererQueueFamilyIndex))
+    {
+        vk::ImageLayout newLayout = vk::ImageLayout::AllGraphicsShadersWrite;
+        if (mImage->getUsage() & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+        {
+            newLayout = vk::ImageLayout::ColorWrite;
+        }
+        else if (mImage->getUsage() & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
+        {
+            newLayout = vk::ImageLayout::DepthWriteStencilWrite;
+        }
+        else if (mImage->getUsage() &
+                 (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT))
+        {
+            newLayout = vk::ImageLayout::AllGraphicsShadersReadOnly;
+        }
+
+        vk::OutsideRenderPassCommandBuffer *commandBuffer;
+        vk::CommandBufferAccess access;
+        access.onExternalAcquireRelease(mImage);
+        ANGLE_TRY(contextVk->getOutsideRenderPassCommandBuffer(access, &commandBuffer));
+        mImage->changeLayoutAndQueue(contextVk, mImage->getAspectFlags(), newLayout,
+                                     rendererQueueFamilyIndex, commandBuffer);
+        ANGLE_TRY(contextVk->onEGLImageQueueChange());
+    }
+
+    return angle::Result::Continue;
 }
 
 void TextureVk::initSingleLayerRenderTargets(ContextVk *contextVk,
@@ -2710,20 +2720,6 @@ angle::Result TextureVk::respecifyImageStorageIfNecessary(ContextVk *contextVk, 
         mImageCreateFlags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
     }
 
-    if (mState.is3DTextureAndHasBeenBoundAs2DImage())
-    {
-        if (contextVk->getRenderer()->getFeatures().supportsImage2dViewOf3d.enabled)
-        {
-            mImageCreateFlags |= VK_IMAGE_CREATE_2D_VIEW_COMPATIBLE_BIT_EXT;
-        }
-        else
-        {
-            // This image may be used with 2d imageviews, despite being a 3d image
-            // The Vulkan core specification does not permit this behavior
-            // Tolerate the VVL errors and move on
-        }
-    }
-
     // Create a new image if used as attachment for the first time. This must be called before
     // prepareForGenerateMipmap since this changes the format which prepareForGenerateMipmap relies
     // on.
@@ -2862,6 +2858,8 @@ angle::Result TextureVk::syncState(const gl::Context *context,
     }
 
     ANGLE_TRY(respecifyImageStorageIfNecessary(contextVk, source));
+
+    ANGLE_TRY(performImageQueueTransferIfNecessary(contextVk));
 
     // Initialize the image storage and flush the pixel buffer.
     const bool isGenerateMipmap = source == gl::Command::GenerateMipmap;
@@ -3180,6 +3178,11 @@ angle::Result TextureVk::initImage(ContextVk *contextVk,
     uint32_t layerCount;
     gl_vk::GetExtentsAndLayerCount(mState.getType(), firstLevelExtents, &vkExtent, &layerCount);
     GLint samples = mState.getBaseLevelDesc().samples ? mState.getBaseLevelDesc().samples : 1;
+
+    if (contextVk->getFeatures().limitSampleCountTo2.enabled)
+    {
+        samples = std::min(samples, 2);
+    }
 
     if (mState.hasProtectedContent())
     {

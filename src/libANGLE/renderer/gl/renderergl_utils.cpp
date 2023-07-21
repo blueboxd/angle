@@ -155,6 +155,19 @@ bool IsMaliG31OrOlder(const FunctionsGL *functions)
     return number != 0 && number <= 31;
 }
 
+bool IsMaliG72OrG76(const FunctionsGL *functions)
+{
+    int number = getMaliGNumber(functions);
+    return number == 72 || number == 76;
+}
+
+bool IsMaliValhall(const FunctionsGL *functions)
+{
+    int number = getMaliGNumber(functions);
+    return number == 57 || number == 77 || number == 68 || number == 78 || number == 310 ||
+           number == 510 || number == 610 || number == 710 || number == 615 || number == 715;
+}
+
 int GetAndroidSdkLevel()
 {
     if (!IsAndroid())
@@ -1497,6 +1510,10 @@ void GenerateCaps(const FunctionsGL *functions,
                                 functions->hasGLESExtension("GL_EXT_depth_clamp");
     extensions->polygonOffsetClampEXT = functions->hasExtension("GL_EXT_polygon_offset_clamp");
 
+    // Not currently exposed on native OpenGL ES due to driver bugs.
+    extensions->polygonModeNV    = functions->standard == STANDARD_GL_DESKTOP;
+    extensions->polygonModeANGLE = extensions->polygonModeNV;
+
     // This functionality is provided by Shader Model 5 and should be available in GLSL 4.00
     // or even in older versions with GL_ARB_sample_shading and GL_ARB_gpu_shader5. However,
     // some OpenGL implementations (e.g., macOS) that do not support higher context versions
@@ -1921,16 +1938,18 @@ void GenerateCaps(const FunctionsGL *functions,
 
     // ANGLE_base_vertex_base_instance
     extensions->baseVertexBaseInstanceANGLE =
-        functions->isAtLeastGL(gl::Version(3, 2)) || functions->isAtLeastGLES(gl::Version(3, 2)) ||
-        functions->hasGLESExtension("GL_OES_draw_elements_base_vertex") ||
-        functions->hasGLESExtension("GL_EXT_draw_elements_base_vertex");
+        !features.disableBaseInstanceVertex.enabled &&
+        (functions->isAtLeastGL(gl::Version(3, 2)) || functions->isAtLeastGLES(gl::Version(3, 2)) ||
+         functions->hasGLESExtension("GL_OES_draw_elements_base_vertex") ||
+         functions->hasGLESExtension("GL_EXT_draw_elements_base_vertex"));
 
     // EXT_base_instance
-    extensions->baseInstanceEXT = functions->isAtLeastGL(gl::Version(3, 2)) ||
-                                  functions->isAtLeastGLES(gl::Version(3, 2)) ||
-                                  functions->hasGLESExtension("GL_OES_draw_elements_base_vertex") ||
-                                  functions->hasGLESExtension("GL_EXT_draw_elements_base_vertex") ||
-                                  functions->hasGLESExtension("GL_EXT_base_instance");
+    extensions->baseInstanceEXT =
+        !features.disableBaseInstanceVertex.enabled &&
+        (functions->isAtLeastGL(gl::Version(3, 2)) || functions->isAtLeastGLES(gl::Version(3, 2)) ||
+         functions->hasGLESExtension("GL_OES_draw_elements_base_vertex") ||
+         functions->hasGLESExtension("GL_EXT_draw_elements_base_vertex") ||
+         functions->hasGLESExtension("GL_EXT_base_instance"));
 
     // ANGLE_base_vertex_base_instance_shader_builtin
     extensions->baseVertexBaseInstanceShaderBuiltinANGLE = extensions->baseVertexBaseInstanceANGLE;
@@ -1997,9 +2016,12 @@ void GenerateCaps(const FunctionsGL *functions,
                                     functions->isAtLeastGLES(gl::Version(3, 0)) ||
                                     functions->hasGLESExtension("GL_EXT_shadow_samplers");
 
-    extensions->clipControlEXT = functions->isAtLeastGL(gl::Version(4, 5)) ||
-                                 functions->hasGLExtension("GL_ARB_clip_control") ||
-                                 functions->hasGLESExtension("GL_EXT_clip_control");
+    if (!features.disableClipControl.enabled)
+    {
+        extensions->clipControlEXT = functions->isAtLeastGL(gl::Version(4, 5)) ||
+                                     functions->hasGLExtension("GL_ARB_clip_control") ||
+                                     functions->hasGLESExtension("GL_EXT_clip_control");
+    }
 
     // GL_APPLE_clip_distance cannot be implemented on top of GL_EXT_clip_cull_distance,
     // so require either native support or desktop GL.
@@ -2542,7 +2564,13 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
                             functions->hasGLESExtension("GL_EXT_shader_pixel_local_storage"));
 
     // https://crbug.com/1356053
-    ANGLE_FEATURE_CONDITION(features, bindFramebufferForTimerQueries, IsMali(functions));
+    ANGLE_FEATURE_CONDITION(features, bindCompleteFramebufferForTimerQueries, IsMali(functions));
+
+    // https://crbug.com/1434317
+    ANGLE_FEATURE_CONDITION(features, disableClipControl, IsMaliG72OrG76(functions));
+
+    // http://anglebug.com/8172
+    ANGLE_FEATURE_CONDITION(features, disableBaseInstanceVertex, IsMaliValhall(functions));
 }
 
 void InitializeFrontendFeatures(const FunctionsGL *functions, angle::FrontendFeatures *features)

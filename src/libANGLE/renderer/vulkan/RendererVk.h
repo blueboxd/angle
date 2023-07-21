@@ -77,8 +77,9 @@ class ImageMemorySuballocator : angle::NonCopyable
     void destroy(RendererVk *renderer);
 
     // Allocates memory for the image and binds it.
-    VkResult allocateAndBindMemory(RendererVk *renderer,
+    VkResult allocateAndBindMemory(Context *context,
                                    Image *image,
+                                   const VkImageCreateInfo *imageCreateInfo,
                                    VkMemoryPropertyFlags requiredFlags,
                                    VkMemoryPropertyFlags preferredFlags,
                                    MemoryAllocationType memoryAllocationType,
@@ -301,7 +302,6 @@ class RendererVk : angle::NonCopyable
                                     egl::ContextPriority priority,
                                     VkSemaphore waitSemaphore,
                                     VkPipelineStageFlags waitSemaphoreStageMasks,
-                                    const vk::Fence *fence,
                                     vk::SubmitPolicy submitPolicy,
                                     QueueSerial *queueSerialOut);
 
@@ -491,6 +491,7 @@ class RendererVk : angle::NonCopyable
                                  vk::ProtectionType protectionType,
                                  egl::ContextPriority contextPriority,
                                  const vk::Semaphore *signalSemaphore,
+                                 const vk::SharedExternalFence *externalFence,
                                  const QueueSerial &submitQueueSerial);
 
     angle::Result submitPriorityDependency(vk::Context *context,
@@ -638,6 +639,11 @@ class RendererVk : angle::NonCopyable
     {
         return mSuballocationGarbageSizeInBytesCachedAtomic.load(std::memory_order_consume);
     }
+    size_t getPendingSubmissionGarbageSize() const
+    {
+        std::unique_lock<std::mutex> lock(mGarbageMutex);
+        return mPendingSubmissionGarbage.size();
+    }
 
     ANGLE_INLINE VkFilter getPreferredFilterForYUV(VkFilter defaultFilter)
     {
@@ -645,7 +651,7 @@ class RendererVk : angle::NonCopyable
     }
 
     angle::Result allocateScopedQueueSerialIndex(vk::ScopedQueueSerialIndex *indexOut);
-    angle::Result allocateQueueSerialIndex(QueueSerial *queueSerialOut);
+    angle::Result allocateQueueSerialIndex(SerialIndex *serialIndexOut);
     size_t getLargestQueueSerialIndexEverAllocated() const
     {
         return mQueueSerialIndexAllocator.getLargestIndexEverAllocated();
@@ -659,6 +665,7 @@ class RendererVk : angle::NonCopyable
     // Return true if all serials in ResourceUse have been submitted.
     bool hasResourceUseSubmitted(const vk::ResourceUse &use) const;
     bool hasQueueSerialSubmitted(const QueueSerial &queueSerial) const;
+    Serial getLastSubmittedSerial(SerialIndex index) const;
     // Return true if all serials in ResourceUse have been finished.
     bool hasResourceUseFinished(const vk::ResourceUse &use) const;
     bool hasQueueSerialFinished(const QueueSerial &queueSerial) const;
@@ -759,8 +766,6 @@ class RendererVk : angle::NonCopyable
                                        vk::SecondaryCommandMemoryAllocator *commandsAllocator,
                                        RecyclerT *recycler,
                                        CommandBufferHelperT **commandBufferHelperOut);
-
-    angle::Result allocateQueueSerialIndexImpl(SerialIndex *indexOut);
 
     egl::Display *mDisplay;
 
@@ -866,7 +871,7 @@ class RendererVk : angle::NonCopyable
     // is the garbage that is still referenced in the recorded commands. suballocations have its
     // own dedicated garbage list for performance optimization since they tend to be the most
     // common garbage objects. All these four groups of garbage share the same mutex lock.
-    std::mutex mGarbageMutex;
+    mutable std::mutex mGarbageMutex;
     vk::SharedGarbageList mSharedGarbage;
     vk::SharedGarbageList mPendingSubmissionGarbage;
     vk::SharedBufferSuballocationGarbageList mSuballocationGarbage;
@@ -1031,6 +1036,18 @@ ANGLE_INLINE bool RendererVk::hasQueueSerialSubmitted(const QueueSerial &queueSe
     else
     {
         return mCommandQueue.hasQueueSerialSubmitted(queueSerial);
+    }
+}
+
+ANGLE_INLINE Serial RendererVk::getLastSubmittedSerial(SerialIndex index) const
+{
+    if (isAsyncCommandQueueEnabled())
+    {
+        return mCommandProcessor.getLastEnqueuedSerial(index);
+    }
+    else
+    {
+        return mCommandQueue.getLastSubmittedSerial(index);
     }
 }
 

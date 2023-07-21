@@ -5028,6 +5028,26 @@ void CaptureMidExecutionSetup(const gl::Context *context,
         {
             cap(CaptureMatrixMode(replayState, true, currentMatrixMode));
         }
+
+        // Alpha Test state
+        const bool currentAlphaTestState = apiState.getEnableFeature(GL_ALPHA_TEST);
+        const bool defaultAlphaTestState = replayState.getEnableFeature(GL_ALPHA_TEST);
+
+        if (currentAlphaTestState != defaultAlphaTestState)
+        {
+            capCap(GL_ALPHA_TEST, currentAlphaTestState);
+        }
+
+        const gl::AlphaTestParameters currentAlphaTestParameters =
+            apiState.gles1().getAlphaTestParameters();
+        const gl::AlphaTestParameters defaultAlphaTestParameters =
+            replayState.gles1().getAlphaTestParameters();
+
+        if (currentAlphaTestParameters != defaultAlphaTestParameters)
+        {
+            cap(CaptureAlphaFunc(replayState, true, currentAlphaTestParameters.func,
+                                 currentAlphaTestParameters.ref));
+        }
     }
 
     // Rasterizer state. Missing ES 3.x features.
@@ -5046,6 +5066,34 @@ void CaptureMidExecutionSetup(const gl::Context *context,
     if (currentRasterState.frontFace != defaultRasterState.frontFace)
     {
         cap(CaptureFrontFace(replayState, true, currentRasterState.frontFace));
+    }
+
+    if (currentRasterState.polygonMode != defaultRasterState.polygonMode)
+    {
+        if (context->getExtensions().polygonModeNV)
+        {
+            cap(CapturePolygonModeNV(replayState, true, GL_FRONT_AND_BACK,
+                                     currentRasterState.polygonMode));
+        }
+        else if (context->getExtensions().polygonModeANGLE)
+        {
+            cap(CapturePolygonModeANGLE(replayState, true, GL_FRONT_AND_BACK,
+                                        currentRasterState.polygonMode));
+        }
+        else
+        {
+            UNREACHABLE();
+        }
+    }
+
+    if (currentRasterState.polygonOffsetPoint != defaultRasterState.polygonOffsetPoint)
+    {
+        capCap(GL_POLYGON_OFFSET_POINT_NV, currentRasterState.polygonOffsetPoint);
+    }
+
+    if (currentRasterState.polygonOffsetLine != defaultRasterState.polygonOffsetLine)
+    {
+        capCap(GL_POLYGON_OFFSET_LINE_NV, currentRasterState.polygonOffsetLine);
     }
 
     if (currentRasterState.polygonOffsetFill != defaultRasterState.polygonOffsetFill)
@@ -5217,16 +5265,28 @@ void CaptureMidExecutionSetup(const gl::Context *context,
         currentBlendState.sourceBlendAlpha != defaultBlendState.sourceBlendAlpha ||
         currentBlendState.destBlendAlpha != defaultBlendState.destBlendAlpha)
     {
-        // BlendFunc could be used instead of BlendFuncSeparate in some cases but there's no
-        // advantage and it makes Reset more difficult as both functions affect the same state.
-        cap(CaptureBlendFuncSeparate(
-            replayState, true, currentBlendState.sourceBlendRGB, currentBlendState.destBlendRGB,
-            currentBlendState.sourceBlendAlpha, currentBlendState.destBlendAlpha));
-        Capture(&resetCalls[angle::EntryPoint::GLBlendFuncSeparate],
-                CaptureBlendFuncSeparate(replayState, true, currentBlendState.sourceBlendRGB,
-                                         currentBlendState.destBlendRGB,
-                                         currentBlendState.sourceBlendAlpha,
-                                         currentBlendState.destBlendAlpha));
+        if (context->isGLES1())
+        {
+            // Even though their states are tracked independently, in GLES1 blendAlpha
+            // and blendRGB cannot be set separately and are always equal
+            cap(CaptureBlendFunc(replayState, true, currentBlendState.sourceBlendRGB,
+                                 currentBlendState.destBlendRGB));
+            Capture(&resetCalls[angle::EntryPoint::GLBlendFunc],
+                    CaptureBlendFunc(replayState, true, currentBlendState.sourceBlendRGB,
+                                     currentBlendState.destBlendRGB));
+        }
+        else
+        {
+            // Always use BlendFuncSeparate for non-GLES1 as it covers all cases
+            cap(CaptureBlendFuncSeparate(
+                replayState, true, currentBlendState.sourceBlendRGB, currentBlendState.destBlendRGB,
+                currentBlendState.sourceBlendAlpha, currentBlendState.destBlendAlpha));
+            Capture(&resetCalls[angle::EntryPoint::GLBlendFuncSeparate],
+                    CaptureBlendFuncSeparate(replayState, true, currentBlendState.sourceBlendRGB,
+                                             currentBlendState.destBlendRGB,
+                                             currentBlendState.sourceBlendAlpha,
+                                             currentBlendState.destBlendAlpha));
+        }
     }
 
     if (currentBlendState.blendEquationRGB != defaultBlendState.blendEquationRGB ||
@@ -5466,6 +5526,11 @@ bool SkipCall(EntryPoint entryPoint)
         case EntryPoint::EGLQuerySurface:
             // Skip these calls because:
             // - Some EGL types and pointer parameters aren't yet implemented in EGL capture.
+            return true;
+
+        case EntryPoint::EGLPrepareSwapBuffersANGLE:
+            // Skip this call because:
+            // - eglPrepareSwapBuffersANGLE is automatically called by eglSwapBuffers
             return true;
 
         case EntryPoint::EGLSwapBuffers:
@@ -7426,8 +7491,15 @@ void FrameCaptureShared::maybeCapturePreCallUpdates(
             }
             break;
         }
-
         case EntryPoint::GLBlendFunc:
+        {
+            if (isCaptureActive())
+            {
+                context->getFrameCapture()->getStateResetHelper().setEntryPointDirty(
+                    EntryPoint::GLBlendFunc);
+            }
+            break;
+        }
         case EntryPoint::GLBlendFuncSeparate:
         {
             if (isCaptureActive())
@@ -8092,14 +8164,14 @@ void FrameCaptureShared::runMidExecutionCapture(gl::Context *mainContext)
     egl::Surface *draw    = mainContext->getCurrentDrawSurface();
     egl::Surface *read    = mainContext->getCurrentReadSurface();
 
-    for (gl::Context *shareContext : shareGroup->getContexts())
+    for (auto shareContext : shareGroup->getContexts())
     {
-        FrameCapture *frameCapture = shareContext->getFrameCapture();
+        FrameCapture *frameCapture = shareContext.second->getFrameCapture();
         ASSERT(frameCapture->getSetupCalls().empty());
 
-        if (shareContext->id() == mainContext->id())
+        if (shareContext.second->id() == mainContext->id())
         {
-            CaptureMidExecutionSetup(shareContext, &frameCapture->getSetupCalls(),
+            CaptureMidExecutionSetup(shareContext.second, &frameCapture->getSetupCalls(),
                                      frameCapture->getStateResetHelper().getResetCalls(),
                                      &mShareGroupSetupCalls, &mResourceIDToSetupCalls,
                                      &mResourceTracker, mainContextReplayState,
@@ -8122,21 +8194,21 @@ void FrameCaptureShared::runMidExecutionCapture(gl::Context *mainContext)
         }
         else
         {
-            const gl::State &shareContextState = shareContext->getState();
+            const gl::State &shareContextState = shareContext.second->getState();
             gl::State auxContextReplayState(
                 nullptr, nullptr, nullptr, nullptr, nullptr, shareContextState.getClientType(),
                 shareContextState.getClientVersion(), shareContextState.getProfileMask(), false,
                 true, true, true, false, EGL_CONTEXT_PRIORITY_MEDIUM_IMG,
                 shareContextState.hasRobustAccess(), shareContextState.hasProtectedContent());
-            auxContextReplayState.initializeForCapture(shareContext);
+            auxContextReplayState.initializeForCapture(shareContext.second);
 
-            egl::Error error = shareContext->makeCurrent(display, draw, read);
+            egl::Error error = shareContext.second->makeCurrent(display, draw, read);
             if (error.isError())
             {
                 INFO() << "MEC unable to make secondary context current";
             }
 
-            CaptureMidExecutionSetup(shareContext, &frameCapture->getSetupCalls(),
+            CaptureMidExecutionSetup(shareContext.second, &frameCapture->getSetupCalls(),
                                      frameCapture->getStateResetHelper().getResetCalls(),
                                      &mShareGroupSetupCalls, &mResourceIDToSetupCalls,
                                      &mResourceTracker, auxContextReplayState,
@@ -8145,12 +8217,12 @@ void FrameCaptureShared::runMidExecutionCapture(gl::Context *mainContext)
             scanSetupCalls(frameCapture->getSetupCalls());
 
             WriteAuxiliaryContextCppSetupReplay(
-                mReplayWriter, mCompression, mOutDirectory, shareContext, mCaptureLabel, 1,
+                mReplayWriter, mCompression, mOutDirectory, shareContext.second, mCaptureLabel, 1,
                 frameCapture->getSetupCalls(), &mBinaryData, mSerializeStateEnabled, *this,
                 &mResourceIDBufferSize);
         }
         // Track that this context was created before MEC started
-        mActiveContexts.insert(shareContext->id().value);
+        mActiveContexts.insert(shareContext.first);
     }
 
     egl::Error error = mainContext->makeCurrent(display, draw, read);
@@ -8354,7 +8426,9 @@ void StateResetHelper::setDefaultResetCalls(const gl::Context *context,
         }
         case angle::EntryPoint::GLBlendFunc:
         {
-            UNREACHABLE();  // GLBlendFuncSeparate is always used instead
+            Capture(&mResetCalls[angle::EntryPoint::GLBlendFunc],
+                    CaptureBlendFunc(context->getState(), true, kDefaultBlendState.sourceBlendRGB,
+                                     kDefaultBlendState.destBlendRGB));
             break;
         }
         case angle::EntryPoint::GLBlendFuncSeparate:
@@ -8688,6 +8762,8 @@ void FrameCaptureShared::writeCppReplayIndexFiles(const gl::Context *context,
         source << "#include \"" << FmtCapturePrefix(contextId, mCaptureLabel) << ".h\"\n";
         source << "#include \"trace_fixture.h\"\n";
         source << "#include \"angle_trace_gl.h\"\n";
+        source << "\n";
+        source << "EGLDisplay gEGLDisplay;\n";
 
         std::string sourcePrologue = source.str();
         mReplayWriter.setSourcePrologue(sourcePrologue);
@@ -8815,6 +8891,7 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
 
             // Setup all of the shared objects.
             out << "    InitReplay();\n";
+            out << "    gEGLDisplay = eglGetCurrentDisplay();\n";
             if (usesMidExecutionCapture())
             {
                 out << "    " << FmtSetupFunction(kNoPartId, kSharedContextId, FuncUsage::Call)
@@ -8825,10 +8902,10 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
 
             // Setup each of the auxiliary contexts.
             egl::ShareGroup *shareGroup            = context->getShareGroup();
-            const egl::ContextSet &shareContextSet = shareGroup->getContexts();
-            for (gl::Context *shareContext : shareContextSet)
+            const egl::ContextMap &shareContextMap = shareGroup->getContexts();
+            for (auto shareContext : shareContextMap)
             {
-                if (shareContext->id() == context->id())
+                if (shareContext.first == context->id().value)
                 {
                     if (usesMidExecutionCapture())
                     {
@@ -8848,15 +8925,16 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
                 {
                     // Only call SetupReplayContext for secondary contexts that were current before
                     // MEC started
-                    if (mActiveContexts.find(shareContext->id().value) != mActiveContexts.end())
+                    if (mActiveContexts.find(shareContext.first) != mActiveContexts.end())
                     {
                         // TODO(http://anglebug.com/5878): Support capture/replay of
                         // eglCreateContext() so this block can be moved into SetupReplayContextXX()
                         // by injecting them into the beginning of the setup call stream.
-                        out << "    CreateContext(" << shareContext->id() << ");\n";
+                        out << "    CreateContext(" << shareContext.first << ");\n";
 
                         out << "    "
-                            << FmtSetupFunction(kNoPartId, shareContext->id(), FuncUsage::Call)
+                            << FmtSetupFunction(kNoPartId, shareContext.second->id(),
+                                                FuncUsage::Call)
                             << ";\n";
                     }
                 }
@@ -8864,7 +8942,7 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
 
             // If there are other contexts that were initialized, we need to make the main context
             // current again.
-            if (shareContextSet.size() > 1)
+            if (shareContextMap.size() > 1)
             {
                 out << "\n";
                 out << "    eglMakeCurrent(NULL, NULL, NULL, gContextMap2[" << context->id()
@@ -9443,6 +9521,9 @@ void ReplayWriter::saveHeader()
     SaveFileHelper saveH(headerPath);
 
     saveH << mHeaderPrologue << "\n";
+
+    saveH << "extern EGLDisplay gEGLDisplay;\n";
+    saveH << "\n";
 
     saveH << "// Public functions are declared in trace_fixture.h.\n";
     saveH << "\n";

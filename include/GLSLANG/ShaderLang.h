@@ -26,7 +26,7 @@
 
 // Version number for shader translation API.
 // It is incremented every time the API changes.
-#define ANGLE_SH_VERSION 327
+#define ANGLE_SH_VERSION 329
 
 enum ShShaderSpec
 {
@@ -86,6 +86,8 @@ struct ShCompileOptionsMetal
     int defaultUniformsBindingIndex;
     // Binding index for UBO's argument buffer
     int UBOArgumentBufferBindingIndex;
+
+    bool generateShareableShaders;
 };
 
 // For ANGLE_shader_pixel_local_storage.
@@ -1013,14 +1015,17 @@ extern const char kInputAttachmentName[];
 
 namespace mtl
 {
-// Specialization constant to enable sample mask output.
-extern const char kSampleMaskEnabledConstName[];
+// Specialization constant to enable multisampled rendering behavior.
+extern const char kMultisampledRenderingConstName[];
 
 // Specialization constant to emulate rasterizer discard.
 extern const char kRasterizerDiscardEnabledConstName[];
 
 // Specialization constant to enable depth write in fragment shaders.
 extern const char kDepthWriteEnabledConstName[];
+
+// Specialization constant to enable alpha to coverage.
+extern const char kEmulateAlphaToCoverageConstName[];
 }  // namespace mtl
 
 }  // namespace sh

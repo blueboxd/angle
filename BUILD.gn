@@ -65,10 +65,7 @@ declare_args() {
   angle_glesv2_extension = ""
 
   # Enable share context lock. If it is false, the client need to use gl calls in a threadsafe way.
-  # Chromium only uses share contexts on the GPU thread.
-  # angle_deqp_tests contains threading related tests.
-  angle_enable_share_context_lock =
-      !build_with_chromium || build_angle_deqp_tests
+  angle_enable_share_context_lock = true
 
   if (is_android) {
     # Use Android TLS slot to store current context.
@@ -76,6 +73,11 @@ declare_args() {
   }
 
   angle_enable_global_mutex_recursion = is_android && angle_enable_vulkan
+
+  # Potentially can be enabled for other platforms, but limiting to Android platform for now.
+  # Chromium may have problems (requires verification), disabled for safety.
+  angle_enable_global_mutex_load_time_allocate =
+      is_android && !build_with_chromium
 }
 
 if (angle_build_all) {
@@ -165,6 +167,10 @@ config("internal_config") {
 
   if (angle_enable_global_mutex_recursion) {
     defines += [ "ANGLE_ENABLE_GLOBAL_MUTEX_RECURSION=1" ]
+  }
+
+  if (angle_enable_global_mutex_load_time_allocate) {
+    defines += [ "ANGLE_ENABLE_GLOBAL_MUTEX_LOAD_TIME_ALLOCATE=1" ]
   }
 
   # Enables debug/trace-related functionality, including logging every GLES/EGL API command to the

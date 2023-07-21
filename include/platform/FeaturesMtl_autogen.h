@@ -288,6 +288,17 @@ struct FeaturesMtl : FeatureSetBase
         "Loads metal shaders from blob cache. Useful if compile_metal_shaders was used to "
         "generate shaders.",
         &members, "http://crbug.com/1423136"};
+
+    FeatureInfo printMetalShaders = {"printMetalShaders", FeatureCategory::MetalFeatures,
+                                     "Prints the source to a shader before it's compiled.",
+                                     &members, "http://crbug.com/1423136"};
+
+    FeatureInfo generateShareableShaders = {
+        "generateShareableShaders", FeatureCategory::MetalFeatures,
+        "Attempts to generate shaders that are shareable. More specifically, shaders"
+        " end up with conditionals that are decided at run time via input parameters vs"
+        " compile time. This results in bigger shaders.",
+        &members, "http://crbug.com/1423136"};
 };
 
 inline FeaturesMtl::FeaturesMtl()  = default;

@@ -720,6 +720,11 @@ struct FeaturesVk : FeatureSetBase
         "supportsImage2dViewOf3d", FeatureCategory::VulkanFeatures,
         "VkDevice supports VK_EXT_image_2d_view_of_3d", &members, "https://anglebug.com/7320"};
 
+    FeatureInfo supportsSampler2dViewOf3d = {
+        "supportsSampler2dViewOf3d", FeatureCategory::VulkanFeatures,
+        "VkDevice supports the sampler2DViewOf3D feature of VK_EXT_image_2d_view_of_3d", &members,
+        "https://anglebug.com/7320"};
+
     FeatureInfo supportsImagelessFramebuffer = {
         "supportsImagelessFramebuffer", FeatureCategory::VulkanFeatures,
         "VkDevice supports VK_KHR_imageless_framebuffer extension", &members,
@@ -891,6 +896,15 @@ struct FeaturesVk : FeatureSetBase
         "SecondaryCommandPools when using VulkanSecondaryCommandBuffer. ",
         &members,
     };
+
+    FeatureInfo enablePipelineCacheDataCompression = {
+        "enablePipelineCacheDataCompression", FeatureCategory::VulkanFeatures,
+        "enable pipeline cache data compression.", &members,
+        "https://issuetracker.google.com/258207403"};
+
+    FeatureInfo limitSampleCountTo2 = {"limitSampleCountTo2", FeatureCategory::VulkanWorkarounds,
+                                       "Limit sample count to 2 to save memory on low end devices.",
+                                       &members, "http://anglebug.com/8162"};
 };
 
 inline FeaturesVk::FeaturesVk()  = default;
