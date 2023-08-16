@@ -409,7 +409,7 @@ void GL_APIENTRY GL_DrawArraysInstancedBaseInstanceANGLE(GLenum mode,
 void GL_APIENTRY GL_DrawElementsInstancedBaseVertexBaseInstanceANGLE(GLenum mode,
                                                                      GLsizei count,
                                                                      GLenum type,
-                                                                     const GLvoid *indices,
+                                                                     const void *indices,
                                                                      GLsizei instanceCount,
                                                                      GLint baseVertex,
                                                                      GLuint baseInstance)
@@ -492,7 +492,7 @@ void GL_APIENTRY
 GL_MultiDrawElementsInstancedBaseVertexBaseInstanceANGLE(GLenum mode,
                                                          const GLsizei *counts,
                                                          GLenum type,
-                                                         const GLvoid *const *indices,
+                                                         const void *const *indices,
                                                          const GLsizei *instanceCounts,
                                                          const GLint *baseVertices,
                                                          const GLuint *baseInstances,
@@ -1355,7 +1355,7 @@ void GL_APIENTRY GL_MultiDrawArraysInstancedANGLE(GLenum mode,
 void GL_APIENTRY GL_MultiDrawElementsANGLE(GLenum mode,
                                            const GLsizei *counts,
                                            GLenum type,
-                                           const GLvoid *const *indices,
+                                           const void *const *indices,
                                            GLsizei drawcount)
 {
     Context *context = GetValidGlobalContext();
@@ -1393,7 +1393,7 @@ void GL_APIENTRY GL_MultiDrawElementsANGLE(GLenum mode,
 void GL_APIENTRY GL_MultiDrawElementsInstancedANGLE(GLenum mode,
                                                     const GLsizei *counts,
                                                     GLenum type,
-                                                    const GLvoid *const *indices,
+                                                    const void *const *indices,
                                                     const GLsizei *instanceCounts,
                                                     GLsizei drawcount)
 {
@@ -2376,7 +2376,7 @@ void GL_APIENTRY GL_CompressedTexImage2DRobustANGLE(GLenum target,
                                                     GLint border,
                                                     GLsizei imageSize,
                                                     GLsizei dataSize,
-                                                    const GLvoid *data)
+                                                    const void *data)
 {
     Context *context = GetValidGlobalContext();
     EVENT(context, GLCompressedTexImage2DRobustANGLE,
@@ -2421,7 +2421,7 @@ void GL_APIENTRY GL_CompressedTexSubImage2DRobustANGLE(GLenum target,
                                                        GLenum format,
                                                        GLsizei imageSize,
                                                        GLsizei dataSize,
-                                                       const GLvoid *data)
+                                                       const void *data)
 {
     Context *context = GetValidGlobalContext();
     EVENT(context, GLCompressedTexSubImage2DRobustANGLE,
@@ -2465,7 +2465,7 @@ void GL_APIENTRY GL_CompressedTexImage3DRobustANGLE(GLenum target,
                                                     GLint border,
                                                     GLsizei imageSize,
                                                     GLsizei dataSize,
-                                                    const GLvoid *data)
+                                                    const void *data)
 {
     Context *context = GetValidGlobalContext();
     EVENT(context, GLCompressedTexImage3DRobustANGLE,
@@ -2512,7 +2512,7 @@ void GL_APIENTRY GL_CompressedTexSubImage3DRobustANGLE(GLenum target,
                                                        GLenum format,
                                                        GLsizei imageSize,
                                                        GLsizei dataSize,
-                                                       const GLvoid *data)
+                                                       const void *data)
 {
     Context *context = GetValidGlobalContext();
     EVENT(context, GLCompressedTexSubImage3DRobustANGLE,
@@ -4895,7 +4895,7 @@ void GL_APIENTRY GL_EGLImageTargetTexStorageEXT(GLenum target,
     if (context)
     {
         egl::ImageID imagePacked = PackParam<egl::ImageID>(image);
-        SCOPED_GLOBAL_AND_SHARE_CONTEXT_LOCK(context);
+        SCOPED_EGL_IMAGE_SHARE_CONTEXT_LOCK(context, imagePacked);
         bool isCallValid = (context->skipValidation() ||
                             (ValidatePixelLocalStorageInactive(
                                  context, angle::EntryPoint::GLEGLImageTargetTexStorageEXT) &&
@@ -4928,7 +4928,7 @@ void GL_APIENTRY GL_EGLImageTargetTextureStorageEXT(GLuint texture,
     if (context)
     {
         egl::ImageID imagePacked = PackParam<egl::ImageID>(image);
-        SCOPED_GLOBAL_AND_SHARE_CONTEXT_LOCK(context);
+        SCOPED_EGL_IMAGE_SHARE_CONTEXT_LOCK(context, imagePacked);
         bool isCallValid = (context->skipValidation() ||
                             (ValidatePixelLocalStorageInactive(
                                  context, angle::EntryPoint::GLEGLImageTargetTextureStorageEXT) &&
@@ -10423,7 +10423,7 @@ void GL_APIENTRY GL_EGLImageTargetRenderbufferStorageOES(GLenum target, GLeglIma
     if (context)
     {
         egl::ImageID imagePacked = PackParam<egl::ImageID>(image);
-        SCOPED_GLOBAL_AND_SHARE_CONTEXT_LOCK(context);
+        SCOPED_EGL_IMAGE_SHARE_CONTEXT_LOCK(context, imagePacked);
         bool isCallValid =
             (context->skipValidation() ||
              (ValidatePixelLocalStorageInactive(
@@ -10456,7 +10456,7 @@ void GL_APIENTRY GL_EGLImageTargetTexture2DOES(GLenum target, GLeglImageOES imag
     {
         TextureType targetPacked = PackParam<TextureType>(target);
         egl::ImageID imagePacked = PackParam<egl::ImageID>(image);
-        SCOPED_GLOBAL_AND_SHARE_CONTEXT_LOCK(context);
+        SCOPED_EGL_IMAGE_SHARE_CONTEXT_LOCK(context, imagePacked);
         bool isCallValid = (context->skipValidation() ||
                             (ValidatePixelLocalStorageInactive(
                                  context, angle::EntryPoint::GLEGLImageTargetTexture2DOES) &&

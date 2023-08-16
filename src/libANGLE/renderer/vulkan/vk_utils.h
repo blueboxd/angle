@@ -28,7 +28,7 @@
 #include "libANGLE/renderer/vulkan/SecondaryCommandPool.h"
 #include "libANGLE/renderer/vulkan/VulkanSecondaryCommandBuffer.h"
 #include "libANGLE/renderer/vulkan/vk_wrapper.h"
-#include "platform/FeaturesVk_autogen.h"
+#include "platform/autogen/FeaturesVk_autogen.h"
 #include "vulkan/vulkan_fuchsia_ext.h"
 
 #define ANGLE_GL_OBJECTS_X(PROC) \
@@ -849,7 +849,12 @@ class Recycler final : angle::NonCopyable
   public:
     Recycler() = default;
 
-    void recycle(T &&garbageObject) { mObjectFreeList.emplace_back(std::move(garbageObject)); }
+    void recycle(T &&garbageObject)
+    {
+        // Recycling invalid objects is pointless and potentially a bug.
+        ASSERT(garbageObject.valid());
+        mObjectFreeList.emplace_back(std::move(garbageObject));
+    }
 
     void fetch(T *outObject)
     {

@@ -21,6 +21,7 @@
 #include "libANGLE/Query.h"
 #include "libANGLE/TransformFeedback.h"
 #include "libANGLE/VertexArray.h"
+#include "libANGLE/histogram_macros.h"
 #include "libANGLE/renderer/gl/BufferGL.h"
 #include "libANGLE/renderer/gl/FramebufferGL.h"
 #include "libANGLE/renderer/gl/FunctionsGL.h"
@@ -30,6 +31,7 @@
 #include "libANGLE/renderer/gl/TextureGL.h"
 #include "libANGLE/renderer/gl/TransformFeedbackGL.h"
 #include "libANGLE/renderer/gl/VertexArrayGL.h"
+#include "platform/PlatformMethods.h"
 
 namespace rx
 {
@@ -76,6 +78,7 @@ StateManagerGL::StateManagerGL(const FunctionsGL *functions,
     : mFunctions(functions),
       mFeatures(features),
       mProgram(0),
+      mSupportsVertexArrayObjects(nativegl::SupportsVertexArrayObjects(functions)),
       mVAO(0),
       mVertexAttribCurrentValues(rendererCaps.maxVertexAttributes),
       mDefaultVAOState(rendererCaps.maxVertexAttributes, rendererCaps.maxVertexAttribBindings),
@@ -2897,6 +2900,9 @@ void StateManagerGL::syncFromNativeContext(const gl::Extensions &extensions,
 {
     ASSERT(mFunctions->getError() == GL_NO_ERROR);
 
+    auto *platform   = ANGLEPlatformCurrent();
+    double startTime = platform->currentTime(platform);
+
     get(GL_VIEWPORT, &state->viewport);
     if (mViewport != state->viewport)
     {
@@ -3138,6 +3144,10 @@ void StateManagerGL::syncFromNativeContext(const gl::Extensions &extensions,
     syncTextureUnitsFromNativeContext(extensions, state);
 
     ASSERT(mFunctions->getError() == GL_NO_ERROR);
+
+    double delta = platform->currentTime(platform) - startTime;
+    int us       = static_cast<int>(delta * 1000000.0);
+    ANGLE_HISTOGRAM_COUNTS("GPU.ANGLE.SyncFromNativeContextMicroseconds", us);
 }
 
 void StateManagerGL::restoreNativeContext(const gl::Extensions &extensions,
@@ -3518,19 +3528,25 @@ void StateManagerGL::restoreTextureUnitsNativeContext(const gl::Extensions &exte
 void StateManagerGL::syncVertexArraysFromNativeContext(const gl::Extensions &extensions,
                                                        ExternalContextState *state)
 {
-    get(GL_VERTEX_ARRAY_BINDING, &state->vertexArrayBinding);
-    if (mVAO != static_cast<GLuint>(state->vertexArrayBinding))
+    if (mSupportsVertexArrayObjects)
     {
-        mVAO                                      = state->vertexArrayBinding;
-        mBuffers[gl::BufferBinding::ElementArray] = 0;
-        mLocalDirtyBits.set(gl::State::DIRTY_BIT_VERTEX_ARRAY_BINDING);
+        get(GL_VERTEX_ARRAY_BINDING, &state->vertexArrayBinding);
+        if (mVAO != static_cast<GLuint>(state->vertexArrayBinding))
+        {
+            mVAO                                      = state->vertexArrayBinding;
+            mBuffers[gl::BufferBinding::ElementArray] = 0;
+            mLocalDirtyBits.set(gl::State::DIRTY_BIT_VERTEX_ARRAY_BINDING);
+        }
     }
 }
 
 void StateManagerGL::restoreVertexArraysNativeContext(const gl::Extensions &extensions,
                                                       const ExternalContextState *state)
 {
-    bindVertexArray(state->vertexArrayBinding, 0);
+    if (mSupportsVertexArrayObjects)
+    {
+        bindVertexArray(state->vertexArrayBinding, 0);
+    }
 }
 
 void StateManagerGL::setDefaultVAOStateDirty()

@@ -14,7 +14,7 @@
 #include "libANGLE/State.h"
 #include "libANGLE/angletypes.h"
 #include "libANGLE/renderer/gl/functionsgl_typedefs.h"
-#include "platform/FeaturesGL_autogen.h"
+#include "platform/autogen/FeaturesGL_autogen.h"
 
 #include <array>
 #include <map>
@@ -390,6 +390,7 @@ class StateManagerGL final : angle::NonCopyable
 
     GLuint mProgram;
 
+    const bool mSupportsVertexArrayObjects;
     GLuint mVAO;
     std::vector<gl::VertexAttribCurrentValueData> mVertexAttribCurrentValues;
 

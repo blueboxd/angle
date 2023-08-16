@@ -5263,10 +5263,16 @@ TIntermTyped *TParseContext::addIndexExpression(TIntermTyped *baseExpression,
                     break;
             }
         }
-        else if (baseExpression->getQualifier() == EvqFragmentOut)
+        else if (baseExpression->getQualifier() == EvqFragmentOut ||
+                 baseExpression->getQualifier() == EvqFragmentInOut)
         {
             error(location,
                   "array indexes for fragment outputs must be constant integral expressions", "[");
+        }
+        else if (baseExpression->getQualifier() == EvqLastFragData)
+        {
+            error(location,
+                  "array indexes for gl_LastFragData must be constant integral expressions", "[");
         }
         else if (mShaderSpec == SH_WEBGL2_SPEC && baseExpression->getQualifier() == EvqFragData)
         {
@@ -5840,7 +5846,7 @@ TLayoutQualifier TParseContext::parseLayoutQualifier(const ImmutableString &qual
         {
             qualifier.depth = EdLess;
         }
-        else if (qualifierType == "depth_unchanged")
+        else if (qualifierType == "depth_unchanged" && !sh::IsWebGLBasedSpec(mShaderSpec))
         {
             qualifier.depth = EdUnchanged;
         }
@@ -6409,6 +6415,25 @@ TTypeSpecifierNonArray TParseContext::addStructure(const TSourceLoc &structLine,
         {
             error(field.line(), "invalid qualifier on struct member", "invariant");
         }
+
+        const TLayoutQualifier layoutQualifier = field.type()->getLayoutQualifier();
+        if (!layoutQualifier.isEmpty())
+        {
+            error(field.line(), "invalid layout qualifier on struct member", "layout");
+        }
+
+        const TMemoryQualifier memoryQualifier = field.type()->getMemoryQualifier();
+        if (!memoryQualifier.isEmpty())
+        {
+            error(field.line(), "invalid memory qualifier on struct member",
+                  memoryQualifier.getAnyQualifierString());
+        }
+
+        if (field.type()->isPrecise())
+        {
+            error(field.line(), "invalid precise qualifier on struct member", "precise");
+        }
+
         // ESSL 3.10 section 4.1.8 -- atomic_uint or images are not allowed as structure member.
         // ANGLE_shader_pixel_local_storage also disallows PLS as struct members.
         if (IsImage(field.type()->getBasicType()) ||

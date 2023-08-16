@@ -27,27 +27,26 @@ def get_child_script_dirname(script):
     return os.path.dirname(os.path.abspath(os.path.join(root_dir, script)))
 
 
-# Check if we need a module from vpython
 def get_executable_name(script):
     with open(script, 'r') as f:
+        # Check shebang
         binary = os.path.basename(f.readline().strip().replace(' ', '/'))
+        assert binary in ['python3', 'vpython3']
         if platform.system() == 'Windows':
-            if binary == 'python2':
-                return 'python.bat'
-            else:
-                return binary + '.bat'
+            return binary + '.bat'
         else:
             return binary
 
 
-def grab_from_script(script, param):
+def paths_from_auto_script(script, param):
     script_dir = get_child_script_dirname(script)
-    exe = get_executable_name(script)
+    # python3 (not vpython3) to get inputs/outputs faster
+    exe = 'python3'
     try:
         res = subprocess.check_output([exe, os.path.basename(script), param],
                                       cwd=script_dir).decode().strip()
     except Exception:
-        print('Error grabbing script output: %s, executable %s' % (script, exe))
+        print('Error with auto_script %s: %s, executable %s' % (param, script, exe))
         raise
     if res == '':
         return []
@@ -60,15 +59,13 @@ def grab_from_script(script, param):
 # auto_script is a standard way for scripts to return their inputs and outputs.
 def auto_script(script):
     info = {
-        'inputs': grab_from_script(script, 'inputs'),
-        'outputs': grab_from_script(script, 'outputs')
+        'inputs': paths_from_auto_script(script, 'inputs'),
+        'outputs': paths_from_auto_script(script, 'outputs')
     }
     return info
 
 
 generators = {
-    'ANGLE features':
-        'include/platform/gen_features.py',
     'ANGLE format':
         'src/libANGLE/renderer/gen_angle_format_table.py',
     'ANGLE load functions table':
@@ -123,8 +120,6 @@ generators = {
         'src/common/spirv/gen_spirv_builder_and_parser.py',
     'Static builtins':
         'src/compiler/translator/gen_builtin_symbols.py',
-    'Test spec JSON':
-        'infra/specs/generate_test_spec_json.py',
     'uniform type':
         'src/common/gen_uniform_type_table.py',
     'Vulkan format':
@@ -133,6 +128,13 @@ generators = {
         'src/libANGLE/renderer/vulkan/gen_vk_internal_shaders.py',
     'Vulkan mandatory format support table':
         'src/libANGLE/renderer/vulkan/gen_vk_mandatory_format_support_table.py',
+}
+
+
+# Fast and supports --verify-only without hashes.
+hashless_generators = {
+    'ANGLE features': 'include/platform/gen_features.py',
+    'Test spec JSON': 'infra/specs/generate_test_spec_json.py',
 }
 
 
@@ -253,8 +255,22 @@ def main():
     if not runningSingleGenerator and any_old_hash_missing(all_new_hashes, all_old_hashes):
         any_dirty = True
 
+    # Handle hashless_generators separately as these don't have hash maps.
+    hashless_generators_dirty = False
+    for name, script in sorted(hashless_generators.items()):
+        cmd = [get_executable_name(script), os.path.basename(script)]
+        rc = subprocess.call(cmd + ['--verify-only'], cwd=get_child_script_dirname(script))
+        if rc != 0:
+            print(name + ' generator dirty')
+            # Don't set any_dirty as we don't need git cl format in this case.
+            hashless_generators_dirty = True
+
+            if not args.verify_only:
+                print('Running ' + name + ' code generator')
+                subprocess.check_call(cmd, cwd=get_child_script_dirname(script))
+
     if args.verify_only:
-        sys.exit(any_dirty)
+        return int(any_dirty or hashless_generators_dirty)
 
     if any_dirty:
         args = ['git.bat'] if os.name == 'nt' else ['git']
@@ -270,12 +286,11 @@ def main():
 
         for fname, new_hashes in all_new_hashes.items():
             hash_fname = os.path.join(hash_dir, fname)
-            json.dump(
-                new_hashes,
-                open(hash_fname, "w"),
-                indent=2,
-                sort_keys=True,
-                separators=(',', ':\n    '))
+            with open(hash_fname, "w") as f:
+                json.dump(new_hashes, f, indent=2, sort_keys=True, separators=(',', ':\n    '))
+                f.write('\n')  # json.dump doesn't end with newline
+
+    return 0
 
 
 if __name__ == '__main__':

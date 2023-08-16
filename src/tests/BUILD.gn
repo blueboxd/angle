@@ -493,33 +493,35 @@ if (build_angle_perftests) {
 }
 
 if (build_angle_trace_tests) {
-  _angle_trace_common_sources = [
-    "angle_trace_tests_main.cpp",
-    "perf_tests/TracePerfTest.cpp",
-  ]
-  _angle_trace_common_deps = [
-    ":angle_perftests_shared",
-    "$angle_root:angle_compression",
-    "$angle_root/util:angle_frame_capture_test_utils",
-    "$angle_root/util:angle_png_utils",
-  ]
-
-  # Allows us to edit traces and remove chunks of code without compile warnings.
-  _angle_trace_common_clang_flags = [ "-Wno-unused-const-variable" ]
-
   angle_test("angle_trace_tests") {
     # http://anglebug.com/6009: Traces with long shaders are hitting string literal
     # limit in MSVC, so only compile them when using clang
     assert(is_clang, "angle trace tests require clang")
+
+    if (is_android && target_cpu == "arm64") {
+      # TODO: http://b/278955379
+      # Disable CFI to avoid SIGILL on armv9
+      assert(
+          arm_control_flow_integrity == "none",
+          "Set arm_control_flow_integrity = \"none\" in your GN args to disable CFI (http://crbug.com/1441148)")
+    }
 
     if (is_ios) {
       # shared libraries are hidden inside ios_framework_bundle, but we include headers from them
       check_includes = false
     }
 
-    sources = _angle_trace_common_sources
+    sources = [
+      "angle_trace_tests_main.cpp",
+      "perf_tests/TracePerfTest.cpp",
+    ]
 
-    deps = _angle_trace_common_deps
+    deps = [
+      ":angle_perftests_shared",
+      "$angle_root:angle_compression",
+      "$angle_root/util:angle_frame_capture_test_utils",
+      "$angle_root/util:angle_png_utils",
+    ]
 
     # If this flag is set, we want to build the trace libraries independent of the APK, i.e. not packaged.
     # We're doing this for size reasons - the APK is too large if you include all the traces.
@@ -543,7 +545,8 @@ if (build_angle_trace_tests) {
     data_deps = [ "${angle_root}:angle" ]
 
     if (is_clang) {
-      cflags_cc = _angle_trace_common_clang_flags
+      # Allows us to edit traces and remove chunks of code without compile warnings.
+      cflags_cc = [ "-Wno-unused-const-variable" ]
     }
   }
 
@@ -574,6 +577,15 @@ if (build_angle_trace_tests) {
       "restricted_traces/retrace_restricted_traces.py",
     ]
     data_deps = [ ":angle_trace_perf_tests" ]
+  }
+
+  group("angle_capture_tests") {
+    testonly = true
+    data = [
+      "capture_tests/capture_tests.py",
+      "capture_tests/expected",
+    ]
+    data_deps = [ ":angle_end2end_tests" ]
   }
 }
 
@@ -1727,6 +1739,7 @@ group("angle_tests") {
     ":angle_end2end_tests",
     ":angle_system_info_test",
     ":angle_unittests",
+    "capture_tests:angle_capture_tests_trace",
   ]
   if (build_angle_perftests) {
     deps += [ ":angle_perftests" ]

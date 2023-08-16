@@ -333,6 +333,8 @@ State::State(const State *shareContextState,
              egl::ShareGroup *shareGroup,
              TextureManager *shareTextures,
              SemaphoreManager *shareSemaphores,
+             egl::ContextMutex *sharedContextMutex,
+             egl::SingleContextMutex *singleContextMutex,
              const OverlayType *overlay,
              const EGLenum clientType,
              const Version &clientVersion,
@@ -354,6 +356,10 @@ State::State(const State *shareContextState,
       mIsDebugContext(debug),
       mClientVersion(clientVersion),
       mShareGroup(shareGroup),
+      mSharedContextMutex(sharedContextMutex),
+      mSingleContextMutex(singleContextMutex),
+      mContextMutex(singleContextMutex == nullptr ? sharedContextMutex : singleContextMutex),
+      mIsSharedContextMutexActive(singleContextMutex == nullptr),
       mBufferManager(AllocateOrGetSharedResourceManager(shareContextState, &State::mBufferManager)),
       mShaderProgramManager(
           AllocateOrGetSharedResourceManager(shareContextState, &State::mShaderProgramManager)),
@@ -2229,6 +2235,7 @@ angle::Result State::setIndexedBufferBinding(const Context *context,
             mBoundUniformBuffersMask.set(index, buffer != nullptr);
             UpdateIndexedBufferBinding(context, &mUniformBuffers[index], buffer, target, offset,
                                        size);
+            onUniformBufferStateChange(index);
             break;
         case BufferBinding::AtomicCounter:
             mBoundAtomicCounterBuffersMask.set(index, buffer != nullptr);
@@ -3617,6 +3624,10 @@ angle::Result State::syncProgram(const Context *context, Command command)
     {
         return mProgram->syncState(context);
     }
+    else if (mProgramPipeline.get())
+    {
+        return mProgramPipeline->syncState(context);
+    }
     return angle::Result::Continue;
 }
 
@@ -3884,6 +3895,16 @@ void State::onImageStateChange(const Context *context, size_t unit)
 
 void State::onUniformBufferStateChange(size_t uniformBufferIndex)
 {
+    if (mProgram)
+    {
+        mProgram->onUniformBufferStateChange(uniformBufferIndex);
+    }
+    else if (mProgramPipeline.get())
+    {
+        mProgramPipeline->onUniformBufferStateChange(uniformBufferIndex);
+    }
+    // So that program object syncState will get triggered and process the program's dirty bits
+    setObjectDirty(GL_PROGRAM);
     // This could be represented by a different dirty bit. Using the same one keeps it simple.
     mDirtyBits.set(DIRTY_BIT_UNIFORM_BUFFER_BINDINGS);
 }
