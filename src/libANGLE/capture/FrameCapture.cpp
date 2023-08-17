@@ -1887,7 +1887,7 @@ void CaptureUpdateUniformLocations(const gl::Program *program, std::vector<CallC
         {
             const gl::LinkedUniform &uniform = uniforms[locationVar.index];
 
-            name = uniform.name;
+            name = program->getUniformNameByIndex(locationVar.index);
 
             if (uniform.isArray())
             {
@@ -1895,18 +1895,14 @@ void CaptureUpdateUniformLocations(const gl::Program *program, std::vector<CallC
                 {
                     // Non-sequential array uniform locations are not currently handled.
                     // In practice array locations shouldn't ever be non-sequential.
-                    ASSERT(uniform.location == -1 ||
-                           location == uniform.location + static_cast<int>(locationVar.arrayIndex));
+                    ASSERT(uniform.getLocation() == -1 ||
+                           location ==
+                               uniform.getLocation() + static_cast<int>(locationVar.arrayIndex));
                     continue;
                 }
 
-                if (uniform.isArrayOfArrays())
-                {
-                    UNIMPLEMENTED();
-                }
-
                 name  = gl::StripLastArrayIndex(name);
-                count = uniform.arraySizes[0];
+                count = uniform.getBasicTypeElementCount();
             }
         }
 
@@ -2506,28 +2502,22 @@ void CaptureUpdateUniformValues(const gl::State &replayState,
         CaptureUpdateCurrentProgram(callsOut->back(), 0, callsOut);
     }
 
-    const std::vector<gl::LinkedUniform> &uniforms = program->getState().getUniforms();
-
-    for (const gl::LinkedUniform &uniform : uniforms)
+    for (GLuint uniformIndex = 0; uniformIndex < static_cast<GLuint>(program->getUniforms().size());
+         uniformIndex++)
     {
-        std::string uniformName = uniform.name;
+        std::string uniformName          = program->getUniformNameByIndex(uniformIndex);
+        const gl::LinkedUniform &uniform = program->getUniformByIndex(uniformIndex);
 
         int uniformCount = 1;
         if (uniform.isArray())
         {
-            if (uniform.isArrayOfArrays())
-            {
-                UNIMPLEMENTED();
-                continue;
-            }
-
-            uniformCount = uniform.arraySizes[0];
+            uniformCount = uniform.getBasicTypeElementCount();
             uniformName  = gl::StripLastArrayIndex(uniformName);
         }
 
         gl::UniformLocation uniformLoc      = program->getUniformLocation(uniformName);
-        const gl::UniformTypeInfo *typeInfo = uniform.typeInfo;
-        int componentCount                  = typeInfo->componentCount;
+        const gl::UniformTypeInfo &typeInfo = gl::GetUniformTypeInfo(uniform.getType());
+        int componentCount                  = typeInfo.componentCount;
         int uniformSize                     = uniformCount * componentCount;
 
         // For arrayed uniforms, we'll need to increment a read location
@@ -2540,7 +2530,7 @@ void CaptureUpdateUniformValues(const gl::State &replayState,
         }
 
         // Image uniforms are special and cannot be set this way
-        if (typeInfo->isImageType)
+        if (typeInfo.isImageType)
         {
             continue;
         }
@@ -2552,7 +2542,7 @@ void CaptureUpdateUniformValues(const gl::State &replayState,
         CallVector defaultUniformCalls({callsOut, &resetCalls[uniformLoc]});
 
         // Samplers should be populated with GL_INT, regardless of return type
-        if (typeInfo->isSampler)
+        if (typeInfo.isSampler)
         {
             std::vector<GLint> uniformBuffer(uniformSize);
             for (int index = 0; index < uniformCount; index++, readLoc.value++)
@@ -2571,7 +2561,7 @@ void CaptureUpdateUniformValues(const gl::State &replayState,
             continue;
         }
 
-        switch (typeInfo->componentType)
+        switch (typeInfo.componentType)
         {
             case GL_FLOAT:
             {
@@ -2583,7 +2573,7 @@ void CaptureUpdateUniformValues(const gl::State &replayState,
                     resourceTracker->setDefaultUniformBaseLocation(program->id(), readLoc,
                                                                    uniformLoc);
                 }
-                switch (typeInfo->type)
+                switch (typeInfo.type)
                 {
                     // Note: All matrix uniforms are populated without transpose
                     case GL_FLOAT_MAT4x3:

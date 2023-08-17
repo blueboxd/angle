@@ -213,9 +213,10 @@ bool ValidReadPixelsFormatType(const Context *context,
             }
         case GL_SIGNED_NORMALIZED:
             ASSERT(context->getExtensions().renderSnormEXT);
-            return format == GL_RGBA &&
-                   (type == GL_BYTE || (context->getExtensions().textureNorm16EXT &&
-                                        type == GL_SHORT && info->type == GL_SHORT));
+            ASSERT(info->type == GL_BYTE ||
+                   (context->getExtensions().textureNorm16EXT && info->type == GL_SHORT));
+            // Type conversions are not allowed for signed normalized color buffers
+            return format == GL_RGBA && type == info->type;
 
         case GL_INT:
             return (format == GL_RGBA_INTEGER && type == GL_INT);
@@ -2927,7 +2928,7 @@ bool ValidateUniform(const Context *context,
     Program *programObject       = context->getActiveLinkedProgram();
     return ValidateUniformCommonBase(context, entryPoint, programObject, location, count,
                                      &uniform) &&
-           ValidateUniformValue(context, entryPoint, valueType, uniform->type);
+           ValidateUniformValue(context, entryPoint, valueType, uniform->getType());
 }
 
 bool ValidateUniform1iv(const Context *context,
@@ -2940,7 +2941,7 @@ bool ValidateUniform1iv(const Context *context,
     Program *programObject       = context->getActiveLinkedProgram();
     return ValidateUniformCommonBase(context, entryPoint, programObject, location, count,
                                      &uniform) &&
-           ValidateUniform1ivValue(context, entryPoint, uniform->type, count, value);
+           ValidateUniform1ivValue(context, entryPoint, uniform->getType(), count, value);
 }
 
 bool ValidateUniformMatrix(const Context *context,
@@ -2960,7 +2961,7 @@ bool ValidateUniformMatrix(const Context *context,
     Program *programObject       = context->getActiveLinkedProgram();
     return ValidateUniformCommonBase(context, entryPoint, programObject, location, count,
                                      &uniform) &&
-           ValidateUniformMatrixValue(context, entryPoint, valueType, uniform->type);
+           ValidateUniformMatrixValue(context, entryPoint, valueType, uniform->getType());
 }
 
 bool ValidateStateQuery(const Context *context,
@@ -4695,7 +4696,7 @@ bool ValidateSizedGetUniform(const Context *context,
 
     // sized queries -- ensure the provided buffer is large enough
     const LinkedUniform &uniform = programObject->getUniformByLocation(location);
-    size_t requiredBytes         = VariableExternalSize(uniform.type);
+    size_t requiredBytes         = VariableExternalSize(uniform.getType());
     if (static_cast<size_t>(bufSize) < requiredBytes)
     {
         ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kInsufficientBufferSize);
@@ -4704,7 +4705,7 @@ bool ValidateSizedGetUniform(const Context *context,
 
     if (length)
     {
-        *length = VariableComponentCount(uniform.type);
+        *length = VariableComponentCount(uniform.getType());
     }
     return true;
 }

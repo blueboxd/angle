@@ -386,6 +386,11 @@ std::shared_ptr<WaitableCompileEvent> ShaderGL::compile(const gl::Context *conte
         options->scalarizeVecAndMatConstructorArgs = true;
     }
 
+    if (features.explicitFragmentLocations.enabled)
+    {
+        options->explicitFragmentLocations = true;
+    }
+
     if (mRenderer->getNativeExtensions().shaderPixelLocalStorageANGLE)
     {
         options->pls = mRenderer->getNativePixelLocalStorageOptions();
@@ -424,7 +429,7 @@ std::shared_ptr<WaitableCompileEvent> ShaderGL::compile(const gl::Context *conte
                                                               result);
         }
     }
-    else if (workerThreadPool->isAsync())
+    else if (workerThreadPool->isAsync() && !features.disableWorkerContexts.enabled)
     {
         auto compileAndCheckShaderInWorkerFunctor = [this](const char *source) {
             return compileAndCheckShaderInWorker(source);

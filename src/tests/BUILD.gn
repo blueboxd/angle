@@ -96,6 +96,9 @@ config("angle_common_test_utils_config") {
   if (angle_enable_gl_desktop_backend) {
     defines += [ "ANGLE_ENABLE_GL_DESKTOP_BACKEND" ]
   }
+  if (angle_enable_swiftshader) {
+    defines += [ "ANGLE_ENABLE_SWIFTSHADER" ]
+  }
 }
 
 template("angle_common_test_utils") {
@@ -237,6 +240,7 @@ if (is_win || is_linux || is_chromeos || is_android || is_fuchsia || is_apple) {
 
     sources = angle_end2end_tests_sources + [ "angle_end2end_tests_main.cpp" ]
     libs = []
+    configs += [ "${angle_root}:libANGLE_config" ]
 
     if (is_ios) {
       sources += angle_end2end_tests_ios_sources

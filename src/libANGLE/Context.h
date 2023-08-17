@@ -717,6 +717,10 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     egl::Error reacquireHighPowerGPU();
     void onGPUSwitch();
 
+    // EGL_ANGLE_external_context_and_surface implementation.
+    egl::Error acquireExternalContext(egl::Surface *drawAndReadSurface);
+    egl::Error releaseExternalContext();
+
     bool noopDraw(PrimitiveMode mode, GLsizei count) const;
     bool noopDrawInstanced(PrimitiveMode mode, GLsizei count, GLsizei instanceCount) const;
     bool noopMultiDraw(GLsizei drawcount) const;
@@ -726,7 +730,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
 
     void addRef() const { mRefCount++; }
     void release() const { mRefCount--; }
-    size_t getRefCount() const { return mRefCount; }
+    bool isReferenced() const { return mRefCount > 0; }
 
     egl::ShareGroup *getShareGroup() const { return mState.getShareGroup(); }
 
@@ -790,6 +794,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
 
   private:
     void initializeDefaultResources();
+    void releaseSharedObjects();
 
     angle::Result prepareForDraw(PrimitiveMode mode);
     angle::Result prepareForClear(GLbitfield mask);

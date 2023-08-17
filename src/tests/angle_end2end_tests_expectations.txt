@@ -534,7 +534,6 @@ b/273271471 WIN INTEL VULKAN : ShaderAlgorithmTest.rgb_to_hsl_vertex_shader/* = 
 5981 PIXEL4ORXL VULKAN : EXTBlendFuncExtendedDrawTestES31.UseTwoProgramStages/* = SKIP
 5981 PIXEL4ORXL VULKAN : GLSLTest_ES31.ParameterArrayArrayArraySampler/* = SKIP
 6794 PIXEL4ORXL VULKAN : MatrixTest31.Mat3x4StructVarying/* = SKIP
-5981 PIXEL4ORXL VULKAN : MultisampledRenderToTextureES3Test.ClearThenMaskedClearFramebufferTest/* = SKIP
 5981 PIXEL4ORXL VULKAN : PointSpriteTest.TrianglesNotTreatedAsPointSprites/* = SKIP
 5981 PIXEL4ORXL VULKAN : ProgramBinaryTransformFeedbackTest.GetTransformFeedbackVarying/* = SKIP
 5981 PIXEL4ORXL VULKAN : Texture2DArrayCopy.UnsignedByteFormats/* = SKIP
@@ -654,7 +653,7 @@ b/273271471 WIN INTEL VULKAN : ShaderAlgorithmTest.rgb_to_hsl_vertex_shader/* = 
 // ARM drivers cannot support xfb emulation because they lack support for the
 // vertexPipelineStoresAndAtomics Vulkan feature.  The tests that force-enable this feature are
 // skipped.
-7376 PIXEL6 VULKAN : *_EmulateTransformFeedback_NoSupportsTransformFeedbackExtension_NoSupportsPrimitivesGeneratedQuery_NoSupportsGeometryStreamsCapability = SKIP
+7376 PIXEL6 VULKAN : *_NoSupportsTransformFeedbackExtension = SKIP
 
 // Crashing in Mali shader compiler
 217922015 PIXEL6 VULKAN : GLSLTest_ES3.NestedPowFromUniform/* = SKIP
@@ -914,7 +913,9 @@ b/273271471 WIN INTEL VULKAN : ShaderAlgorithmTest.rgb_to_hsl_vertex_shader/* = 
 7994 IOS METAL : WebGL2ValidationStateChangeTest.MultiAttachmentDrawFramebufferNegativeAPI/ES3_Metal = SKIP
 8043 IOS METAL : FramebufferTest_ES3.RenderSharedExponent/ES3_Metal = SKIP
 8051 IOS METAL : Texture2DDepthStencilTestES3.TexSampleModes*Swizzled/ES3_Metal = SKIP
-
+8278 IOS METAL : GLSLTest_ES3.LiteralInfinityOutput/ES3_Metal = SKIP
+8278 IOS METAL : GLSLTest_ES3.LiteralNegativeInfinityOutput/ES3_Metal = SKIP
+  
 // Test is disabled as it only pertains to desktop GLSL
 6197 : GLSLTest_ES31.InterpolateAtWithSwizzle/* = SKIP
 
@@ -960,7 +961,7 @@ b/273271471 WIN INTEL VULKAN : ShaderAlgorithmTest.rgb_to_hsl_vertex_shader/* = 
 
 7112 SWIFTSHADER : TransformFeedbackTest.BaseInstance/* = SKIP
 7112 PIXEL4ORXL VULKAN : TransformFeedbackTest.BaseInstance/* = SKIP
-7112 VULKAN : TransformFeedbackTest.BaseInstance/ES3_Vulkan_EmulateTransformFeedback_NoSupportsTransformFeedbackExtension_NoSupportsPrimitivesGeneratedQuery_NoSupportsGeometryStreamsCapability = SKIP
+7112 VULKAN : TransformFeedbackTest.BaseInstance/ES3_Vulkan_NoSupportsTransformFeedbackExtension = SKIP
 
 // ASAN flaky timeouts and crashes with Win / Vulkan / Swiftshader
 6965 ASAN WIN VULKAN SWIFTSHADER : MipmapTest* = SKIP
@@ -1342,11 +1343,6 @@ b/266235549 D3D11 : ComputeShaderTest.SSBOAliasOverWrite/* = SKIP
 8212 MALIG710 VULKAN : ProgramPipelineTest31.ImageUniforms/* = SKIP
 8212 MALIG710 VULKAN : RobustBufferAccessBehaviorTest.DrawElementsIndexOutOfRangeWithDynamicDraw/* = SKIP
 8212 MALIG710 VULKAN : RobustBufferAccessBehaviorTest.DrawElementsIndexOutOfRangeWithStaticDraw/* = SKIP
-8212 MALIG710 VULKAN : Texture2DTestES3.TexStorage2DCycleThroughYuvAndRgbSources/* = SKIP
-8212 MALIG710 VULKAN : Texture2DTestES3.TexStorage2DCycleThroughYuvSourcesNoData/* = SKIP
-8212 MALIG710 VULKAN : Texture2DTestES3.TexStorage2DLargeYuvTextureCount/* = SKIP
-8212 MALIG710 VULKAN : Texture2DTestES3.TexStorage2DSimultaneousUseOfMultipleYuvSourcesNoData/* = SKIP
-8212 MALIG710 VULKAN : Texture2DTestES3YUV.TexStorage2DYuvFilterModes/* = SKIP
 8212 MALIG710 VULKAN : TransformFeedbackTest.BaseInstance/* = SKIP
 8212 MALIG710 VULKAN : TransformFeedbackTest.BufferRebinding/* = SKIP
 8212 MALIG710 VULKAN : TransformFeedbackTest.OffsetResetOnBeginTransformFeedback/* = SKIP

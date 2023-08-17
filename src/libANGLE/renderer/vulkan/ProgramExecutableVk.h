@@ -30,10 +30,11 @@ class ShaderInfo final : angle::NonCopyable
     ShaderInfo();
     ~ShaderInfo();
 
-    angle::Result initShaders(ContextVk *contextVk,
+    angle::Result initShaders(vk::Context *context,
                               const gl::ShaderBitSet &linkedShaderStages,
                               const gl::ShaderMap<const angle::spirv::Blob *> &spirvBlobs,
-                              const ShaderInterfaceVariableInfoMap &variableInfoMap);
+                              const ShaderInterfaceVariableInfoMap &variableInfoMap,
+                              bool isGLES1);
     void initShaderFromProgram(gl::ShaderType shaderType, const ShaderInfo &programShaderInfo);
     void clear();
 
@@ -68,7 +69,7 @@ class ProgramInfo final : angle::NonCopyable
     ProgramInfo();
     ~ProgramInfo();
 
-    angle::Result initProgram(ContextVk *contextVk,
+    angle::Result initProgram(vk::Context *context,
                               gl::ShaderType shaderType,
                               bool isLastPreFragmentStage,
                               bool isTransformFeedbackProgram,
@@ -157,10 +158,12 @@ class ProgramExecutableVk
                                                 const vk::GraphicsPipelineDesc **descPtrOut,
                                                 vk::PipelineHelper **pipelineOut);
 
-    angle::Result getOrCreateComputePipeline(ContextVk *contextVk,
+    angle::Result getOrCreateComputePipeline(vk::Context *context,
                                              vk::PipelineCacheAccess *pipelineCache,
                                              PipelineSource source,
                                              const gl::ProgramExecutable &glExecutable,
+                                             vk::PipelineRobustness pipelineRobustness,
+                                             vk::PipelineProtectedAccess pipelineProtectedAccess,
                                              vk::PipelineHelper **pipelineOut);
 
     const vk::PipelineLayout &getPipelineLayout() const { return mPipelineLayout.get(); }
@@ -251,8 +254,11 @@ class ProgramExecutableVk
 
     const ShaderInterfaceVariableInfoMap &getVariableInfoMap() const { return mVariableInfoMap; }
 
-    angle::Result warmUpPipelineCache(ContextVk *contextVk,
-                                      const gl::ProgramExecutable &glExecutable);
+    angle::Result warmUpPipelineCache(vk::Context *context,
+                                      const gl::ProgramExecutable &glExecutable,
+                                      vk::PipelineRobustness pipelineRobustness,
+                                      vk::PipelineProtectedAccess pipelineProtectedAccess,
+                                      vk::RenderPass *temporaryCompatibleRenderPassOut);
 
     const vk::WriteDescriptorDescs &getShaderResourceWriteDescriptorDescs() const
     {
@@ -271,6 +277,20 @@ class ProgramExecutableVk
     }
     const gl::Program::DirtyBits &getDirtyBits() const { return mDirtyBits; }
     void resetUniformBufferDirtyBits() { mDirtyBits.reset(); }
+
+    // The following functions are for internal use of programs, including from a threaded link job:
+    angle::Result resizeUniformBlockMemory(vk::Context *context,
+                                           const gl::ProgramExecutable &glExecutable,
+                                           const gl::ShaderMap<size_t> &requiredBufferSize);
+    void resolvePrecisionMismatch(const gl::ProgramMergedVaryings &mergedVaryings);
+    angle::Result initShaders(vk::Context *context,
+                              const gl::ShaderBitSet &linkedShaderStages,
+                              const gl::ShaderMap<const angle::spirv::Blob *> &spirvBlobs,
+                              bool isGLES1)
+    {
+        return mOriginalShaderInfo.initShaders(context, linkedShaderStages, spirvBlobs,
+                                               mVariableInfoMap, isGLES1);
+    }
 
   private:
     friend class ProgramVk;
@@ -293,13 +313,11 @@ class ProgramExecutableVk
         const gl::ActiveTextureArray<TextureVk *> *activeTextures,
         vk::DescriptorSetLayoutDesc *descOut);
 
-    void resolvePrecisionMismatch(const gl::ProgramMergedVaryings &mergedVaryings);
-
     size_t calcUniformUpdateRequiredSpace(vk::Context *context,
                                           const gl::ProgramExecutable &glExecutable,
                                           gl::ShaderMap<VkDeviceSize> *uniformOffsets) const;
 
-    ANGLE_INLINE angle::Result initProgram(ContextVk *contextVk,
+    ANGLE_INLINE angle::Result initProgram(vk::Context *context,
                                            gl::ShaderType shaderType,
                                            bool isLastPreFragmentStage,
                                            bool isTransformFeedbackProgram,
@@ -313,7 +331,7 @@ class ProgramExecutableVk
         // specialization constants.
         if (!programInfo->valid(shaderType))
         {
-            ANGLE_TRY(programInfo->initProgram(contextVk, shaderType, isLastPreFragmentStage,
+            ANGLE_TRY(programInfo->initProgram(context, shaderType, isLastPreFragmentStage,
                                                isTransformFeedbackProgram, mOriginalShaderInfo,
                                                optionBits, variableInfoMap));
         }
@@ -323,7 +341,7 @@ class ProgramExecutableVk
     }
 
     ANGLE_INLINE angle::Result initGraphicsShaderProgram(
-        ContextVk *contextVk,
+        vk::Context *context,
         gl::ShaderType shaderType,
         bool isLastPreFragmentStage,
         bool isTransformFeedbackProgram,
@@ -331,40 +349,37 @@ class ProgramExecutableVk
         ProgramInfo *programInfo,
         const ShaderInterfaceVariableInfoMap &variableInfoMap)
     {
-        return initProgram(contextVk, shaderType, isLastPreFragmentStage,
-                           isTransformFeedbackProgram, optionBits, programInfo, variableInfoMap);
+        return initProgram(context, shaderType, isLastPreFragmentStage, isTransformFeedbackProgram,
+                           optionBits, programInfo, variableInfoMap);
     }
 
     ANGLE_INLINE angle::Result initComputeProgram(
-        ContextVk *contextVk,
+        vk::Context *context,
         ProgramInfo *programInfo,
         const ShaderInterfaceVariableInfoMap &variableInfoMap)
     {
         ProgramTransformOptions optionBits = {};
-        return initProgram(contextVk, gl::ShaderType::Compute, false, false, optionBits,
-                           programInfo, variableInfoMap);
+        return initProgram(context, gl::ShaderType::Compute, false, false, optionBits, programInfo,
+                           variableInfoMap);
     }
 
     ProgramTransformOptions getTransformOptions(ContextVk *contextVk,
                                                 const vk::GraphicsPipelineDesc &desc,
                                                 const gl::ProgramExecutable &glExecutable);
-    angle::Result initGraphicsShaderPrograms(ContextVk *contextVk,
+    angle::Result initGraphicsShaderPrograms(vk::Context *context,
                                              ProgramTransformOptions transformOptions,
                                              const gl::ProgramExecutable &glExecutable,
                                              vk::ShaderProgramHelper **shaderProgramOut);
-    angle::Result createGraphicsPipelineImpl(ContextVk *contextVk,
+    angle::Result createGraphicsPipelineImpl(vk::Context *context,
                                              ProgramTransformOptions transformOptions,
                                              vk::GraphicsPipelineSubset pipelineSubset,
                                              vk::PipelineCacheAccess *pipelineCache,
                                              PipelineSource source,
                                              const vk::GraphicsPipelineDesc &desc,
+                                             const vk::RenderPass &compatibleRenderPass,
                                              const gl::ProgramExecutable &glExecutable,
                                              const vk::GraphicsPipelineDesc **descPtrOut,
                                              vk::PipelineHelper **pipelineOut);
-
-    angle::Result resizeUniformBlockMemory(ContextVk *contextVk,
-                                           const gl::ProgramExecutable &glExecutable,
-                                           const gl::ShaderMap<size_t> &requiredBufferSize);
 
     angle::Result getOrAllocateDescriptorSet(vk::Context *context,
                                              UpdateDescriptorSetsBuilder *updateBuilder,
@@ -376,10 +391,10 @@ class ProgramExecutableVk
 
     // When loading from cache / binary, initialize the pipeline cache with given data.  Otherwise
     // the cache is lazily created as needed.
-    angle::Result initializePipelineCache(ContextVk *contextVk,
+    angle::Result initializePipelineCache(vk::Context *context,
                                           bool compressed,
                                           const std::vector<uint8_t> &pipelineData);
-    angle::Result ensurePipelineCacheInitialized(ContextVk *contextVk);
+    angle::Result ensurePipelineCacheInitialized(vk::Context *context);
 
     void resetLayout(ContextVk *contextVk);
     void initializeWriteDescriptorDesc(ContextVk *contextVk,

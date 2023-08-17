@@ -159,11 +159,11 @@ RendererGL::RendererGL(std::unique_ptr<FunctionsGL> functions,
       mNeedsFlushBeforeDeleteTextures(false)
 {
     ASSERT(mFunctions);
+    ApplyFeatureOverrides(&mFeatures, display->getState());
     if (!display->getState().featuresAllDisabled)
     {
         nativegl_gl::InitializeFeatures(mFunctions.get(), &mFeatures);
     }
-    ApplyFeatureOverrides(&mFeatures, display->getState());
     mStateManager =
         new StateManagerGL(mFunctions.get(), getNativeCaps(), getNativeExtensions(), mFeatures);
     mBlitter          = new BlitGL(mFunctions.get(), mFeatures, mStateManager);
@@ -397,10 +397,7 @@ void RendererGL::framebufferFetchBarrier()
 
 bool RendererGL::bindWorkerContext(std::string *infoLog)
 {
-    if (mFeatures.disableWorkerContexts.enabled)
-    {
-        return false;
-    }
+    ASSERT(!mFeatures.disableWorkerContexts.enabled);
 
     std::lock_guard<std::mutex> lock(mWorkerMutex);
     std::unique_ptr<WorkerContext> workerContext;

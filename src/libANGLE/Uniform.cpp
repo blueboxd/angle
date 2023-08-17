@@ -5,6 +5,8 @@
 //
 
 #include "libANGLE/Uniform.h"
+#include "common/BinaryStream.h"
+#include "libANGLE/ProgramLinkedResources.h"
 
 #include <cstring>
 
@@ -43,67 +45,76 @@ void ActiveVariable::unionReferencesWith(const ActiveVariable &other)
 }
 
 LinkedUniform::LinkedUniform()
-    : typeInfo(nullptr),
-      bufferIndex(-1),
-      blockInfo(sh::kDefaultBlockMemberInfo),
-      outerArrayOffset(0)
-{}
+{
+    memset(this, 0, sizeof(*this));
+    blockInfo      = sh::BlockMemberInfo();
+    activeVariable = ActiveVariable();
+}
 
 LinkedUniform::LinkedUniform(GLenum typeIn,
                              GLenum precisionIn,
-                             const std::string &nameIn,
                              const std::vector<unsigned int> &arraySizesIn,
                              const int bindingIn,
                              const int offsetIn,
                              const int locationIn,
                              const int bufferIndexIn,
                              const sh::BlockMemberInfo &blockInfoIn)
-    : typeInfo(&GetUniformTypeInfo(typeIn)),
-      bufferIndex(bufferIndexIn),
-      blockInfo(blockInfoIn),
-      outerArrayOffset(0)
 {
-    type       = typeIn;
-    precision  = precisionIn;
-    name       = nameIn;
-    arraySizes = arraySizesIn;
-    binding    = bindingIn;
-    offset     = offsetIn;
-    location   = locationIn;
-    ASSERT(!isArrayOfArrays());
-    ASSERT(!isArray() || !isStruct());
+    memset(this, 0, sizeof(*this));
+    // Note: Ensure every data member is initialized.
+    type                          = typeIn;
+    precision                     = precisionIn;
+    imageUnitFormat               = GL_NONE;
+    location                      = locationIn;
+    binding                       = bindingIn;
+    offset                        = offsetIn;
+    bufferIndex                   = bufferIndexIn;
+    blockInfo                     = blockInfoIn;
+    activeVariable                = ActiveVariable();
+    id                            = 0;
+    flattenedOffsetInParentArrays = -1;
+    outerArraySizeProduct         = 1;
+    outerArrayOffset              = 0;
+    arraySize                     = arraySizesIn.empty() ? 1 : arraySizesIn[0];
+
+    flagBitsAsUInt   = 0;
+    flagBits.isArray = !arraySizesIn.empty();
+    ASSERT(arraySizesIn.size() <= 1);
 }
 
-LinkedUniform::LinkedUniform(const sh::ShaderVariable &uniform)
-    : sh::ShaderVariable(uniform),
-      typeInfo(&GetUniformTypeInfo(type)),
-      bufferIndex(-1),
-      blockInfo(sh::kDefaultBlockMemberInfo)
+LinkedUniform::LinkedUniform(const LinkedUniform &other)
 {
-    ASSERT(!isArrayOfArrays());
-    ASSERT(!isArray() || !isStruct());
+    memcpy(this, &other, sizeof(LinkedUniform));
 }
 
-LinkedUniform::LinkedUniform(const LinkedUniform &uniform)
-    : sh::ShaderVariable(uniform),
-      ActiveVariable(uniform),
-      typeInfo(uniform.typeInfo),
-      bufferIndex(uniform.bufferIndex),
-      blockInfo(uniform.blockInfo),
-      outerArraySizes(uniform.outerArraySizes),
-      outerArrayOffset(uniform.outerArrayOffset)
-{}
-
-LinkedUniform &LinkedUniform::operator=(const LinkedUniform &uniform)
+LinkedUniform::LinkedUniform(const UsedUniform &usedUniform)
 {
-    sh::ShaderVariable::operator=(uniform);
-    ActiveVariable::operator=(uniform);
-    typeInfo         = uniform.typeInfo;
-    bufferIndex      = uniform.bufferIndex;
-    blockInfo        = uniform.blockInfo;
-    outerArraySizes  = uniform.outerArraySizes;
-    outerArrayOffset = uniform.outerArrayOffset;
-    return *this;
+    memset(this, 0, sizeof(*this));
+
+    ASSERT(!usedUniform.isArrayOfArrays());
+    ASSERT(!usedUniform.isStruct());
+    ASSERT(usedUniform.active);
+
+    // Note: Ensure every data member is initialized.
+    type                          = usedUniform.type;
+    precision                     = usedUniform.precision;
+    imageUnitFormat               = usedUniform.imageUnitFormat;
+    location                      = usedUniform.location;
+    binding                       = usedUniform.binding;
+    offset                        = usedUniform.offset;
+    bufferIndex                   = usedUniform.bufferIndex;
+    blockInfo                     = usedUniform.blockInfo;
+    activeVariable                = usedUniform.activeVariable;
+    id                            = usedUniform.id;
+    flattenedOffsetInParentArrays = usedUniform.getFlattenedOffsetInParentArrays();
+    outerArraySizeProduct         = ArraySizeProduct(usedUniform.outerArraySizes);
+    outerArrayOffset              = usedUniform.outerArrayOffset;
+    arraySize                     = usedUniform.isArray() ? usedUniform.getArraySizeProduct() : 1u;
+
+    flagBitsAsUInt               = 0;
+    flagBits.isFragmentInOut     = usedUniform.isFragmentInOut;
+    flagBits.texelFetchStaticUse = usedUniform.texelFetchStaticUse;
+    flagBits.isArray             = usedUniform.isArray();
 }
 
 LinkedUniform::~LinkedUniform() {}

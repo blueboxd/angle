@@ -28,12 +28,10 @@
 #include "mtl_command_buffer.h"
 #include "platform/PlatformMethods.h"
 
-#if TARGET_OS_SIMULATOR
+#if TARGET_OS_SIMULATOR && !ANGLE_METAL_XCODE_BUILDS_SHADERS
 #    include "libANGLE/renderer/metal/shaders/mtl_internal_shaders_src_autogen.h"
-#elif defined(ANGLE_PLATFORM_MACOS)
-#    include "libANGLE/renderer/metal/shaders/mtl_internal_shaders_macos_autogen.h"
 #else
-#    include "libANGLE/renderer/metal/shaders/mtl_internal_shaders_ios_autogen.h"
+#    include "libANGLE/renderer/metal/shaders/mtl_internal_shaders_metallib.h"
 #endif
 
 #include "EGL/eglext.h"
@@ -135,10 +133,7 @@ angle::Result DisplayMtl::initializeImpl(egl::Display *display)
 
         mCapsInitialized = false;
 
-        if (!mState.featuresAllDisabled)
-        {
-            initializeFeatures();
-        }
+        initializeFeatures();
 
         if (mFeatures.requireGpuFamily2.enabled && !supportsEitherGPUFamily(1, 2))
         {
@@ -1234,6 +1229,12 @@ void DisplayMtl::initializeFeatures()
     bool isSimulator = TARGET_OS_SIMULATOR;
     bool isARM       = ANGLE_APPLE_IS_ARM;
 
+    ApplyFeatureOverrides(&mFeatures, getState());
+    if (mState.featuresAllDisabled)
+    {
+        return;
+    }
+
     ANGLE_FEATURE_CONDITION((&mFeatures), allowGenMultipleMipsPerPass, true);
     ANGLE_FEATURE_CONDITION((&mFeatures), forceBufferGPUStorage, false);
     ANGLE_FEATURE_CONDITION((&mFeatures), hasExplicitMemBarrier,
@@ -1339,14 +1340,12 @@ void DisplayMtl::initializeFeatures()
 
     // anglebug.com/8258 Builtin shaders currently require MSL 2.1
     ANGLE_FEATURE_CONDITION((&mFeatures), requireMsl21, true);
-
-    ApplyFeatureOverrides(&mFeatures, getState());
 }
 
 angle::Result DisplayMtl::initializeShaderLibrary()
 {
     mtl::AutoObjCPtr<NSError *> err = nil;
-#if TARGET_OS_SIMULATOR
+#if TARGET_OS_SIMULATOR && !ANGLE_METAL_XCODE_BUILDS_SHADERS
     mDefaultShaders = mtl::CreateShaderLibrary(getMetalDevice(), gDefaultMetallibSrc,
                                                std::size(gDefaultMetallibSrc), &err);
 #else

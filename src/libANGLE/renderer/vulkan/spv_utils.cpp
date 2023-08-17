@@ -690,7 +690,7 @@ void AssignInputAttachmentBindings(const SpvSourceOptions &options,
         ASSERT(inputAttachmentUniform.isActive(gl::ShaderType::Fragment));
 
         const uint32_t inputAttachmentBindingIndex =
-            baseInputAttachmentBindingIndex + inputAttachmentUniform.location;
+            baseInputAttachmentBindingIndex + inputAttachmentUniform.getLocation();
 
         AddResourceInfo(variableInfoMapOut, activeShaders, gl::ShaderType::Fragment,
 
@@ -781,7 +781,8 @@ void AssignImageBindings(const SpvSourceOptions &options,
             continue;
         }
 
-        const bool isIndexZero = UniformNameIsIndexZero(imageUniform.name);
+        const bool isIndexZero =
+            UniformNameIsIndexZero(programExecutable.getUniformNameByIndex(uniformIndex));
         if (!isIndexZero)
         {
             continue;
@@ -837,7 +838,8 @@ void AssignTextureBindings(const SpvSourceOptions &options,
             continue;
         }
 
-        const bool isIndexZero = UniformNameIsIndexZero(samplerUniform.name);
+        const bool isIndexZero =
+            UniformNameIsIndexZero(programExecutable.getUniformNameByIndex(uniformIndex));
         if (!isIndexZero)
         {
             continue;
@@ -4941,20 +4943,22 @@ void SpvAssignTransformFeedbackLocations(gl::ShaderType shaderType,
     }
 }
 
-void SpvGetShaderSpirvCode(const gl::Context *context,
-                           const SpvSourceOptions &options,
-                           const gl::ProgramState &programState,
-                           const gl::ProgramLinkedResources &resources,
-                           SpvProgramInterfaceInfo *programInterfaceInfo,
-                           gl::ShaderMap<const spirv::Blob *> *spirvBlobsOut,
-                           ShaderInterfaceVariableInfoMap *variableInfoMapOut)
+void SpvGetShaderSpirvCode(const gl::ProgramState &programState,
+                           gl::ShaderMap<const spirv::Blob *> *spirvBlobsOut)
 {
     for (const gl::ShaderType shaderType : gl::AllShaderTypes())
     {
         gl::Shader *glShader         = programState.getAttachedShader(shaderType);
-        (*spirvBlobsOut)[shaderType] = glShader ? &glShader->getCompiledBinary(context) : nullptr;
+        (*spirvBlobsOut)[shaderType] = glShader ? &glShader->getCompiledBinaryCompiled() : nullptr;
     }
+}
 
+void SpvAssignAllLocations(const SpvSourceOptions &options,
+                           const gl::ProgramState &programState,
+                           const gl::ProgramLinkedResources &resources,
+                           SpvProgramInterfaceInfo *programInterfaceInfo,
+                           ShaderInterfaceVariableInfoMap *variableInfoMapOut)
+{
     const gl::ProgramExecutable &programExecutable = programState.getExecutable();
     gl::ShaderType xfbStage = programState.getAttachedTransformFeedbackStage();
 

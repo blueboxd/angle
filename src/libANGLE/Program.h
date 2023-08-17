@@ -178,7 +178,8 @@ class ProgramBindings final : angle::NonCopyable
 
     void bindLocation(GLuint index, const std::string &name);
     int getBindingByName(const std::string &name) const;
-    int getBinding(const sh::ShaderVariable &variable) const;
+    template <typename T>
+    int getBinding(const T &variable) const;
 
     using const_iterator = angle::HashMap<std::string, GLuint>::const_iterator;
     const_iterator begin() const;
@@ -200,7 +201,8 @@ class ProgramAliasedBindings final : angle::NonCopyable
     void bindLocation(GLuint index, const std::string &name);
     int getBindingByName(const std::string &name) const;
     int getBindingByLocation(GLuint location) const;
-    int getBinding(const sh::ShaderVariable &variable) const;
+    template <typename T>
+    int getBinding(const T &variable) const;
 
     using const_iterator = angle::HashMap<std::string, ProgramBinding>::const_iterator;
     const_iterator begin() const;
@@ -259,6 +261,14 @@ class ProgramState final : angle::NonCopyable
         return mExecutable->getSecondaryOutputLocations();
     }
     const std::vector<LinkedUniform> &getUniforms() const { return mExecutable->getUniforms(); }
+    const std::vector<std::string> &getUniformNames() const
+    {
+        return mExecutable->getUniformNames();
+    }
+    const std::vector<std::string> &getUniformMappedNames() const
+    {
+        return mExecutable->getUniformMappedNames();
+    }
     const std::vector<VariableLocation> &getUniformLocations() const { return mUniformLocations; }
     const std::vector<InterfaceBlock> &getUniformBlocks() const
     {
@@ -442,7 +452,7 @@ class Program final : public LabeledObject, public angle::Subject
         return mProgram;
     }
 
-    void attachShader(Shader *shader);
+    void attachShader(const Context *context, Shader *shader);
     void detachShader(const Context *context, Shader *shader);
     int getAttachedShadersCount() const;
 
@@ -529,6 +539,14 @@ class Program final : public LabeledObject, public angle::Subject
     {
         ASSERT(!mLinkingState);
         return mState.mExecutable->getUniformByIndex(index);
+    }
+    const std::string &getUniformNameByIndex(GLuint index) const
+    {
+        return mState.getUniformNames()[index];
+    }
+    const std::string &getUniformMappedNameByIndex(GLuint index) const
+    {
+        return mState.getUniformMappedNames()[index];
     }
 
     const BufferVariable &getBufferVariableByIndex(GLuint index) const;
@@ -800,7 +818,7 @@ class Program final : public LabeledObject, public angle::Subject
     void unlink();
     void deleteSelf(const Context *context);
 
-    angle::Result linkImpl(const Context *context);
+    angle::Result linkImpl(const Context *context, ScopedShaderLinkLocks *shaderLocks);
 
     bool linkValidateShaders(const Context *context, InfoLog &infoLog);
     bool linkAttributes(const Context *context, InfoLog &infoLog);

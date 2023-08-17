@@ -16,6 +16,7 @@
 #include "common/bitset_utils.h"
 #include "common/debug.h"
 #include "common/platform.h"
+#include "common/platform_helpers.h"
 #include "common/string_utils.h"
 #include "common/utilities.h"
 #include "compiler/translator/blocklayout.h"
@@ -128,6 +129,23 @@ GLuint GetResourceIndexFromName(const std::vector<VarT> &list, const std::string
     return GL_INVALID_INDEX;
 }
 
+GLuint GetUniformIndexFromName(const std::vector<LinkedUniform> &uniformList,
+                               const std::vector<std::string> &nameList,
+                               const std::string &name)
+{
+    std::string nameAsArrayName = name + "[0]";
+    for (size_t index = 0; index < nameList.size(); index++)
+    {
+        const std::string &uniformName = nameList[index];
+        if (uniformName == name || (uniformList[index].isArray() && uniformName == nameAsArrayName))
+        {
+            return static_cast<GLuint>(index);
+        }
+    }
+
+    return GL_INVALID_INDEX;
+}
+
 GLint GetVariableLocation(const std::vector<sh::ShaderVariable> &list,
                           const std::vector<VariableLocation> &locationList,
                           const std::string &name)
@@ -161,9 +179,10 @@ GLint GetVariableLocation(const std::vector<sh::ShaderVariable> &list,
     return -1;
 }
 
-GLint GetVariableLocation(const std::vector<LinkedUniform> &list,
-                          const std::vector<VariableLocation> &locationList,
-                          const std::string &name)
+GLint GetUniformLocation(const std::vector<LinkedUniform> &uniformList,
+                         const std::vector<std::string> &nameList,
+                         const std::vector<VariableLocation> &locationList,
+                         const std::string &name)
 {
     size_t nameLengthWithoutArrayIndex;
     unsigned int arrayIndex = ParseArrayIndex(name, &nameLengthWithoutArrayIndex);
@@ -176,23 +195,24 @@ GLint GetVariableLocation(const std::vector<LinkedUniform> &list,
             continue;
         }
 
-        const LinkedUniform &variable = list[variableLocation.index];
+        const LinkedUniform &variable  = uniformList[variableLocation.index];
+        const std::string &uniformName = nameList[variableLocation.index];
 
         // Array output variables may be bound out of order, so we need to ensure we only pick the
         // first element if given the base name. Uniforms don't allow this behavior and some code
         // seemingly depends on the opposite behavior, so only enable it for output variables.
-        if (angle::BeginsWith(variable.name, name) && (variableLocation.arrayIndex == 0))
+        if (angle::BeginsWith(uniformName, name) && (variableLocation.arrayIndex == 0))
         {
-            if (name.length() == variable.name.length())
+            if (name.length() == uniformName.length())
             {
-                ASSERT(name == variable.name);
+                ASSERT(name == uniformName);
                 // GLES 3.1 November 2016 page 87.
                 // The string exactly matches the name of the active variable.
                 return static_cast<GLint>(location);
             }
-            if (name.length() + 3u == variable.name.length() && variable.isArray())
+            if (name.length() + 3u == uniformName.length() && variable.isArray())
             {
-                ASSERT(name + "[0]" == variable.name);
+                ASSERT(name + "[0]" == uniformName);
                 // The string identifies the base name of an active array, where the string would
                 // exactly match the name of the variable if the suffix "[0]" were appended to the
                 // string.
@@ -200,10 +220,10 @@ GLint GetVariableLocation(const std::vector<LinkedUniform> &list,
             }
         }
         if (variable.isArray() && variableLocation.arrayIndex == arrayIndex &&
-            nameLengthWithoutArrayIndex + 3u == variable.name.length() &&
-            angle::BeginsWith(variable.name, name, nameLengthWithoutArrayIndex))
+            nameLengthWithoutArrayIndex + 3u == uniformName.length() &&
+            angle::BeginsWith(uniformName, name, nameLengthWithoutArrayIndex))
         {
-            ASSERT(name.substr(0u, nameLengthWithoutArrayIndex) + "[0]" == variable.name);
+            ASSERT(name.substr(0u, nameLengthWithoutArrayIndex) + "[0]" == uniformName);
             // The string identifies an active element of the array, where the string ends with the
             // concatenation of the "[" character, an integer (with no "+" sign, extra leading
             // zeroes, or whitespace) identifying an array element, and the "]" character, the
@@ -425,36 +445,40 @@ void LoadActiveVariable(BinaryInputStream *stream, ActiveVariable *var)
 
 void WriteShaderVariableBuffer(BinaryOutputStream *stream, const ShaderVariableBuffer &var)
 {
-    WriteActiveVariable(stream, var);
+    WriteActiveVariable(stream, var.activeVariable);
 
     stream->writeInt(var.binding);
     stream->writeInt(var.dataSize);
 
     stream->writeInt(var.memberIndexes.size());
-    for (unsigned int memberCounterIndex : var.memberIndexes)
+    if (!var.memberIndexes.empty())
     {
-        stream->writeInt(memberCounterIndex);
+        stream->writeBytes(reinterpret_cast<const unsigned char *>(var.memberIndexes.data()),
+                           sizeof(*var.memberIndexes.data()) * var.memberIndexes.size());
     }
 }
 
 void LoadShaderVariableBuffer(BinaryInputStream *stream, ShaderVariableBuffer *var)
 {
-    LoadActiveVariable(stream, var);
+    LoadActiveVariable(stream, &var->activeVariable);
 
     var->binding  = stream->readInt<int>();
     var->dataSize = stream->readInt<unsigned int>();
 
+    ASSERT(var->memberIndexes.empty());
     size_t numMembers = stream->readInt<size_t>();
-    for (size_t blockMemberIndex = 0; blockMemberIndex < numMembers; blockMemberIndex++)
+    if (numMembers > 0)
     {
-        var->memberIndexes.push_back(stream->readInt<unsigned int>());
+        var->memberIndexes.resize(numMembers);
+        stream->readBytes(reinterpret_cast<unsigned char *>(var->memberIndexes.data()),
+                          sizeof(unsigned int) * var->memberIndexes.size());
     }
 }
 
 void WriteBufferVariable(BinaryOutputStream *stream, const BufferVariable &var)
 {
     WriteShaderVar(stream, var);
-    WriteActiveVariable(stream, var);
+    WriteActiveVariable(stream, var.activeVariable);
 
     stream->writeInt(var.bufferIndex);
     WriteBlockMemberInfo(stream, var.blockInfo);
@@ -464,7 +488,7 @@ void WriteBufferVariable(BinaryOutputStream *stream, const BufferVariable &var)
 void LoadBufferVariable(BinaryInputStream *stream, BufferVariable *var)
 {
     LoadShaderVar(stream, var);
-    LoadActiveVariable(stream, var);
+    LoadActiveVariable(stream, &(var->activeVariable));
 
     var->bufferIndex = stream->readInt<int>();
     LoadBlockMemberInfo(stream, &var->blockInfo);
@@ -646,6 +670,8 @@ VariableLocation::VariableLocation(unsigned int arrayIndex, unsigned int index)
 }
 
 // SamplerBindings implementation.
+SamplerBinding::SamplerBinding() = default;
+
 SamplerBinding::SamplerBinding(TextureType textureTypeIn,
                                GLenum samplerTypeIn,
                                SamplerFormat formatIn,
@@ -676,7 +702,8 @@ int ProgramBindings::getBindingByName(const std::string &name) const
     return (iter != mBindings.end()) ? iter->second : -1;
 }
 
-int ProgramBindings::getBinding(const sh::ShaderVariable &variable) const
+template <typename T>
+int ProgramBindings::getBinding(const T &variable) const
 {
     return getBindingByName(variable.name);
 }
@@ -742,7 +769,8 @@ int ProgramAliasedBindings::getBindingByLocation(GLuint location) const
     return -1;
 }
 
-int ProgramAliasedBindings::getBinding(const sh::ShaderVariable &variable) const
+template <typename T>
+int ProgramAliasedBindings::getBinding(const T &variable) const
 {
     const std::string &name = variable.name;
 
@@ -778,6 +806,10 @@ int ProgramAliasedBindings::getBinding(const sh::ShaderVariable &variable) const
 
     return getBindingByName(name);
 }
+template int ProgramAliasedBindings::getBinding<gl::UsedUniform>(
+    const gl::UsedUniform &variable) const;
+template int ProgramAliasedBindings::getBinding<sh::ShaderVariable>(
+    const sh::ShaderVariable &variable) const;
 
 ProgramAliasedBindings::const_iterator ProgramAliasedBindings::begin() const
 {
@@ -806,6 +838,8 @@ ImageBinding::ImageBinding(GLuint imageUnit, size_t count, TextureType textureTy
         boundImageUnits.push_back(imageUnit + static_cast<GLuint>(index));
     }
 }
+
+ImageBinding::ImageBinding() = default;
 
 ImageBinding::ImageBinding(const ImageBinding &other) = default;
 
@@ -847,7 +881,7 @@ Shader *ProgramState::getAttachedShader(ShaderType shaderType) const
 
 GLuint ProgramState::getUniformIndexFromName(const std::string &name) const
 {
-    return GetResourceIndexFromName(mExecutable->mUniforms, name);
+    return GetUniformIndexFromName(mExecutable->mUniforms, mExecutable->mUniformNames, name);
 }
 
 GLuint ProgramState::getBufferVariableIndexFromName(const std::string &name) const
@@ -1022,8 +1056,9 @@ const std::string &Program::getLabel() const
     return mState.mLabel;
 }
 
-void Program::attachShader(Shader *shader)
+void Program::attachShader(const Context *context, Shader *shader)
 {
+    resolveLink(context);
     ShaderType shaderType = shader->getType();
     ASSERT(shaderType != ShaderType::InvalidEnum);
 
@@ -1087,13 +1122,25 @@ void Program::bindFragmentOutputIndex(GLuint index, const char *name)
 
 angle::Result Program::link(const Context *context)
 {
+    // Lock the shaders before linking, to prevent them from being modified during a following
+    // recompile
+    ScopedShaderLinkLocks shaderLocks;
+    for (ShaderType shaderType : angle::AllEnums<ShaderType>())
+    {
+        gl::Shader *shader = mState.mAttachedShaders[shaderType];
+        if (shader)
+        {
+            shaderLocks[shaderType] = shader->lockAndGetScopedShaderLinkLock();
+        }
+    }
+
     const angle::FrontendFeatures &frontendFeatures = context->getFrontendFeatures();
     if (frontendFeatures.dumpShaderSource.enabled)
     {
         dumpProgramInfo();
     }
 
-    angle::Result result = linkImpl(context);
+    angle::Result result = linkImpl(context, &shaderLocks);
 
     // Avoid having two ProgramExecutables if the link failed and the Program had successfully
     // linked previously.
@@ -1108,7 +1155,7 @@ angle::Result Program::link(const Context *context)
 // The attached shaders are checked for linking errors by matching up their variables.
 // Uniform, input and output variables get collected.
 // The code gets compiled into binaries.
-angle::Result Program::linkImpl(const Context *context)
+angle::Result Program::linkImpl(const Context *context, ScopedShaderLinkLocks *shaderLocks)
 {
     ASSERT(!mLinkingState);
     // Don't make any local variables pointing to anything within the ProgramExecutable, since
@@ -1165,6 +1212,7 @@ angle::Result Program::linkImpl(const Context *context)
     ProgramLinkedResources &resources = linkingState->resources;
 
     resources.init(&mState.mExecutable->mUniformBlocks, &mState.mExecutable->mUniforms,
+                   &mState.mExecutable->mUniformNames, &mState.mExecutable->mUniformMappedNames,
                    &mState.mExecutable->mShaderStorageBlocks, &mState.mBufferVariables,
                    &mState.mExecutable->mAtomicCounterBuffers);
 
@@ -1280,7 +1328,8 @@ angle::Result Program::linkImpl(const Context *context)
     mLinkingState                    = std::move(linkingState);
     mLinkingState->linkingFromBinary = false;
     mLinkingState->programHash       = programHash;
-    mLinkingState->linkEvent         = mProgram->link(context, resources, infoLog, mergedVaryings);
+    mLinkingState->linkEvent =
+        mProgram->link(context, resources, infoLog, std::move(mergedVaryings), shaderLocks);
 
     // Must be after mProgram->link() to avoid misleading the linker about output variables.
     mState.updateProgramInterfaceInputs(context);
@@ -1968,7 +2017,7 @@ void Program::getUniformResourceName(GLuint index,
 {
     ASSERT(!mLinkingState);
     ASSERT(index < mState.mExecutable->getUniforms().size());
-    getResourceName(mState.mExecutable->getUniforms()[index].name, bufSize, length, name);
+    getResourceName(mState.mExecutable->getUniformNameByIndex(index), bufSize, length, name);
 }
 
 void Program::getBufferVariableResourceName(GLuint index,
@@ -2090,12 +2139,12 @@ void Program::getActiveUniform(GLuint index,
 
         if (bufsize > 0)
         {
-            std::string string = uniform.name;
+            std::string string = mState.mExecutable->getUniformNameByIndex(index);
             CopyStringToBuffer(name, string, bufsize, length);
         }
 
         *size = clampCast<GLint>(uniform.getBasicTypeElementCount());
-        *type = uniform.type;
+        *type = uniform.getType();
     }
     else
     {
@@ -2140,12 +2189,14 @@ GLint Program::getActiveUniformMaxLength() const
 
     if (mLinked)
     {
-        for (const LinkedUniform &uniform : mState.mExecutable->getUniforms())
+        for (GLuint index = 0;
+             index < static_cast<size_t>(mState.mExecutable->getUniformNames().size()); index++)
         {
-            if (!uniform.name.empty())
+            const std::string &uniformName = mState.mExecutable->getUniformNameByIndex(index);
+            if (!uniformName.empty())
             {
-                size_t length = uniform.name.length() + 1u;
-                if (uniform.isArray())
+                size_t length = uniformName.length() + 1u;
+                if (mState.mExecutable->getUniformByIndex(index).isArray())
                 {
                     length += 3;  // Counting in "[0]".
                 }
@@ -2192,7 +2243,9 @@ const BufferVariable &Program::getBufferVariableByIndex(GLuint index) const
 UniformLocation Program::getUniformLocation(const std::string &name) const
 {
     ASSERT(!mLinkingState);
-    return {GetVariableLocation(mState.mExecutable->getUniforms(), mState.mUniformLocations, name)};
+    return {GetUniformLocation(mState.mExecutable->getUniforms(),
+                               mState.mExecutable->getUniformNames(), mState.mUniformLocations,
+                               name)};
 }
 
 GLuint Program::getUniformIndex(const std::string &name) const
@@ -2454,14 +2507,15 @@ void Program::getUniformfv(const Context *context, UniformLocation location, GLf
         return;
     }
 
-    const GLenum nativeType = gl::VariableComponentType(uniform.type);
+    const GLenum nativeType = gl::VariableComponentType(uniform.getType());
     if (nativeType == GL_FLOAT)
     {
         mProgram->getUniformfv(context, location.value, v);
     }
     else
     {
-        getUniformInternal(context, v, location, nativeType, VariableComponentCount(uniform.type));
+        getUniformInternal(context, v, location, nativeType,
+                           VariableComponentCount(uniform.getType()));
     }
 }
 
@@ -2482,14 +2536,15 @@ void Program::getUniformiv(const Context *context, UniformLocation location, GLi
         return;
     }
 
-    const GLenum nativeType = gl::VariableComponentType(uniform.type);
+    const GLenum nativeType = gl::VariableComponentType(uniform.getType());
     if (nativeType == GL_INT || nativeType == GL_BOOL)
     {
         mProgram->getUniformiv(context, location.value, v);
     }
     else
     {
-        getUniformInternal(context, v, location, nativeType, VariableComponentCount(uniform.type));
+        getUniformInternal(context, v, location, nativeType,
+                           VariableComponentCount(uniform.getType()));
     }
 }
 
@@ -2510,14 +2565,15 @@ void Program::getUniformuiv(const Context *context, UniformLocation location, GL
         return;
     }
 
-    const GLenum nativeType = VariableComponentType(uniform.type);
+    const GLenum nativeType = VariableComponentType(uniform.getType());
     if (nativeType == GL_UNSIGNED_INT)
     {
         mProgram->getUniformuiv(context, location.value, v);
     }
     else
     {
-        getUniformInternal(context, v, location, nativeType, VariableComponentCount(uniform.type));
+        getUniformInternal(context, v, location, nativeType,
+                           VariableComponentCount(uniform.getType()));
     }
 }
 
@@ -3265,15 +3321,17 @@ void Program::setUniformValuesFromBindingQualifiers()
     for (unsigned int samplerIndex : mState.mExecutable->getSamplerUniformRange())
     {
         const auto &samplerUniform = mState.mExecutable->getUniforms()[samplerIndex];
-        if (samplerUniform.binding != -1)
+        if (samplerUniform.getBinding() != -1)
         {
-            UniformLocation location = getUniformLocation(samplerUniform.name);
+            const std::string &uniformName =
+                mState.mExecutable->getUniformNameByIndex(samplerIndex);
+            UniformLocation location = getUniformLocation(uniformName);
             ASSERT(location.value != -1);
             std::vector<GLint> boundTextureUnits;
             for (unsigned int elementIndex = 0;
                  elementIndex < samplerUniform.getBasicTypeElementCount(); ++elementIndex)
             {
-                boundTextureUnits.push_back(samplerUniform.binding + elementIndex);
+                boundTextureUnits.push_back(samplerUniform.getBinding() + elementIndex);
             }
 
             // Here we pass nullptr to avoid a large chain of calls that need a non-const Context.
@@ -3520,6 +3578,8 @@ angle::Result Program::serialize(const Context *context, angle::MemoryBuffer *bi
         reinterpret_cast<const unsigned char *>(angle::GetANGLEShaderProgramVersion()),
         angle::GetANGLEShaderProgramVersionHashSize());
 
+    stream.writeBool(angle::Is64Bit());
+
     stream.writeInt(angle::GetANGLESHVersion());
 
     stream.writeString(context->getRendererString());
@@ -3624,6 +3684,13 @@ angle::Result Program::deserialize(const Context *context,
                angleShaderProgramVersionString.size()) != 0)
     {
         infoLog << "Invalid program binary version.";
+        return angle::Result::Stop;
+    }
+
+    bool binaryIs64Bit = stream.readBool();
+    if (binaryIs64Bit != angle::Is64Bit())
+    {
+        infoLog << "cannot load program binaries across CPU architectures.";
         return angle::Result::Stop;
     }
 
