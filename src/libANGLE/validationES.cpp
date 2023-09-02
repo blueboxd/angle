@@ -486,11 +486,16 @@ bool ValidateFragmentShaderColorBufferMaskMatch(const Context *context)
     const Program *program         = context->getActiveLinkedProgram();
     const Framebuffer *framebuffer = glState.getDrawFramebuffer();
 
-    auto drawBufferMask =
-        framebuffer->getDrawBufferMask() & glState.getBlendStateExt().compareColorMask(0);
+    const auto &blendStateExt = glState.getBlendStateExt();
+    auto drawBufferMask = framebuffer->getDrawBufferMask() & blendStateExt.compareColorMask(0);
+    auto dualSourceBlendingMask = drawBufferMask & blendStateExt.getEnabledMask() &
+                                  blendStateExt.getUsesExtendedBlendFactorMask();
     auto fragmentOutputMask = program->getExecutable().getActiveOutputVariablesMask();
+    auto fragmentSecondaryOutputMask =
+        program->getExecutable().getActiveSecondaryOutputVariablesMask();
 
-    return drawBufferMask == (drawBufferMask & fragmentOutputMask);
+    return drawBufferMask == (drawBufferMask & fragmentOutputMask) &&
+           dualSourceBlendingMask == (dualSourceBlendingMask & fragmentSecondaryOutputMask);
 }
 
 bool ValidateFragmentShaderColorBufferTypeMatch(const Context *context)
@@ -1409,7 +1414,7 @@ Program *GetValidProgramNoResolve(const Context *context,
 
     if (!validProgram)
     {
-        if (context->getShader(id))
+        if (context->getShaderNoResolveCompile(id))
         {
             ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kExpectedProgramName);
         }
@@ -1436,7 +1441,7 @@ Shader *GetValidShader(const Context *context, angle::EntryPoint entryPoint, Sha
 {
     // See ValidProgram for spec details.
 
-    Shader *validShader = context->getShader(id);
+    Shader *validShader = context->getShaderNoResolveCompile(id);
 
     if (!validShader)
     {
@@ -4237,6 +4242,19 @@ const char *ValidateDrawStates(const Context *context, GLenum *outErrorCode)
         }
     }
 
+    // Dual-source blending functions limit the number of supported draw buffers.
+    if (blendStateExt.getUsesExtendedBlendFactorMask().any())
+    {
+        // Imply the strictest spec interpretation to pass on all OpenGL drivers:
+        // dual-source blending is considered active if the blend state contains
+        // any SRC1 factor no matter what.
+        const DrawBufferMask bufferMask = framebuffer->getDrawBufferMask();
+        if (bufferMask.any() && bufferMask.last() >= context->getCaps().maxDualSourceDrawBuffers)
+        {
+            return kDualSourceBlendingDrawBuffersLimit;
+        }
+    }
+
     if (context->getStateCache().hasAnyEnabledClientAttrib())
     {
         if (extensions.webglCompatibilityANGLE || !state.areClientArraysEnabled())
@@ -4299,7 +4317,7 @@ const char *ValidateDrawStates(const Context *context, GLenum *outErrorCode)
 
         if (executable)
         {
-            if (!executable->validateSamplers(nullptr, context->getCaps()))
+            if (!executable->validateSamplers(context->getCaps()))
             {
                 return kTextureTypeConflict;
             }
@@ -7896,6 +7914,26 @@ bool ValidateTexParameterBase(const Context *context,
             {
                 ANGLE_VALIDATION_ERRORF(GL_INVALID_ENUM, kEnumNotSupported, pname);
                 return false;
+            }
+            break;
+
+        case GL_TEXTURE_TILING_EXT:
+            if (!context->getExtensions().memoryObjectEXT)
+            {
+                ANGLE_VALIDATION_ERROR(GL_INVALID_ENUM, kInvalidMemoryObjectParameter);
+                return false;
+            }
+            switch (ConvertToGLenum(params[0]))
+            {
+                case GL_OPTIMAL_TILING_EXT:
+                case GL_LINEAR_TILING_EXT:
+                    break;
+
+                default:
+                    ANGLE_VALIDATION_ERROR(
+                        GL_INVALID_OPERATION,
+                        "Texture Tilling Mode must be OPTIMAL_TILING_EXT or LINEAR_TILING_EXT");
+                    return false;
             }
             break;
 

@@ -5246,8 +5246,8 @@ void WriteDescriptorDescs::updateExecutableActiveTextures(
         const ShaderInterfaceVariableInfo &info =
             variableInfoMap.getVariableById(firstShaderType, samplerUniform.getId(firstShaderType));
 
-        uint32_t arraySize       = static_cast<uint32_t>(samplerBinding.boundTextureUnits.size());
-        uint32_t descriptorCount = arraySize * samplerUniform.getOuterArraySizeProduct();
+        uint32_t arraySize              = static_cast<uint32_t>(samplerBinding.textureUnitsCount);
+        uint32_t descriptorCount        = arraySize * samplerUniform.getOuterArraySizeProduct();
         VkDescriptorType descriptorType = (samplerBinding.textureType == gl::TextureType::Buffer)
                                               ? VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER
                                               : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -5480,21 +5480,21 @@ void DescriptorSetDescBuilder::updateTransformFeedbackBuffer(
 void DescriptorSetDescBuilder::updateUniformsAndXfb(
     Context *context,
     const gl::ProgramExecutable &executable,
-    const ProgramExecutableVk &executableVk,
     const WriteDescriptorDescs &writeDescriptorDescs,
     const BufferHelper *currentUniformBuffer,
     const BufferHelper &emptyBuffer,
     bool activeUnpaused,
     TransformFeedbackVk *transformFeedbackVk)
 {
-    gl::ShaderBitSet linkedStages = executable.getLinkedShaderStages();
+    const ProgramExecutableVk *executableVk = vk::GetImpl(&executable);
+    gl::ShaderBitSet linkedStages           = executable.getLinkedShaderStages();
 
-    const ShaderInterfaceVariableInfoMap &variableInfoMap = executableVk.getVariableInfoMap();
+    const ShaderInterfaceVariableInfoMap &variableInfoMap = executableVk->getVariableInfoMap();
 
     for (const gl::ShaderType shaderType : linkedStages)
     {
         uint32_t binding         = variableInfoMap.getDefaultUniformBinding(shaderType);
-        VkDeviceSize bufferRange = executableVk.getDefaultUniformAlignedSize(context, shaderType);
+        VkDeviceSize bufferRange = executableVk->getDefaultUniformAlignedSize(context, shaderType);
         if (bufferRange == 0)
         {
             updateUniformBuffer(binding, writeDescriptorDescs, emptyBuffer, emptyBuffer.getSize());
@@ -5516,24 +5516,25 @@ void DescriptorSetDescBuilder::updateUniformsAndXfb(
 }
 
 void UpdatePreCacheActiveTextures(const gl::ProgramExecutable &executable,
-                                  const ProgramExecutableVk &executableVk,
                                   const std::vector<gl::SamplerBinding> &samplerBindings,
                                   const gl::ActiveTextureMask &activeTextures,
                                   const gl::ActiveTextureArray<TextureVk *> &textures,
                                   const gl::SamplerBindingVector &samplers,
                                   DescriptorSetDesc *desc)
 {
-    desc->resize(executableVk.getTextureWriteDescriptorDescs().getTotalDescriptorCount());
-    const WriteDescriptorDescs &writeDescriptorDescs =
-        executableVk.getTextureWriteDescriptorDescs();
+    const ProgramExecutableVk *executableVk = vk::GetImpl(&executable);
 
-    const ShaderInterfaceVariableInfoMap &variableInfoMap = executableVk.getVariableInfoMap();
+    desc->resize(executableVk->getTextureWriteDescriptorDescs().getTotalDescriptorCount());
+    const WriteDescriptorDescs &writeDescriptorDescs =
+        executableVk->getTextureWriteDescriptorDescs();
+
+    const ShaderInterfaceVariableInfoMap &variableInfoMap = executableVk->getVariableInfoMap();
     const std::vector<gl::LinkedUniform> &uniforms        = executable.getUniforms();
 
     for (uint32_t samplerIndex = 0; samplerIndex < samplerBindings.size(); ++samplerIndex)
     {
         const gl::SamplerBinding &samplerBinding = samplerBindings[samplerIndex];
-        uint32_t arraySize        = static_cast<uint32_t>(samplerBinding.boundTextureUnits.size());
+        uint16_t arraySize                       = samplerBinding.textureUnitsCount;
         bool isSamplerExternalY2Y = samplerBinding.samplerType == GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT;
 
         uint32_t uniformIndex = executable.getUniformIndexFromSamplerIndex(samplerIndex);
@@ -5548,9 +5549,10 @@ void UpdatePreCacheActiveTextures(const gl::ProgramExecutable &executable,
         const ShaderInterfaceVariableInfo &info =
             variableInfoMap.getVariableById(firstShaderType, samplerUniform.getId(firstShaderType));
 
-        for (uint32_t arrayElement = 0; arrayElement < arraySize; ++arrayElement)
+        for (uint16_t arrayElement = 0; arrayElement < arraySize; ++arrayElement)
         {
-            GLuint textureUnit = samplerBinding.boundTextureUnits[arrayElement];
+            GLuint textureUnit = samplerBinding.getTextureUnit(
+                executable.getSamplerBoundTextureUnits(), arrayElement);
             if (!activeTextures.test(textureUnit))
                 continue;
             TextureVk *textureVk = textures[textureUnit];
@@ -5606,8 +5608,9 @@ angle::Result DescriptorSetDescBuilder::updateFullActiveTextures(
     const SharedDescriptorSetCacheKey &sharedCacheKey)
 {
     const std::vector<gl::SamplerBinding> &samplerBindings = executable.getSamplerBindings();
-    const std::vector<gl::LinkedUniform> &uniforms         = executable.getUniforms();
-    const gl::ActiveTextureTypeArray &textureTypes         = executable.getActiveSamplerTypes();
+    const std::vector<GLuint> &samplerBoundTextureUnits = executable.getSamplerBoundTextureUnits();
+    const std::vector<gl::LinkedUniform> &uniforms      = executable.getUniforms();
+    const gl::ActiveTextureTypeArray &textureTypes      = executable.getActiveSamplerTypes();
 
     for (uint32_t samplerIndex = 0; samplerIndex < samplerBindings.size(); ++samplerIndex)
     {
@@ -5624,12 +5627,13 @@ angle::Result DescriptorSetDescBuilder::updateFullActiveTextures(
         const ShaderInterfaceVariableInfo &info =
             variableInfoMap.getVariableById(firstShaderType, samplerUniform.getId(firstShaderType));
 
-        uint32_t arraySize        = static_cast<uint32_t>(samplerBinding.boundTextureUnits.size());
+        uint32_t arraySize        = static_cast<uint32_t>(samplerBinding.textureUnitsCount);
         bool isSamplerExternalY2Y = samplerBinding.samplerType == GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT;
 
         for (uint32_t arrayElement = 0; arrayElement < arraySize; ++arrayElement)
         {
-            GLuint textureUnit   = samplerBinding.boundTextureUnits[arrayElement];
+            GLuint textureUnit =
+                samplerBinding.getTextureUnit(samplerBoundTextureUnits, arrayElement);
             TextureVk *textureVk = textures[textureUnit];
 
             uint32_t infoIndex = writeDescriptorDescs[info.binding].descriptorInfoIndex +
@@ -5649,7 +5653,8 @@ angle::Result DescriptorSetDescBuilder::updateFullActiveTextures(
                 textureVk->onNewDescriptorSet(sharedCacheKey);
 
                 const BufferView *view = nullptr;
-                ANGLE_TRY(textureVk->getBufferViewAndRecordUse(context, nullptr, false, &view));
+                ANGLE_TRY(textureVk->getBufferViewAndRecordUse(context, nullptr, &samplerBinding,
+                                                               false, &view));
                 mHandles[infoIndex].bufferView = view->getHandle();
             }
             else
@@ -6038,7 +6043,8 @@ angle::Result DescriptorSetDescBuilder::updateImages(
                                      arrayElement + imageUniform.getOuterArrayOffset();
 
                 const vk::BufferView *view = nullptr;
-                ANGLE_TRY(textureVk->getBufferViewAndRecordUse(context, format, true, &view));
+                ANGLE_TRY(
+                    textureVk->getBufferViewAndRecordUse(context, format, nullptr, true, &view));
 
                 DescriptorInfoDesc &infoDesc = mDesc.getInfoDesc(infoIndex);
                 infoDesc.imageViewSerialOrOffset =
@@ -7085,8 +7091,11 @@ void DescriptorSetLayoutCache::destroy(RendererVk *rendererVk)
 angle::Result DescriptorSetLayoutCache::getDescriptorSetLayout(
     vk::Context *context,
     const vk::DescriptorSetLayoutDesc &desc,
-    vk::BindingPointer<vk::DescriptorSetLayout> *descriptorSetLayoutOut)
+    vk::AtomicBindingPointer<vk::DescriptorSetLayout> *descriptorSetLayoutOut)
 {
+    // Note: this function may be called without holding the share group lock.
+    std::unique_lock<std::mutex> lock(mMutex);
+
     auto iter = mPayload.find(desc);
     if (iter != mPayload.end())
     {
@@ -7111,8 +7120,7 @@ angle::Result DescriptorSetLayoutCache::getDescriptorSetLayout(
     vk::DescriptorSetLayout newLayout;
     ANGLE_VK_TRY(context, newLayout.init(context->getDevice(), createInfo));
 
-    auto insertedItem =
-        mPayload.emplace(desc, vk::RefCountedDescriptorSetLayout(std::move(newLayout)));
+    auto insertedItem = mPayload.emplace(desc, std::move(newLayout));
     vk::RefCountedDescriptorSetLayout &insertedLayout = insertedItem.first->second;
     descriptorSetLayoutOut->set(&insertedLayout);
 
@@ -7146,8 +7154,11 @@ angle::Result PipelineLayoutCache::getPipelineLayout(
     vk::Context *context,
     const vk::PipelineLayoutDesc &desc,
     const vk::DescriptorSetLayoutPointerArray &descriptorSetLayouts,
-    vk::BindingPointer<vk::PipelineLayout> *pipelineLayoutOut)
+    vk::AtomicBindingPointer<vk::PipelineLayout> *pipelineLayoutOut)
 {
+    // Note: this function may be called without holding the share group lock.
+    std::unique_lock<std::mutex> lock(mMutex);
+
     auto iter = mPayload.find(desc);
     if (iter != mPayload.end())
     {
@@ -7160,7 +7171,7 @@ angle::Result PipelineLayoutCache::getPipelineLayout(
     mCacheStats.missAndIncrementSize();
     // Note this does not handle gaps in descriptor set layouts gracefully.
     angle::FixedVector<VkDescriptorSetLayout, vk::kMaxDescriptorSetLayouts> setLayoutHandles;
-    for (const vk::BindingPointer<vk::DescriptorSetLayout> &layoutPtr : descriptorSetLayouts)
+    for (const vk::AtomicBindingPointer<vk::DescriptorSetLayout> &layoutPtr : descriptorSetLayouts)
     {
         if (layoutPtr.valid())
         {
@@ -7193,7 +7204,7 @@ angle::Result PipelineLayoutCache::getPipelineLayout(
     vk::PipelineLayout newLayout;
     ANGLE_VK_TRY(context, newLayout.init(context->getDevice(), createInfo));
 
-    auto insertedItem = mPayload.emplace(desc, vk::RefCountedPipelineLayout(std::move(newLayout)));
+    auto insertedItem                            = mPayload.emplace(desc, std::move(newLayout));
     vk::RefCountedPipelineLayout &insertedLayout = insertedItem.first->second;
     pipelineLayoutOut->set(&insertedLayout);
 

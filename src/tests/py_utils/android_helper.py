@@ -14,6 +14,7 @@ import posixpath
 import random
 import re
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -185,19 +186,41 @@ def _RemoveDeviceFile(device_path):
     _AdbShell('rm -f ' + device_path + ' || true')  # ignore errors
 
 
-def _AddRestrictedTracesJson():
-    def add(tar, fn):
-        assert (fn.startswith('../../'))
-        tar.add(fn, arcname=fn.replace('../../', ''))
-
+def _MakeTar(path, patterns):
     with _TempLocalFile() as tempfile_path:
         with tarfile.open(tempfile_path, 'w', format=tarfile.GNU_FORMAT) as tar:
-            for f in glob.glob('../../src/tests/restricted_traces/*/*.json', recursive=True):
-                add(tar, f)
-            add(tar, '../../src/tests/restricted_traces/restricted_traces.json')
-        _AdbRun(['push', tempfile_path, '/sdcard/chromium_tests_root/t.tar'])
+            for p in patterns:
+                for f in glob.glob(p, recursive=True):
+                    tar.add(f, arcname=f.replace('../../', ''))
+        _AdbRun(['push', tempfile_path, path])
 
+
+def _AddRestrictedTracesJson():
+    _MakeTar('/sdcard/chromium_tests_root/t.tar', [
+        '../../src/tests/restricted_traces/*/*.json',
+        '../../src/tests/restricted_traces/restricted_traces.json'
+    ])
     _AdbShell('r=/sdcard/chromium_tests_root; tar -xf $r/t.tar -C $r/ && rm $r/t.tar')
+
+
+def _AddDeqpFiles(suite_name):
+    patterns = [
+        '../../third_party/VK-GL-CTS/src/external/openglcts/data/mustpass/*/*/main/*.txt',
+        '../../src/tests/deqp_support/*.txt'
+    ]
+    if '_gles2_' in suite_name:
+        patterns.append('gen/vk_gl_cts_data/data/gles2/**')
+    if '_gles3_' in suite_name:
+        patterns.append('gen/vk_gl_cts_data/data/gles3/**')
+        patterns.append('gen/vk_gl_cts_data/data/gl_cts/data/gles3/**')
+    if '_gles31_' in suite_name:
+        patterns.append('gen/vk_gl_cts_data/data/gles31/**')
+        patterns.append('gen/vk_gl_cts_data/data/gl_cts/data/gles31/**')
+    if '_gles32_' in suite_name:
+        patterns.append('gen/vk_gl_cts_data/data/gl_cts/data/gles32/**')
+
+    _MakeTar('/sdcard/chromium_tests_root/deqp.tar', patterns)
+    _AdbShell('r=/sdcard/chromium_tests_root; tar -xf $r/deqp.tar -C $r/ && rm $r/deqp.tar')
 
 
 def _GetDeviceApkPath():
@@ -274,6 +297,9 @@ def _PrepareTestSuite(suite_name):
     if suite_name == ANGLE_TRACE_TEST_SUITE:
         _AddRestrictedTracesJson()
 
+    if '_deqp_' in suite_name:
+        _AddDeqpFiles(suite_name)
+
     if suite_name == 'angle_end2end_tests':
         _AdbRun([
             'push', '../../src/tests/angle_end2end_tests_expectations.txt',
@@ -308,6 +334,11 @@ def PrepareRestrictedTraces(traces):
 
     def _PushLibToAppDir(lib_name):
         local_path = lib_name
+        if not os.path.exists(local_path):
+            print('Error: missing library: ' + local_path)
+            print('Is angle_restricted_traces set in gn args?')  # b/294861737
+            sys.exit(1)
+
         device_path = '/data/user/0/com.android.angle.test/angle_traces/' + lib_name
         if _HashesMatch(local_path, device_path):
             return
@@ -318,8 +349,6 @@ def PrepareRestrictedTraces(traces):
             _AdbRun(['push', local_path, tmp_path])
             _AdbShell('run-as ' + TEST_PACKAGE_NAME + ' cp ' + tmp_path + ' ./angle_traces/')
             _AdbShell('rm ' + tmp_path)
-        except Exception as e:
-            logging.error('An error occurred in _PushToAppDir: %s' % e)
         finally:
             _RemoveDeviceFile(tmp_path)
 
@@ -334,12 +363,12 @@ def PrepareRestrictedTraces(traces):
         path_from_root = 'src/tests/restricted_traces/' + trace + '/' + trace + '.angledata.gz'
         _Push('../../' + path_from_root, path_from_root)
 
-        tracegz = 'gen/tracegz_' + trace + '.gz'
-        _Push(tracegz, tracegz)
-
         if _Global.traces_outside_of_apk:
             lib_name = 'libangle_restricted_traces_' + trace + _Global.lib_extension
             _PushLibToAppDir(lib_name)
+
+        tracegz = 'gen/tracegz_' + trace + '.gz'
+        _Push(tracegz, tracegz)
 
     # Push one additional file when running outside the APK
     if _Global.traces_outside_of_apk:
@@ -384,54 +413,22 @@ def _TempLocalFile():
 
 
 def _RunInstrumentation(flags):
+    assert TEST_PACKAGE_NAME == 'com.android.angle.test'  # inlined below for readability
+
     with _TempDeviceFile() as temp_device_file:
-        cmd = ' '.join([
-            'p=%s;' % TEST_PACKAGE_NAME,
-            'ntr=org.chromium.native_test.NativeTestInstrumentationTestRunner;',
-            'am instrument -w',
-            '-e $ntr.NativeTestActivity "$p".AngleUnitTestActivity',
-            '-e $ntr.ShardNanoTimeout 2400000000000',
-            '-e org.chromium.native_test.NativeTest.CommandLineFlags "%s"' % ' '.join(flags),
-            '-e $ntr.StdoutFile ' + temp_device_file,
-            '"$p"/org.chromium.build.gtest_apk.NativeTestInstrumentationTestRunner',
-        ])
+        cmd = r'''
+am instrument -w \
+    -e org.chromium.native_test.NativeTestInstrumentationTestRunner.StdoutFile {out} \
+    -e org.chromium.native_test.NativeTest.CommandLineFlags "{flags}" \
+    -e org.chromium.native_test.NativeTestInstrumentationTestRunner.ShardNanoTimeout "1000000000000000000" \
+    -e org.chromium.native_test.NativeTestInstrumentationTestRunner.NativeTestActivity \
+    com.android.angle.test.AngleUnitTestActivity \
+    com.android.angle.test/org.chromium.build.gtest_apk.NativeTestInstrumentationTestRunner
+        '''.format(
+            out=temp_device_file, flags=r' '.join(flags)).strip()
 
         _AdbShell(cmd)
         return _ReadDeviceFile(temp_device_file)
-
-
-def _DumpDebugInfo(since_time):
-    logcat_output = _AdbRun(['logcat', '-t', since_time]).decode()
-    logging.info('logcat:\n%s', logcat_output)
-
-    pid_lines = [
-        ln for ln in logcat_output.split('\n')
-        if 'org.chromium.native_test.NativeTest.StdoutFile' in ln
-    ]
-    if pid_lines:
-        debuggerd_output = _AdbShell('debuggerd %s' % pid_lines[-1].split(' ')[2]).decode()
-        logging.warning('debuggerd output:\n%s', debuggerd_output)
-
-
-def _RunInstrumentationWithTimeout(flags, timeout):
-    initial_time = _AdbShell('date +"%F %T.%3N"').decode().strip()
-
-    results = []
-
-    def run():
-        results.append(_RunInstrumentation(flags))
-
-    t = threading.Thread(target=run)
-    t.daemon = True
-    t.start()
-    t.join(timeout=timeout)
-
-    if t.is_alive():  # join timed out
-        logging.warning('Timed out, dumping debug info')
-        _DumpDebugInfo(since_time=initial_time)
-        raise TimeoutError('Test run did not finish in %s seconds' % timeout)
-
-    return results[0]
 
 
 def AngleSystemInfo(args):
@@ -467,40 +464,6 @@ def _RemoveFlag(args, f):
     return original_value
 
 
-def RunSmokeTest():
-    _EnsureTestSuite(ANGLE_TRACE_TEST_SUITE)
-
-    test_name = 'TraceTest.words_with_friends_2'
-    run_instrumentation_timeout = 60
-
-    logging.info('Running smoke test (%s)', test_name)
-
-    trace_name = GetTraceFromTestName(test_name)
-    if not trace_name:
-        raise Exception('Cannot find trace name from %s.' % test_name)
-
-    PrepareRestrictedTraces([trace_name])
-
-    with _TempDeviceFile() as device_test_output_path:
-        flags = [
-            '--gtest_filter=' + test_name, '--no-warmup', '--steps-per-trial', '1', '--trials',
-            '1', '--isolated-script-test-output=' + device_test_output_path
-        ]
-        try:
-            output = _RunInstrumentationWithTimeout(flags, run_instrumentation_timeout)
-        except TimeoutError:
-            raise Exception('Smoke test did not finish in %s seconds' %
-                            run_instrumentation_timeout)
-
-        test_output = _ReadDeviceFile(device_test_output_path)
-
-    output_json = json.loads(test_output)
-    if output_json['tests'][test_name]['actual'] != 'PASS':
-        raise Exception('Smoke test (%s) failed. Output:\n%s' % (test_name, output))
-
-    logging.info('Smoke test passed')
-
-
 def RunTests(test_suite, args, stdoutfile=None, log_output=True):
     _EnsureTestSuite(test_suite)
 
@@ -525,7 +488,7 @@ def RunTests(test_suite, args, stdoutfile=None, log_output=True):
                 device_output_dir = stack.enter_context(_TempDeviceDir())
                 args.append('--render-test-output-dir=' + device_output_dir)
 
-            output = _RunInstrumentationWithTimeout(args, timeout=10 * 60)
+            output = _RunInstrumentation(args)
 
             if '--list-tests' in args:
                 # When listing tests, there may be no output file. We parse stdout anyways.

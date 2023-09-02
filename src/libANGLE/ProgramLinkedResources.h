@@ -47,6 +47,7 @@ class ProgramAliasedBindings;
 class Shader;
 struct ShaderVariableBuffer;
 struct VariableLocation;
+struct Version;
 
 using AtomicCounterBuffer = ShaderVariableBuffer;
 using ShaderUniform       = std::pair<ShaderType, const sh::ShaderVariable *>;
@@ -296,9 +297,11 @@ struct ProgramLinkedResources
 
 struct LinkingVariables final : private angle::NonCopyable
 {
-    LinkingVariables(const Context *context, const ProgramState &state);
-    LinkingVariables(const ProgramPipelineState &state);
+    LinkingVariables();
     ~LinkingVariables();
+
+    void initForProgram(const ProgramState &state);
+    void initForProgramPipeline(const ProgramPipelineState &state);
 
     ShaderMap<std::vector<sh::ShaderVariable>> outputVaryings;
     ShaderMap<std::vector<sh::ShaderVariable>> inputVaryings;
@@ -324,8 +327,7 @@ class ProgramLinkedResourcesLinker final : angle::NonCopyable
         : mCustomEncoderFactory(customEncoderFactory)
     {}
 
-    void linkResources(const Context *context,
-                       const ProgramState &programState,
+    void linkResources(const ProgramState &programState,
                        const ProgramLinkedResources &resources) const;
 
   private:
@@ -368,7 +370,9 @@ LinkMismatchError LinkValidateProgramVariables(const sh::ShaderVariable &variabl
                                                std::string *mismatchedStructOrBlockMemberName);
 void AddProgramVariableParentPrefix(const std::string &parentName,
                                     std::string *mismatchedFieldName);
-bool LinkValidateProgramInterfaceBlocks(const Context *context,
+bool LinkValidateProgramInterfaceBlocks(const Caps &caps,
+                                        const Version &clientVersion,
+                                        bool webglCompatibility,
                                         ShaderBitSet activeProgramStages,
                                         const ProgramLinkedResources &resources,
                                         InfoLog &infoLog,

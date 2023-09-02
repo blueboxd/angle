@@ -60,8 +60,8 @@ enum class ImageLayout;
 class PipelineCacheAccess;
 class RenderPassCommandBufferHelper;
 
-using RefCountedDescriptorSetLayout    = RefCounted<DescriptorSetLayout>;
-using RefCountedPipelineLayout         = RefCounted<PipelineLayout>;
+using RefCountedDescriptorSetLayout    = AtomicRefCounted<DescriptorSetLayout>;
+using RefCountedPipelineLayout         = AtomicRefCounted<PipelineLayout>;
 using RefCountedSamplerYcbcrConversion = RefCounted<SamplerYcbcrConversion>;
 
 // Packed Vk resource descriptions.
@@ -1011,8 +1011,9 @@ struct PackedPushConstantRange
 static_assert(sizeof(PackedPushConstantRange) == sizeof(uint32_t), "Unexpected Size");
 
 template <typename T>
-using DescriptorSetArray              = angle::PackedEnumMap<DescriptorSetIndex, T>;
-using DescriptorSetLayoutPointerArray = DescriptorSetArray<BindingPointer<DescriptorSetLayout>>;
+using DescriptorSetArray = angle::PackedEnumMap<DescriptorSetIndex, T>;
+using DescriptorSetLayoutPointerArray =
+    DescriptorSetArray<AtomicBindingPointer<DescriptorSetLayout>>;
 
 class PipelineLayoutDesc final
 {
@@ -1732,7 +1733,6 @@ class DescriptorSetDescBuilder final
 
     void updateUniformsAndXfb(Context *context,
                               const gl::ProgramExecutable &executable,
-                              const ProgramExecutableVk &executableVk,
                               const WriteDescriptorDescs &writeDescriptorDescs,
                               const BufferHelper *currentUniformBuffer,
                               const BufferHelper &emptyBuffer,
@@ -1817,7 +1817,6 @@ class DescriptorSetDescBuilder final
 
 // Specialized update for textures.
 void UpdatePreCacheActiveTextures(const gl::ProgramExecutable &executable,
-                                  const ProgramExecutableVk &executableVk,
                                   const std::vector<gl::SamplerBinding> &samplerBindings,
                                   const gl::ActiveTextureMask &activeTextures,
                                   const gl::ActiveTextureArray<TextureVk *> &textures,
@@ -2483,9 +2482,10 @@ class DescriptorSetLayoutCache final : angle::NonCopyable
     angle::Result getDescriptorSetLayout(
         vk::Context *context,
         const vk::DescriptorSetLayoutDesc &desc,
-        vk::BindingPointer<vk::DescriptorSetLayout> *descriptorSetLayoutOut);
+        vk::AtomicBindingPointer<vk::DescriptorSetLayout> *descriptorSetLayoutOut);
 
   private:
+    mutable std::mutex mMutex;
     std::unordered_map<vk::DescriptorSetLayoutDesc, vk::RefCountedDescriptorSetLayout> mPayload;
     CacheStats mCacheStats;
 };
@@ -2498,12 +2498,14 @@ class PipelineLayoutCache final : public HasCacheStats<VulkanCacheType::Pipeline
 
     void destroy(RendererVk *rendererVk);
 
-    angle::Result getPipelineLayout(vk::Context *context,
-                                    const vk::PipelineLayoutDesc &desc,
-                                    const vk::DescriptorSetLayoutPointerArray &descriptorSetLayouts,
-                                    vk::BindingPointer<vk::PipelineLayout> *pipelineLayoutOut);
+    angle::Result getPipelineLayout(
+        vk::Context *context,
+        const vk::PipelineLayoutDesc &desc,
+        const vk::DescriptorSetLayoutPointerArray &descriptorSetLayouts,
+        vk::AtomicBindingPointer<vk::PipelineLayout> *pipelineLayoutOut);
 
   private:
+    mutable std::mutex mMutex;
     std::unordered_map<vk::PipelineLayoutDesc, vk::RefCountedPipelineLayout> mPayload;
 };
 

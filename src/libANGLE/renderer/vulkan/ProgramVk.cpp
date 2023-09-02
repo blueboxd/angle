@@ -42,29 +42,35 @@ class VulkanDefaultBlockEncoder : public sh::Std140BlockEncoder
     }
 };
 
+class Std140BlockLayoutEncoderFactory : public gl::CustomBlockLayoutEncoderFactory
+{
+  public:
+    sh::BlockLayoutEncoder *makeEncoder() override { return new sh::Std140BlockEncoder(); }
+};
+
 class LinkTaskVk final : public vk::Context, public angle::Closure
 {
   public:
     LinkTaskVk(RendererVk *renderer,
+               PipelineLayoutCache &pipelineLayoutCache,
+               DescriptorSetLayoutCache &descriptorSetLayoutCache,
                const gl::ProgramState &state,
-               const gl::ProgramExecutable &glExecutable,
-               ProgramExecutableVk *executable,
-               gl::ScopedShaderLinkLocks *shaderLocks,
                gl::ProgramMergedVaryings &&mergedVaryings,
+               const gl::ProgramLinkedResources &resources,
                bool isGLES1,
                vk::PipelineRobustness pipelineRobustness,
                vk::PipelineProtectedAccess pipelineProtectedAccess)
         : vk::Context(renderer),
           mState(state),
-          mGlExecutable(glExecutable),
-          mExecutable(executable),
+          mExecutable(&mState.getExecutable()),
           mMergedVaryings(std::move(mergedVaryings)),
+          mResources(resources),
           mIsGLES1(isGLES1),
           mPipelineRobustness(pipelineRobustness),
-          mPipelineProtectedAccess(pipelineProtectedAccess)
-    {
-        mShaderLocks.swap(*shaderLocks);
-    }
+          mPipelineProtectedAccess(pipelineProtectedAccess),
+          mPipelineLayoutCache(pipelineLayoutCache),
+          mDescriptorSetLayoutCache(descriptorSetLayoutCache)
+    {}
 
     void operator()() override
     {
@@ -85,6 +91,30 @@ class LinkTaskVk final : public vk::Context, public angle::Closure
 
     angle::Result getResult(ContextVk *contextVk)
     {
+        ProgramExecutableVk *executableVk = vk::GetImpl(mExecutable);
+
+        // Clean up garbage first, it's not no matter what may fail below.
+        mCompatibleRenderPass.destroy(contextVk->getDevice());
+
+        ANGLE_TRY(executableVk->initializeDescriptorPools(contextVk,
+                                                          &contextVk->getDescriptorSetLayoutCache(),
+                                                          &contextVk->getMetaDescriptorPools()));
+
+        // If the program uses framebuffer fetch and this is the first time this happens, switch the
+        // context to "framebuffer fetch mode".  In this mode, all render passes assume framebuffer
+        // fetch may be used, so they are prepared to accept a program that uses input attachments.
+        // This is done only when a program with framebuffer fetch is created to avoid potential
+        // performance impact on applications that don't use this extension.  If other contexts in
+        // the share group use this program, they will lazily switch to this mode.
+        //
+        // This is purely an optimization (to avoid creating and later releasing) non-framebuffer
+        // fetch render passes.
+        if (contextVk->getFeatures().permanentlySwitchToFramebufferFetchMode.enabled &&
+            mExecutable->usesFramebufferFetch())
+        {
+            ANGLE_TRY(contextVk->switchToFramebufferFetchMode(true));
+        }
+
         // Update the relevant perf counters
         angle::VulkanPerfCounters &from = contextVk->getPerfCounters();
         angle::VulkanPerfCounters &to   = getPerfCounters();
@@ -96,8 +126,7 @@ class LinkTaskVk final : public vk::Context, public angle::Closure
         to.pipelineCreationTotalCacheMissesDurationNs +=
             from.pipelineCreationTotalCacheMissesDurationNs;
 
-        // Clean up garbage and forward any errors
-        mCompatibleRenderPass.destroy(contextVk->getDevice());
+        // Forward any errors
         if (mErrorCode != VK_SUCCESS)
         {
             contextVk->handleError(mErrorCode, mErrorFile, mErrorFunction, mErrorLine);
@@ -109,6 +138,7 @@ class LinkTaskVk final : public vk::Context, public angle::Closure
   private:
     angle::Result linkImpl();
 
+    void linkResources();
     angle::Result initDefaultUniformBlocks();
     void generateUniformLayoutMapping(gl::ShaderMap<sh::BlockLayoutMap> *layoutMapOut,
                                       gl::ShaderMap<size_t> *requiredBufferSizeOut);
@@ -117,13 +147,16 @@ class LinkTaskVk final : public vk::Context, public angle::Closure
     // The front-end ensures that the program is not accessed while linking, so it is safe to
     // direclty access the state from a potentially parallel job.
     const gl::ProgramState &mState;
-    const gl::ProgramExecutable &mGlExecutable;
-    ProgramExecutableVk *mExecutable;
-    gl::ScopedShaderLinkLocks mShaderLocks;
+    const gl::ProgramExecutable *mExecutable;
     const gl::ProgramMergedVaryings mMergedVaryings;
+    const gl::ProgramLinkedResources &mResources;
     const bool mIsGLES1;
     const vk::PipelineRobustness mPipelineRobustness;
     const vk::PipelineProtectedAccess mPipelineProtectedAccess;
+
+    // Helpers that are interally thread-safe
+    PipelineLayoutCache &mPipelineLayoutCache;
+    DescriptorSetLayoutCache &mDescriptorSetLayoutCache;
 
     // Temporary objects to clean up at the end
     vk::RenderPass mCompatibleRenderPass;
@@ -138,10 +171,16 @@ class LinkTaskVk final : public vk::Context, public angle::Closure
 angle::Result LinkTaskVk::linkImpl()
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "ProgramVk::LinkTaskVk::run");
+    ProgramExecutableVk *executableVk = vk::GetImpl(mExecutable);
 
-    // Unlock the shaders at the end of the task.
-    gl::ScopedShaderLinkLocks unlockAtEnd;
-    unlockAtEnd.swap(mShaderLocks);
+    // Link resources before calling GetShaderSource to make sure they are ready for the set/binding
+    // assignment done in that function.
+    linkResources();
+
+    executableVk->clearVariableInfoMap();
+
+    // Gather variable info and compiled SPIR-V binaries.
+    executableVk->assignAllSpvLocations(this, mState, mResources);
 
     gl::ShaderMap<const angle::spirv::Blob *> spirvBlobs;
     SpvGetShaderSpirvCode(mState, &spirvBlobs);
@@ -149,14 +188,17 @@ angle::Result LinkTaskVk::linkImpl()
     if (getFeatures().varyingsRequireMatchingPrecisionInSpirv.enabled &&
         getFeatures().enablePrecisionQualifiers.enabled)
     {
-        mExecutable->resolvePrecisionMismatch(mMergedVaryings);
+        executableVk->resolvePrecisionMismatch(mMergedVaryings);
     }
 
     // Compile the shaders.
-    ANGLE_TRY(mExecutable->initShaders(this, mGlExecutable.getLinkedShaderStages(), spirvBlobs,
-                                       mIsGLES1));
+    ANGLE_TRY(executableVk->initShaders(this, mExecutable->getLinkedShaderStages(), spirvBlobs,
+                                        mIsGLES1));
 
     ANGLE_TRY(initDefaultUniformBlocks());
+
+    ANGLE_TRY(executableVk->createPipelineLayout(this, &mPipelineLayoutCache,
+                                                 &mDescriptorSetLayoutCache, nullptr));
 
     // Warm up the pipeline cache by creating a few placeholder pipelines.  This is not done for
     // separable programs, and is deferred to when the program pipeline is finalized.
@@ -170,16 +212,25 @@ angle::Result LinkTaskVk::linkImpl()
     // - Individual GLES1 tests are long, and this adds a considerable overhead to those tests
     if (!mState.isSeparable() && !mIsGLES1)
     {
-        ANGLE_TRY(mExecutable->warmUpPipelineCache(this, mGlExecutable, mPipelineRobustness,
-                                                   mPipelineProtectedAccess,
-                                                   &mCompatibleRenderPass));
+        ANGLE_TRY(executableVk->warmUpPipelineCache(
+            this, mPipelineRobustness, mPipelineProtectedAccess, &mCompatibleRenderPass));
     }
 
     return angle::Result::Continue;
 }
 
+void LinkTaskVk::linkResources()
+{
+    Std140BlockLayoutEncoderFactory std140EncoderFactory;
+    gl::ProgramLinkedResourcesLinker linker(&std140EncoderFactory);
+
+    linker.linkResources(mState, mResources);
+}
+
 angle::Result LinkTaskVk::initDefaultUniformBlocks()
 {
+    ProgramExecutableVk *executableVk = vk::GetImpl(mExecutable);
+
     // Process vertex and fragment uniforms into std140 packing.
     gl::ShaderMap<sh::BlockLayoutMap> layoutMap;
     gl::ShaderMap<size_t> requiredBufferSize;
@@ -189,7 +240,7 @@ angle::Result LinkTaskVk::initDefaultUniformBlocks()
     initDefaultUniformLayoutMapping(&layoutMap);
 
     // All uniform initializations are complete, now resize the buffers accordingly and return
-    return mExecutable->resizeUniformBlockMemory(this, mGlExecutable, requiredBufferSize);
+    return executableVk->resizeUniformBlockMemory(this, requiredBufferSize);
 }
 
 void InitDefaultUniformBlock(const std::vector<sh::ShaderVariable> &uniforms,
@@ -221,13 +272,13 @@ void InitDefaultUniformBlock(const std::vector<sh::ShaderVariable> &uniforms,
 void LinkTaskVk::generateUniformLayoutMapping(gl::ShaderMap<sh::BlockLayoutMap> *layoutMapOut,
                                               gl::ShaderMap<size_t> *requiredBufferSizeOut)
 {
-    for (const gl::ShaderType shaderType : mGlExecutable.getLinkedShaderStages())
+    for (const gl::ShaderType shaderType : mExecutable->getLinkedShaderStages())
     {
-        gl::Shader *shader = mState.getAttachedShader(shaderType);
+        const gl::SharedCompiledShaderState &shader = mState.getAttachedShader(shaderType);
 
         if (shader)
         {
-            const std::vector<sh::ShaderVariable> &uniforms = shader->getUniformsCompiled();
+            const std::vector<sh::ShaderVariable> &uniforms = shader->uniforms;
             InitDefaultUniformBlock(uniforms, &(*layoutMapOut)[shaderType],
                                     &(*requiredBufferSizeOut)[shaderType]);
         }
@@ -237,7 +288,8 @@ void LinkTaskVk::generateUniformLayoutMapping(gl::ShaderMap<sh::BlockLayoutMap> 
 void LinkTaskVk::initDefaultUniformLayoutMapping(gl::ShaderMap<sh::BlockLayoutMap> *layoutMapOut)
 {
     // Init the default block layout info.
-    const auto &uniforms = mGlExecutable.getUniforms();
+    ProgramExecutableVk *executableVk = vk::GetImpl(mExecutable);
+    const auto &uniforms              = mExecutable->getUniforms();
 
     for (const gl::VariableLocation &location : mState.getUniformLocations())
     {
@@ -249,18 +301,18 @@ void LinkTaskVk::initDefaultUniformLayoutMapping(gl::ShaderMap<sh::BlockLayoutMa
             if (uniform.isInDefaultBlock() && !uniform.isSampler() && !uniform.isImage() &&
                 !uniform.isFragmentInOut())
             {
-                std::string uniformName = mGlExecutable.getUniformNameByIndex(location.index);
+                std::string uniformName = mExecutable->getUniformNameByIndex(location.index);
                 if (uniform.isArray())
                 {
                     // Gets the uniform name without the [0] at the end.
                     uniformName = gl::StripLastArrayIndex(uniformName);
                     ASSERT(uniformName.size() !=
-                           mGlExecutable.getUniformNameByIndex(location.index).size());
+                           mExecutable->getUniformNameByIndex(location.index).size());
                 }
 
                 bool found = false;
 
-                for (const gl::ShaderType shaderType : mGlExecutable.getLinkedShaderStages())
+                for (const gl::ShaderType shaderType : mExecutable->getLinkedShaderStages())
                 {
                     auto it = (*layoutMapOut)[shaderType].find(uniformName);
                     if (it != (*layoutMapOut)[shaderType].end())
@@ -274,9 +326,9 @@ void LinkTaskVk::initDefaultUniformLayoutMapping(gl::ShaderMap<sh::BlockLayoutMa
             }
         }
 
-        for (const gl::ShaderType shaderType : mGlExecutable.getLinkedShaderStages())
+        for (const gl::ShaderType shaderType : mExecutable->getLinkedShaderStages())
         {
-            mExecutable->getSharedDefaultUniformBlock(shaderType)
+            executableVk->getSharedDefaultUniformBlock(shaderType)
                 ->uniformLayout.push_back(layoutInfo[shaderType]);
         }
     }
@@ -368,12 +420,6 @@ void ReadFromDefaultUniformBlock(int componentCount,
         memcpy(dst, readPtr, elementSize);
     }
 }
-
-class Std140BlockLayoutEncoderFactory : public gl::CustomBlockLayoutEncoderFactory
-{
-  public:
-    sh::BlockLayoutEncoder *makeEncoder() override { return new sh::Std140BlockEncoder(); }
-};
 }  // anonymous namespace
 
 // ProgramVk implementation.
@@ -389,26 +435,23 @@ void ProgramVk::destroy(const gl::Context *context)
 
 void ProgramVk::reset(ContextVk *contextVk)
 {
-    mSpvProgramInterfaceInfo = {};
-
-    mExecutable.reset(contextVk);
+    getExecutable()->reset(contextVk);
 }
 
 std::unique_ptr<rx::LinkEvent> ProgramVk::load(const gl::Context *context,
-                                               gl::BinaryInputStream *stream,
-                                               gl::InfoLog &infoLog)
+                                               gl::BinaryInputStream *stream)
 {
     ContextVk *contextVk = vk::GetImpl(context);
 
     reset(contextVk);
 
-    return mExecutable.load(contextVk, mState.getExecutable(), mState.isSeparable(), stream);
+    return getExecutable()->load(contextVk, mState.isSeparable(), stream);
 }
 
 void ProgramVk::save(const gl::Context *context, gl::BinaryOutputStream *stream)
 {
     ContextVk *contextVk = vk::GetImpl(context);
-    mExecutable.save(contextVk, mState.isSeparable(), stream);
+    getExecutable()->save(contextVk, mState.isSeparable(), stream);
 }
 
 void ProgramVk::setBinaryRetrievableHint(bool retrievable)
@@ -423,60 +466,22 @@ void ProgramVk::setSeparable(bool separable)
 
 std::unique_ptr<LinkEvent> ProgramVk::link(const gl::Context *context,
                                            const gl::ProgramLinkedResources &resources,
-                                           gl::InfoLog &infoLog,
-                                           gl::ProgramMergedVaryings &&mergedVaryings,
-                                           gl::ScopedShaderLinkLocks *shaderLocks)
+                                           gl::ProgramMergedVaryings &&mergedVaryings)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "ProgramVk::link");
 
-    // Make sure no compile jobs are pending.
-    // TODO: move this to the link job itself.  http://anglebug.com/8297
-    const gl::ProgramExecutable &programExecutable = mState.getExecutable();
-    for (const gl::ShaderType shaderType : programExecutable.getLinkedShaderStages())
-    {
-        gl::Shader *shader = mState.getAttachedShader(shaderType);
-        if (shader)
-        {
-            shader->resolveCompile(context);
-        }
-    }
-
     ContextVk *contextVk = vk::GetImpl(context);
-    // Link resources before calling GetShaderSource to make sure they are ready for the set/binding
-    // assignment done in that function.
-    linkResources(context, resources);
-
     reset(contextVk);
-    mExecutable.clearVariableInfoMap();
-
-    // Gather variable info and compiled SPIR-V binaries.
-    SpvSourceOptions options = SpvCreateSourceOptions(contextVk->getFeatures());
-    SpvAssignAllLocations(options, mState, resources, &mSpvProgramInterfaceInfo,
-                          &mExecutable.mVariableInfoMap);
-
-    angle::Result status = mExecutable.createPipelineLayout(contextVk, programExecutable, nullptr);
-    if (status != angle::Result::Continue)
-    {
-        return std::make_unique<LinkEventDone>(status);
-    }
 
     std::shared_ptr<LinkTaskVk> linkTask = std::make_shared<LinkTaskVk>(
-        contextVk->getRenderer(), mState, programExecutable, &mExecutable, shaderLocks,
-        std::move(mergedVaryings), context->getState().isGLES1(), contextVk->pipelineRobustness(),
+        contextVk->getRenderer(), contextVk->getPipelineLayoutCache(),
+        contextVk->getDescriptorSetLayoutCache(), mState, std::move(mergedVaryings), resources,
+        context->getState().isGLES1(), contextVk->pipelineRobustness(),
         contextVk->pipelineProtectedAccess());
     return std::make_unique<LinkEventVulkan>(context->getShaderCompileThreadPool(), linkTask);
 }
 
-void ProgramVk::linkResources(const gl::Context *context,
-                              const gl::ProgramLinkedResources &resources)
-{
-    Std140BlockLayoutEncoderFactory std140EncoderFactory;
-    gl::ProgramLinkedResourcesLinker linker(&std140EncoderFactory);
-
-    linker.linkResources(context, mState, resources);
-}
-
-GLboolean ProgramVk::validate(const gl::Caps &caps, gl::InfoLog *infoLog)
+GLboolean ProgramVk::validate(const gl::Caps &caps)
 {
     // No-op. The spec is very vague about the behavior of validation.
     return GL_TRUE;
@@ -487,7 +492,7 @@ angle::Result ProgramVk::syncState(const gl::Context *context,
 {
     ASSERT(dirtyBits.any());
     // Push dirty bits to executable so that they can be used later.
-    mExecutable.mDirtyBits |= dirtyBits;
+    getExecutable()->mDirtyBits |= dirtyBits;
     return angle::Result::Continue;
 }
 
@@ -497,6 +502,7 @@ void ProgramVk::setUniformImpl(GLint location, GLsizei count, const T *v, GLenum
     const gl::VariableLocation &locationInfo  = mState.getUniformLocations()[location];
     const gl::LinkedUniform &linkedUniform    = mState.getUniforms()[locationInfo.index];
     const gl::ProgramExecutable &glExecutable = mState.getExecutable();
+    ProgramExecutableVk *executableVk         = vk::GetImpl(&glExecutable);
 
     ASSERT(!linkedUniform.isSampler());
 
@@ -504,7 +510,7 @@ void ProgramVk::setUniformImpl(GLint location, GLsizei count, const T *v, GLenum
     {
         for (const gl::ShaderType shaderType : glExecutable.getLinkedShaderStages())
         {
-            DefaultUniformBlock &uniformBlock     = *mExecutable.mDefaultUniformBlocks[shaderType];
+            DefaultUniformBlockVk &uniformBlock = *executableVk->mDefaultUniformBlocks[shaderType];
             const sh::BlockMemberInfo &layoutInfo = uniformBlock.uniformLayout[location];
 
             // Assume an offset of -1 means the block is unused.
@@ -516,14 +522,14 @@ void ProgramVk::setUniformImpl(GLint location, GLsizei count, const T *v, GLenum
             const GLint componentCount = linkedUniform.getElementComponents();
             UpdateDefaultUniformBlock(count, locationInfo.arrayIndex, componentCount, v, layoutInfo,
                                       &uniformBlock.uniformData);
-            mExecutable.mDefaultUniformBlocksDirty.set(shaderType);
+            executableVk->mDefaultUniformBlocksDirty.set(shaderType);
         }
     }
     else
     {
         for (const gl::ShaderType shaderType : glExecutable.getLinkedShaderStages())
         {
-            DefaultUniformBlock &uniformBlock     = *mExecutable.mDefaultUniformBlocks[shaderType];
+            DefaultUniformBlockVk &uniformBlock = *executableVk->mDefaultUniformBlocks[shaderType];
             const sh::BlockMemberInfo &layoutInfo = uniformBlock.uniformLayout[location];
 
             // Assume an offset of -1 means the block is unused.
@@ -551,7 +557,7 @@ void ProgramVk::setUniformImpl(GLint location, GLsizei count, const T *v, GLenum
                 }
             }
 
-            mExecutable.mDefaultUniformBlocksDirty.set(shaderType);
+            executableVk->mDefaultUniformBlocksDirty.set(shaderType);
         }
     }
 }
@@ -561,14 +567,15 @@ void ProgramVk::getUniformImpl(GLint location, T *v, GLenum entryPointType) cons
 {
     const gl::VariableLocation &locationInfo = mState.getUniformLocations()[location];
     const gl::LinkedUniform &linkedUniform   = mState.getUniforms()[locationInfo.index];
+    const ProgramExecutableVk *executableVk  = getExecutable();
 
     ASSERT(!linkedUniform.isSampler() && !linkedUniform.isImage());
 
     const gl::ShaderType shaderType = linkedUniform.getFirstActiveShaderType();
     ASSERT(shaderType != gl::ShaderType::InvalidEnum);
 
-    const DefaultUniformBlock &uniformBlock = *mExecutable.mDefaultUniformBlocks[shaderType];
-    const sh::BlockMemberInfo &layoutInfo   = uniformBlock.uniformLayout[location];
+    const DefaultUniformBlockVk &uniformBlock = *executableVk->mDefaultUniformBlocks[shaderType];
+    const sh::BlockMemberInfo &layoutInfo     = uniformBlock.uniformLayout[location];
 
     ASSERT(gl::GetUniformTypeInfo(linkedUniform.type).componentType == entryPointType ||
            gl::GetUniformTypeInfo(linkedUniform.type).componentType ==
@@ -666,10 +673,11 @@ void ProgramVk::setUniformMatrixfv(GLint location,
     const gl::VariableLocation &locationInfo  = mState.getUniformLocations()[location];
     const gl::LinkedUniform &linkedUniform    = mState.getUniforms()[locationInfo.index];
     const gl::ProgramExecutable &glExecutable = mState.getExecutable();
+    ProgramExecutableVk *executableVk         = vk::GetImpl(&glExecutable);
 
     for (const gl::ShaderType shaderType : glExecutable.getLinkedShaderStages())
     {
-        DefaultUniformBlock &uniformBlock     = *mExecutable.mDefaultUniformBlocks[shaderType];
+        DefaultUniformBlockVk &uniformBlock   = *executableVk->mDefaultUniformBlocks[shaderType];
         const sh::BlockMemberInfo &layoutInfo = uniformBlock.uniformLayout[location];
 
         // Assume an offset of -1 means the block is unused.
@@ -682,7 +690,7 @@ void ProgramVk::setUniformMatrixfv(GLint location,
             locationInfo.arrayIndex, linkedUniform.getBasicTypeElementCount(), count, transpose,
             value, uniformBlock.uniformData.data() + layoutInfo.offset);
 
-        mExecutable.mDefaultUniformBlocksDirty.set(shaderType);
+        executableVk->mDefaultUniformBlocksDirty.set(shaderType);
     }
 }
 
