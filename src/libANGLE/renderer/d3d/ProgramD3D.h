@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-#include "compiler/translator/blocklayoutHLSL.h"
+#include "compiler/translator/hlsl/blocklayoutHLSL.h"
 #include "libANGLE/Constants.h"
 #include "libANGLE/formatutils.h"
 #include "libANGLE/renderer/ProgramImpl.h"
@@ -158,7 +158,7 @@ class ProgramD3DMetadata final : angle::NonCopyable
     bool usesPointSize() const;
     bool usesInsertedPointCoordValue() const;
     bool usesViewScale() const;
-    bool hasANGLEMultiviewEnabled() const;
+    bool hasMultiviewEnabled() const;
     bool usesVertexID() const;
     bool usesViewID() const;
     bool canSelectViewInVertexShader() const;
@@ -553,7 +553,7 @@ class ProgramD3D : public ProgramImpl
 
     FragDepthUsage mFragDepthUsage;
     bool mUsesSampleMask;
-    bool mHasANGLEMultiviewEnabled;
+    bool mHasMultiviewEnabled;
     bool mUsesVertexID;
     bool mUsesViewID;
     std::vector<PixelShaderOutputVariable> mPixelShaderKey;

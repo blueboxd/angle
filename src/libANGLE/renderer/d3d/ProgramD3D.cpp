@@ -468,10 +468,10 @@ bool ProgramD3DMetadata::usesViewScale() const
     return mUsesViewScale;
 }
 
-bool ProgramD3DMetadata::hasANGLEMultiviewEnabled() const
+bool ProgramD3DMetadata::hasMultiviewEnabled() const
 {
     const rx::ShaderD3D *shader = mAttachedShaders[gl::ShaderType::Vertex];
-    return (shader && shader->hasANGLEMultiviewEnabled());
+    return (shader && shader->hasMultiviewEnabled());
 }
 
 bool ProgramD3DMetadata::usesVertexID() const
@@ -745,7 +745,7 @@ bool ProgramD3D::usesGetDimensionsIgnoresBaseLevel() const
 
 bool ProgramD3D::usesGeometryShader(const gl::State &state, const gl::PrimitiveMode drawMode) const
 {
-    if (mHasANGLEMultiviewEnabled && !mRenderer->canSelectViewInVertexShader())
+    if (mHasMultiviewEnabled && !mRenderer->canSelectViewInVertexShader())
     {
         return true;
     }
@@ -1154,7 +1154,7 @@ std::unique_ptr<rx::LinkEvent> ProgramD3D::load(const gl::Context *context,
 
     stream->readEnum(&mFragDepthUsage);
     stream->readBool(&mUsesSampleMask);
-    stream->readBool(&mHasANGLEMultiviewEnabled);
+    stream->readBool(&mHasMultiviewEnabled);
     stream->readBool(&mUsesVertexID);
     stream->readBool(&mUsesViewID);
     stream->readBool(&mUsesPointSize);
@@ -1451,7 +1451,7 @@ void ProgramD3D::save(const gl::Context *context, gl::BinaryOutputStream *stream
 
     stream->writeEnum(mFragDepthUsage);
     stream->writeBool(mUsesSampleMask);
-    stream->writeBool(mHasANGLEMultiviewEnabled);
+    stream->writeBool(mHasMultiviewEnabled);
     stream->writeBool(mUsesVertexID);
     stream->writeBool(mUsesViewID);
     stream->writeBool(mUsesPointSize);
@@ -1683,9 +1683,9 @@ angle::Result ProgramD3D::getGeometryExecutableForPrimitiveType(d3d::Context *co
     }
     const gl::Caps &caps     = state.getCaps();
     std::string geometryHLSL = mDynamicHLSL->generateGeometryShaderHLSL(
-        caps, geometryShaderType, mState, mRenderer->presentPathFastEnabled(),
-        mHasANGLEMultiviewEnabled, mRenderer->canSelectViewInVertexShader(),
-        usesGeometryShaderForPointSpriteEmulation(), mGeometryShaderPreamble);
+        caps, geometryShaderType, mState, mRenderer->presentPathFastEnabled(), mHasMultiviewEnabled,
+        mRenderer->canSelectViewInVertexShader(), usesGeometryShaderForPointSpriteEmulation(),
+        mGeometryShaderPreamble);
 
     gl::InfoLog tempInfoLog;
     gl::InfoLog *currentInfoLog = infoLog ? infoLog : &tempInfoLog;
@@ -2178,11 +2178,11 @@ std::unique_ptr<LinkEvent> ProgramD3D::link(const gl::Context *context,
         const ShaderD3D *vertexShader = shadersD3D[gl::ShaderType::Vertex];
         mUsesPointSize                = vertexShader && vertexShader->usesPointSize();
         mDynamicHLSL->getPixelShaderOutputKey(data, mState, metadata, &mPixelShaderKey);
-        mFragDepthUsage           = metadata.getFragDepthUsage();
-        mUsesSampleMask           = metadata.usesSampleMask();
-        mUsesVertexID             = metadata.usesVertexID();
-        mUsesViewID               = metadata.usesViewID();
-        mHasANGLEMultiviewEnabled = metadata.hasANGLEMultiviewEnabled();
+        mFragDepthUsage      = metadata.getFragDepthUsage();
+        mUsesSampleMask      = metadata.usesSampleMask();
+        mUsesVertexID        = metadata.usesVertexID();
+        mUsesViewID          = metadata.usesViewID();
+        mHasMultiviewEnabled = metadata.hasMultiviewEnabled();
 
         // Cache if we use flat shading
         mUsesFlatInterpolation = FindFlatInterpolationVarying(context, mState.getAttachedShaders());
@@ -2190,7 +2190,7 @@ std::unique_ptr<LinkEvent> ProgramD3D::link(const gl::Context *context,
         if (mRenderer->getMajorShaderModel() >= 4)
         {
             mGeometryShaderPreamble = mDynamicHLSL->generateGeometryShaderPreamble(
-                varyingPacking, builtins, mHasANGLEMultiviewEnabled,
+                varyingPacking, builtins, mHasMultiviewEnabled,
                 metadata.canSelectViewInVertexShader());
         }
 
@@ -3075,11 +3075,11 @@ void ProgramD3D::reset()
         mShaderHLSL[shaderType].clear();
     }
 
-    mFragDepthUsage           = FragDepthUsage::Unused;
-    mUsesSampleMask           = false;
-    mHasANGLEMultiviewEnabled = false;
-    mUsesVertexID             = false;
-    mUsesViewID               = false;
+    mFragDepthUsage      = FragDepthUsage::Unused;
+    mUsesSampleMask      = false;
+    mHasMultiviewEnabled = false;
+    mUsesVertexID        = false;
+    mUsesViewID          = false;
     mPixelShaderKey.clear();
     mUsesPointSize         = false;
     mUsesFlatInterpolation = false;

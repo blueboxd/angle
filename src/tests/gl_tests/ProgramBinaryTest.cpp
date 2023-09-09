@@ -35,7 +35,7 @@ class ProgramBinaryTest : public ANGLETest<>
 
     void testSetUp() override
     {
-        mProgram = CompileProgram(essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+        mProgram = CompileProgram(essl1_shaders::vs::Texture2D(), essl1_shaders::fs::Texture2D());
         if (mProgram == 0)
         {
             FAIL() << "shader compilation failed.";
@@ -861,7 +861,7 @@ TEST_P(ProgramBinaryTest, SRGBDecodeWithSamplerAndTexelFetchTest)
     // http://anglebug.com/4991
     ANGLE_SKIP_TEST_IF(IsOpenGL() && IsIntel() && IsWindows());
     ANGLE_SKIP_TEST_IF(IsOpenGL() && IsAMD() && IsWindows());
-    ANGLE_SKIP_TEST_IF(IsOpenGL() && (IsNVIDIA() || IsARM64()) && IsOSX());
+    ANGLE_SKIP_TEST_IF(IsOpenGL() && (IsNVIDIA() || IsARM64()) && IsMac());
     ANGLE_SKIP_TEST_IF(IsOpenGLES() && IsNexus5X());
 
     constexpr char kVS[] =

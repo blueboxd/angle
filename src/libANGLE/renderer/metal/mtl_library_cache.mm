@@ -30,12 +30,15 @@ namespace rx
 namespace mtl
 {
 
-AutoObjCPtr<id<MTLLibrary>> LibraryCache::get(const std::string &source,
+LibraryCache::LibraryCache() : mCache(kMaxCachedLibraries) {}
+
+AutoObjCPtr<id<MTLLibrary>> LibraryCache::get(const std::shared_ptr<const std::string> &source,
                                               const std::map<std::string, std::string> &macros,
                                               bool enableFastMath)
 {
-    LibraryKey::LValueTuple key            = std::tie(source, macros, enableFastMath);
-    LibraryCache::LibraryCacheEntry &entry = getCacheEntry(key);
+    ASSERT(source != nullptr);
+    LibraryCache::LibraryCacheEntry &entry =
+        getCacheEntry(LibraryKey(source, macros, enableFastMath));
 
     // Try to lock the entry and return the library if it exists. If we can't lock then it means
     // another thread is currently compiling.
@@ -74,12 +77,12 @@ angle::MemoryBuffer ReadMetallibFromFile(const std::string &path)
 
 // Generates a key for the BlobCache based on the specified params.
 egl::BlobCacheKey GenerateBlobCacheKeyForShaderLibrary(
-    const std::string &source,
+    const std::shared_ptr<const std::string> &source,
     const std::map<std::string, std::string> &macros,
     bool enableFastMath)
 {
     angle::base::SecureHashAlgorithm sha1;
-    sha1.Update(source.c_str(), source.size());
+    sha1.Update(source->c_str(), source->size());
     const size_t macro_count = macros.size();
     sha1.Update(&macro_count, sizeof(size_t));
     for (const auto &macro : macros)
@@ -113,7 +116,7 @@ AutoObjCPtr<id<MTLLibrary>> NewMetalLibraryFromMetallib(ContextMtl *context,
 
 AutoObjCPtr<id<MTLLibrary>> LibraryCache::getOrCompileShaderLibrary(
     ContextMtl *context,
-    const std::string &source,
+    const std::shared_ptr<const std::string> &source,
     const std::map<std::string, std::string> &macros,
     bool enableFastMath,
     AutoObjCPtr<NSError *> *errorOut)
@@ -121,12 +124,13 @@ AutoObjCPtr<id<MTLLibrary>> LibraryCache::getOrCompileShaderLibrary(
     const angle::FeaturesMtl &features = context->getDisplay()->getFeatures();
     if (!features.enableInMemoryMtlLibraryCache.enabled)
     {
-        return CreateShaderLibrary(context->getMetalDevice(), source, macros, enableFastMath,
+        return CreateShaderLibrary(context->getMetalDevice(), *source, macros, enableFastMath,
                                    errorOut);
     }
 
-    LibraryKey::LValueTuple key            = std::tie(source, macros, enableFastMath);
-    LibraryCache::LibraryCacheEntry &entry = getCacheEntry(key);
+    ASSERT(source != nullptr);
+    LibraryCache::LibraryCacheEntry &entry =
+        getCacheEntry(LibraryKey(source, macros, enableFastMath));
 
     // Lock this cache entry while compiling the shader. This causes other threads calling this
     // function to wait and not duplicate the compilation.
@@ -140,7 +144,7 @@ AutoObjCPtr<id<MTLLibrary>> LibraryCache::getOrCompileShaderLibrary(
     {
         auto cache_key = GenerateBlobCacheKeyForShaderLibrary(source, macros, enableFastMath);
         NSLog(@"Loading metal shader, key=%@ source=%s",
-              [NSData dataWithBytes:cache_key.data() length:cache_key.size()], source.c_str());
+              [NSData dataWithBytes:cache_key.data() length:cache_key.size()], source -> c_str());
     }
 
     if (features.compileMetalShaders.enabled)
@@ -153,7 +157,7 @@ AutoObjCPtr<id<MTLLibrary>> LibraryCache::getOrCompileShaderLibrary(
             FATAL() << "EnableParallelMtlLibraryCompilation is not compatible with "
                        "compileMetalShdaders";
         }
-        std::string metallib_filename = CompileShaderLibraryToFile(source, macros, enableFastMath);
+        std::string metallib_filename = CompileShaderLibraryToFile(*source, macros, enableFastMath);
         angle::MemoryBuffer memory_buffer = ReadMetallibFromFile(metallib_filename);
         entry.library =
             NewMetalLibraryFromMetallib(context, memory_buffer.data(), memory_buffer.size());
@@ -182,73 +186,68 @@ AutoObjCPtr<id<MTLLibrary>> LibraryCache::getOrCompileShaderLibrary(
     }
 
     entry.library =
-        CreateShaderLibrary(context->getMetalDevice(), source, macros, enableFastMath, errorOut);
+        CreateShaderLibrary(context->getMetalDevice(), *source, macros, enableFastMath, errorOut);
     return entry.library;
 }
 
-LibraryCache::LibraryCacheEntry &LibraryCache::getCacheEntry(
-    const LibraryKey::LValueTuple &lValueKey)
+LibraryCache::LibraryCacheEntry &LibraryCache::getCacheEntry(LibraryKey &&key)
 {
     // Lock while searching or adding new items to the cache.
     std::lock_guard<std::mutex> cacheLockGuard(mCacheLock);
 
-#if ANGLE_HAS_HASH_MAP_GENERIC_LOOKUP
-    // Fast-path that can search the cache with only lvalues instead of making a copy of the key
-    auto iter = mCache.find(lValueKey);
+    auto iter = mCache.Get(key);
     if (iter != mCache.end())
     {
         return iter->second;
     }
-#endif
 
-    LibraryKey key(lValueKey);
-    return mCache[std::move(key)];
+    angle::TrimCache(kMaxCachedLibraries, kGCLimit, "metal library", &mCache);
+
+    iter = mCache.Put(std::move(key), LibraryCacheEntry());
+    return iter->second;
 }
 
-LibraryCache::LibraryKey::LibraryKey(const LValueTuple &fromTuple)
+LibraryCache::LibraryKey::LibraryKey(const std::shared_ptr<const std::string> &sourceIn,
+                                     const std::map<std::string, std::string> &macrosIn,
+                                     bool enableFastMathIn)
+    : source(sourceIn), macros(macrosIn), enableFastMath(enableFastMathIn)
+{}
+
+bool LibraryCache::LibraryKey::operator==(const LibraryKey &other) const
 {
-    source         = std::get<0>(fromTuple);
-    macros         = std::get<1>(fromTuple);
-    enableFastMath = std::get<2>(fromTuple);
+    return std::tie(*source, macros, enableFastMath) ==
+           std::tie(*other.source, other.macros, other.enableFastMath);
 }
 
-LibraryCache::LibraryKey::LValueTuple LibraryCache::LibraryKey::tie() const
+size_t LibraryCache::LibraryKeyHasher::operator()(const LibraryKey &k) const
 {
-    return std::tie(source, macros, enableFastMath);
-}
-
-size_t LibraryCache::LibraryKeyCompare::operator()(const LibraryKey::LValueTuple &k) const
-{
-    size_t hash = std::hash<std::string>()(std::get<0>(k));
-    for (const auto &macro : std::get<1>(k))
+    size_t hash = 0;
+    angle::HashCombine(hash, *k.source);
+    for (const auto &macro : k.macros)
     {
-        hash =
-            hash ^ std::hash<std::string>()(macro.first) ^ std::hash<std::string>()(macro.second);
+        angle::HashCombine(hash, macro.first);
+        angle::HashCombine(hash, macro.second);
     }
-    hash = hash ^ std::hash<bool>()(std::get<2>(k));
+    angle::HashCombine(hash, k.enableFastMath);
     return hash;
 }
 
-size_t LibraryCache::LibraryKeyCompare::operator()(const LibraryKey &k) const
+LibraryCache::LibraryCacheEntry::~LibraryCacheEntry()
 {
-    return operator()(k.tie());
+    // Lock the cache entry before deletion to ensure there is no other thread compiling and
+    // preparing to write to the library. LibraryCacheEntry objects can only be deleted while the
+    // mCacheLock is held so only one thread modifies mCache at a time.
+    std::lock_guard<std::mutex> entryLockGuard(lock);
 }
 
-bool LibraryCache::LibraryKeyCompare::operator()(const LibraryKey &a, const LibraryKey &b) const
+LibraryCache::LibraryCacheEntry::LibraryCacheEntry(LibraryCacheEntry &&moveFrom)
 {
-    return a.tie() == b.tie();
-}
+    // Lock the cache entry being moved from to make sure the library can be safely accessed.
+    // Mutexes cannot be moved so a new one will be created in this entry
+    std::lock_guard<std::mutex> entryLockGuard(moveFrom.lock);
 
-bool LibraryCache::LibraryKeyCompare::operator()(const LibraryKey &a,
-                                                 const LibraryKey::LValueTuple &b) const
-{
-    return a.tie() == b;
-}
-
-bool LibraryCache::LibraryKeyCompare::operator()(const LibraryKey::LValueTuple &a,
-                                                 const LibraryKey &b) const
-{
-    return a == b.tie();
+    library          = std::move(moveFrom.library);
+    moveFrom.library = nullptr;
 }
 
 }  // namespace mtl

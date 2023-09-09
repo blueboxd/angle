@@ -54,8 +54,25 @@ class [[nodiscard]] ScopedAutoClearVector
     std::vector<T> &mArray;
 };
 
+inline void memcpy_guarded(void *dst, const void *src, const void *maxSrcPtr, size_t size)
+{
+    size_t bytesAvailable = maxSrcPtr > src ? (const uint8_t *)maxSrcPtr - (const uint8_t *)src : 0;
+    size_t bytesToCopy    = std::min(size, bytesAvailable);
+    size_t bytesToZero    = size - bytesToCopy;
+
+    if (bytesToCopy)
+        memcpy(dst, src, bytesToCopy);
+    if (bytesToZero)
+        memset((uint8_t *)dst + bytesToCopy, 0, bytesToZero);
+}
+
 // Copy matrix one column at a time
-inline void copy_matrix(void *dst, const void *src, size_t srcStride, size_t dstStride, GLenum type)
+inline void copy_matrix(void *dst,
+                        const void *src,
+                        const void *maxSrcPtr,
+                        size_t srcStride,
+                        size_t dstStride,
+                        GLenum type)
 {
     size_t elemSize      = mtl::GetMetalSizeForGLType(gl::VariableComponentType(type));
     const size_t dstRows = gl::VariableRowCount(type);
@@ -64,14 +81,15 @@ inline void copy_matrix(void *dst, const void *src, size_t srcStride, size_t dst
     for (size_t col = 0; col < dstCols; col++)
     {
         size_t srcOffset = col * srcStride;
-        memcpy(((uint8_t *)dst) + dstStride * col, (const uint8_t *)src + srcOffset,
-               elemSize * dstRows);
+        memcpy_guarded(((uint8_t *)dst) + dstStride * col, (const uint8_t *)src + srcOffset,
+                       maxSrcPtr, elemSize * dstRows);
     }
 }
 
 // Copy matrix one element at a time to transpose.
 inline void copy_matrix_row_major(void *dst,
                                   const void *src,
+                                  const void *maxSrcPtr,
                                   size_t srcStride,
                                   size_t dstStride,
                                   GLenum type)
@@ -85,8 +103,8 @@ inline void copy_matrix_row_major(void *dst,
         for (size_t row = 0; row < dstRows; row++)
         {
             size_t srcOffset = row * srcStride + col * elemSize;
-            memcpy((uint8_t *)dst + dstStride * col + row * elemSize,
-                   (const uint8_t *)src + srcOffset, elemSize);
+            memcpy_guarded((uint8_t *)dst + dstStride * col + row * elemSize,
+                           (const uint8_t *)src + srcOffset, maxSrcPtr, elemSize);
         }
     }
 }
@@ -104,7 +122,8 @@ angle::Result ConvertUniformBufferData(ContextMtl *contextMtl,
                                        mtl::BufferRef *bufferOut,
                                        size_t *bufferOffsetOut)
 {
-    uint8_t *dst = nullptr;
+    uint8_t *dst             = nullptr;
+    const uint8_t *maxSrcPtr = sourceData + sizeToCopy;
     dynamicBuffer->releaseInFlightBuffers(contextMtl);
 
     // When converting a UBO buffer, we convert all of the data
@@ -149,12 +168,12 @@ angle::Result ConvertUniformBufferData(ContextMtl *contextMtl,
                     // Transpose matricies into column major order, if they're row major encoded.
                     if (stdIterator->isRowMajorMatrix)
                     {
-                        copy_matrix_row_major(dstMat, srcMat, stdIterator->matrixStride,
+                        copy_matrix_row_major(dstMat, srcMat, maxSrcPtr, stdIterator->matrixStride,
                                               mtlIterator->matrixStride, mtlIterator->type);
                     }
                     else
                     {
-                        copy_matrix(dstMat, srcMat, stdIterator->matrixStride,
+                        copy_matrix(dstMat, srcMat, maxSrcPtr, stdIterator->matrixStride,
                                     mtlIterator->matrixStride, mtlIterator->type);
                     }
                 }
@@ -166,24 +185,25 @@ angle::Result ConvertUniformBufferData(ContextMtl *contextMtl,
                     for (int boolCol = 0; boolCol < gl::VariableComponentCount(mtlIterator->type);
                          boolCol++)
                     {
-                        const uint8_t *srcOffset =
+                        const uint8_t *srcBool =
                             (sourceData + stdIterator->offset + stdArrayOffset +
                              blockConversionInfo.stdSize() * i +
                              gl::VariableComponentSize(GL_BOOL) * boolCol);
-                        unsigned int srcValue = *((unsigned int *)(srcOffset));
-                        bool boolVal          = bool(srcValue);
-                        memcpy(dst + mtlIterator->offset + mtlArrayOffset +
-                                   blockConversionInfo.metalSize() * i + sizeof(bool) * boolCol,
-                               &boolVal, sizeof(bool));
+                        unsigned int srcValue =
+                            srcBool < maxSrcPtr ? *((unsigned int *)(srcBool)) : 0;
+                        uint8_t *dstBool = dst + mtlIterator->offset + mtlArrayOffset +
+                                           blockConversionInfo.metalSize() * i +
+                                           sizeof(bool) * boolCol;
+                        *dstBool = (srcValue != 0);
                     }
                 }
                 else
                 {
-                    memcpy(dst + mtlIterator->offset + mtlArrayOffset +
-                               blockConversionInfo.metalSize() * i,
-                           sourceData + stdIterator->offset + stdArrayOffset +
-                               blockConversionInfo.stdSize() * i,
-                           mtl::GetMetalSizeForGLType(mtlIterator->type));
+                    memcpy_guarded(dst + mtlIterator->offset + mtlArrayOffset +
+                                       blockConversionInfo.metalSize() * i,
+                                   sourceData + stdIterator->offset + stdArrayOffset +
+                                       blockConversionInfo.stdSize() * i,
+                                   maxSrcPtr, mtl::GetMetalSizeForGLType(mtlIterator->type));
                 }
             }
             ++stdIterator;
@@ -390,7 +410,7 @@ angle::Result CreateMslShaderLib(ContextMtl *context,
             ss << "Internal error compiling shader with Metal backend.\n";
             ss << err.get().localizedDescription.UTF8String << "\n";
             ss << "-----\n";
-            ss << translatedMslInfo->metalShaderSource;
+            ss << *(translatedMslInfo->metalShaderSource);
             ss << "-----\n";
 
             infoLog << ss.str();
@@ -548,22 +568,42 @@ void ProgramMtl::reset(ContextMtl *context)
 
 void ProgramMtl::saveTranslatedShaders(gl::BinaryOutputStream *stream)
 {
+    auto writeTranslatedSource = [](gl::BinaryOutputStream *stream,
+                                    const mtl::TranslatedShaderInfo &shaderInfo) {
+        const std::string &source =
+            shaderInfo.metalShaderSource ? *shaderInfo.metalShaderSource : std::string();
+        stream->writeString(source);
+    };
+
     // Write out shader sources for all shader types
     for (const gl::ShaderType shaderType : gl::AllShaderTypes())
     {
-        stream->writeString(mMslShaderTranslateInfo[shaderType].metalShaderSource);
+        writeTranslatedSource(stream, mMslShaderTranslateInfo[shaderType]);
     }
-    stream->writeString(mMslXfbOnlyVertexShaderInfo.metalShaderSource);
+    writeTranslatedSource(stream, mMslXfbOnlyVertexShaderInfo);
 }
 
 void ProgramMtl::loadTranslatedShaders(gl::BinaryInputStream *stream)
 {
+    auto readTranslatedSource = [](gl::BinaryInputStream *stream,
+                                   mtl::TranslatedShaderInfo &shaderInfo) {
+        std::string source = stream->readString();
+        if (!source.empty())
+        {
+            shaderInfo.metalShaderSource = std::make_shared<const std::string>(std::move(source));
+        }
+        else
+        {
+            shaderInfo.metalShaderSource = nullptr;
+        }
+    };
+
     // Read in shader sources for all shader types
     for (const gl::ShaderType shaderType : gl::AllShaderTypes())
     {
-        mMslShaderTranslateInfo[shaderType].metalShaderSource = stream->readString();
+        readTranslatedSource(stream, mMslShaderTranslateInfo[shaderType]);
     }
-    mMslXfbOnlyVertexShaderInfo.metalShaderSource = stream->readString();
+    readTranslatedSource(stream, mMslXfbOnlyVertexShaderInfo);
 }
 
 std::unique_ptr<rx::LinkEvent> ProgramMtl::load(const gl::Context *context,
@@ -615,12 +655,11 @@ std::unique_ptr<LinkEvent> ProgramMtl::link(const gl::Context *context,
     linkUpdateHasFlatAttributes(context);
 
     gl::ShaderMap<std::string> shaderSources;
-    gl::ShaderMap<std::string> translatedMslShaders;
     mtl::MSLGetShaderSource(context, mState, resources, &shaderSources);
 
     ANGLE_PARALLEL_LINK_TRY(mtl::MTLGetMSL(
         context, mState, contextMtl->getCaps(), shaderSources, &mMslShaderTranslateInfo,
-        &translatedMslShaders, mState.getExecutable().getTransformFeedbackBufferCount()));
+        mState.getExecutable().getTransformFeedbackBufferCount()));
     mMslXfbOnlyVertexShaderInfo = mMslShaderTranslateInfo[gl::ShaderType::Vertex];
 
     return compileMslShaderLibs(context, infoLog);
@@ -1311,7 +1350,7 @@ void ProgramMtl::getUniformImpl(GLint location, T *v, GLenum entryPointType) con
 
     ASSERT(!linkedUniform.isSampler());
 
-    const gl::ShaderType shaderType = linkedUniform.getFirstShaderTypeWhereActive();
+    const gl::ShaderType shaderType = linkedUniform.getFirstActiveShaderType();
     ASSERT(shaderType != gl::ShaderType::InvalidEnum);
 
     const DefaultUniformBlock &uniformBlock = mDefaultUniformBlocks[shaderType];

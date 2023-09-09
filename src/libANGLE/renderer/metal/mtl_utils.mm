@@ -350,7 +350,8 @@ static angle::Result InitializeCompressedTextureContents(const gl::Context *cont
 
 bool PreferStagedTextureUploads(const gl::Context *context,
                                 const TextureRef &texture,
-                                const Format &textureObjFormat)
+                                const Format &textureObjFormat,
+                                StagingPurpose purpose)
 {
     // The simulator MUST upload all textures as staged.
     if (TARGET_OS_SIMULATOR)
@@ -367,9 +368,16 @@ bool PreferStagedTextureUploads(const gl::Context *context,
         return false;
     }
 
+    // If the intended internal format is luminance, we can still
+    // initialize the texture using the GPU. However, if we're
+    // uploading data to it, we avoid using a staging buffer, due to
+    // the (current) need to re-pack the data from L8 -> RGBA8 and LA8
+    // -> RGBA8. This could be better optimized by emulating L8
+    // textures with R8 and LA8 with RG8, and using swizzlig for the
+    // resulting textures.
     if (intendedInternalFormat.isLUMA())
     {
-        return false;
+        return (purpose == StagingPurpose::Initialization);
     }
 
     if (features.disableStagedInitializationOfPackedTextureFormats.enabled)
@@ -401,13 +409,22 @@ angle::Result InitializeTextureContents(const gl::Context *context,
 
     const gl::InternalFormat &intendedInternalFormat = textureObjFormat.intendedInternalFormat();
 
-    bool preferGPUInitialization = PreferStagedTextureUploads(context, texture, textureObjFormat);
+    bool preferGPUInitialization = PreferStagedTextureUploads(context, texture, textureObjFormat,
+                                                              StagingPurpose::Initialization);
 
     // This function is called in many places to initialize the content of a texture.
     // So it's better we do the initial check here instead of let the callers do it themselves:
     if (!textureObjFormat.valid())
     {
         return angle::Result::Continue;
+    }
+
+    if ((textureObjFormat.hasDepthOrStencilBits() && !textureObjFormat.getCaps().depthRenderable) ||
+        !textureObjFormat.getCaps().colorRenderable)
+    {
+        // Texture is not appropriately color- or depth-renderable, so do not attempt
+        // to use GPU initialization (clears for initialization).
+        preferGPUInitialization = false;
     }
 
     gl::Extents size = texture->size(index);
@@ -1580,7 +1597,24 @@ static NSUInteger getNextLocationForFormat(const FormatCaps &caps,
     return currentRenderTargetSize;
 }
 
-NSUInteger ComputeTotalSizeUsedForMTLRenderPassDescriptor(const MTLRenderPassDescriptor *descriptor,
+static NSUInteger getNextLocationForAttachment(const mtl::RenderPassAttachmentDesc &attachment,
+                                               const Context *context,
+                                               NSUInteger currentRenderTargetSize)
+{
+    mtl::TextureRef texture =
+        attachment.implicitMSTexture ? attachment.implicitMSTexture : attachment.texture;
+
+    if (texture)
+    {
+        MTLPixelFormat pixelFormat = texture->pixelFormat();
+        bool isMsaa                = texture->samples();
+        const FormatCaps &caps     = context->getDisplay()->getNativeFormatCaps(pixelFormat);
+        currentRenderTargetSize = getNextLocationForFormat(caps, isMsaa, currentRenderTargetSize);
+    }
+    return currentRenderTargetSize;
+}
+
+NSUInteger ComputeTotalSizeUsedForMTLRenderPassDescriptor(const mtl::RenderPassDesc &descriptor,
                                                           const Context *context,
                                                           const mtl::ContextDevice &device)
 {
@@ -1588,48 +1622,25 @@ NSUInteger ComputeTotalSizeUsedForMTLRenderPassDescriptor(const MTLRenderPassDes
 
     for (NSUInteger i = 0; i < GetMaxNumberOfRenderTargetsForDevice(device); i++)
     {
-        MTLPixelFormat pixelFormat = descriptor.colorAttachments[i].texture.pixelFormat;
-        bool isMsaa                = descriptor.colorAttachments[i].texture.sampleCount > 1;
-        if (pixelFormat != MTLPixelFormatInvalid)
-        {
-            const FormatCaps &caps = context->getDisplay()->getNativeFormatCaps(pixelFormat);
-            currentRenderTargetSize =
-                getNextLocationForFormat(caps, isMsaa, currentRenderTargetSize);
-        }
+        currentRenderTargetSize = getNextLocationForAttachment(descriptor.colorAttachments[i],
+                                                               context, currentRenderTargetSize);
     }
-    if (descriptor.depthAttachment.texture.pixelFormat ==
-        descriptor.stencilAttachment.texture.pixelFormat)
+    if (descriptor.depthAttachment.texture == descriptor.stencilAttachment.texture)
     {
-        bool isMsaa = descriptor.depthAttachment.texture.sampleCount > 1;
-        if (descriptor.depthAttachment.texture.pixelFormat != MTLPixelFormatInvalid)
-        {
-            const FormatCaps &caps = context->getDisplay()->getNativeFormatCaps(
-                descriptor.depthAttachment.texture.pixelFormat);
-            currentRenderTargetSize =
-                getNextLocationForFormat(caps, isMsaa, currentRenderTargetSize);
-        }
+        currentRenderTargetSize = getNextLocationForAttachment(descriptor.depthAttachment, context,
+                                                               currentRenderTargetSize);
     }
     else
     {
-        if (descriptor.depthAttachment.texture.pixelFormat != MTLPixelFormatInvalid)
-        {
-            bool isMsaa            = descriptor.depthAttachment.texture.sampleCount > 1;
-            const FormatCaps &caps = context->getDisplay()->getNativeFormatCaps(
-                descriptor.depthAttachment.texture.pixelFormat);
-            currentRenderTargetSize =
-                getNextLocationForFormat(caps, isMsaa, currentRenderTargetSize);
-        }
-        if (descriptor.stencilAttachment.texture.pixelFormat != MTLPixelFormatInvalid)
-        {
-            bool isMsaa            = descriptor.stencilAttachment.texture.sampleCount > 1;
-            const FormatCaps &caps = context->getDisplay()->getNativeFormatCaps(
-                descriptor.stencilAttachment.texture.pixelFormat);
-            currentRenderTargetSize =
-                getNextLocationForFormat(caps, isMsaa, currentRenderTargetSize);
-        }
+        currentRenderTargetSize = getNextLocationForAttachment(descriptor.depthAttachment, context,
+                                                               currentRenderTargetSize);
+        currentRenderTargetSize = getNextLocationForAttachment(descriptor.stencilAttachment,
+                                                               context, currentRenderTargetSize);
     }
+
     return currentRenderTargetSize;
 }
+
 NSUInteger ComputeTotalSizeUsedForMTLRenderPipelineDescriptor(
     const MTLRenderPipelineDescriptor *descriptor,
     const Context *context,
