@@ -328,12 +328,10 @@ class ProgramExecutableD3D : public ProgramExecutableImpl
                                                           RendererD3D *renderer,
                                                           ShaderExecutableD3D **outExectuable,
                                                           gl::InfoLog *infoLog);
-    angle::Result getComputeExecutableForImage2DBindLayout(
-        d3d::Context *context,
-        RendererD3D *renderer,
-        const gl::SharedCompiledShaderState &computeShader,
-        ShaderExecutableD3D **outExecutable,
-        gl::InfoLog *infoLog);
+    angle::Result getComputeExecutableForImage2DBindLayout(d3d::Context *context,
+                                                           RendererD3D *renderer,
+                                                           ShaderExecutableD3D **outExecutable,
+                                                           gl::InfoLog *infoLog);
 
     bool hasShaderStage(gl::ShaderType shaderType) const
     {
@@ -348,6 +346,8 @@ class ProgramExecutableD3D : public ProgramExecutableImpl
                                               RendererD3D *renderer,
                                               gl::BinaryInputStream *stream,
                                               gl::InfoLog &infoLog);
+
+    unsigned int getSerial() const { return mSerial; }
 
   private:
     friend class ProgramD3D;
@@ -467,6 +467,11 @@ class ProgramExecutableD3D : public ProgramExecutableImpl
     gl::ShaderBitSet mShaderUniformsDirty;
 
     UniqueSerial mCurrentVertexArrayStateSerial;
+
+    unsigned int mSerial;
+
+    static unsigned int issueSerial();
+    static unsigned int mCurrentSerial;
 };
 
 }  // namespace rx

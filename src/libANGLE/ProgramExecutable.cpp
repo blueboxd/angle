@@ -19,6 +19,15 @@ namespace gl
 {
 namespace
 {
+ANGLE_ENABLE_STRUCT_PADDING_WARNINGS
+// A placeholder struct just to ensure sh::BlockMemberInfo is tightly packed since vulkan backend
+// uses it and memcpy the entire vector which requires it tightly packed to make msan happy.
+struct BlockMemberInfoPaddingTest
+{
+    sh::BlockMemberInfo blockMemberInfo;
+};
+ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
+
 bool IncludeSameArrayElement(const std::set<std::string> &nameSet, const std::string &name)
 {
     std::vector<unsigned int> subscripts;
@@ -152,29 +161,29 @@ bool IsOutputSecondaryForLink(const ProgramAliasedBindings &fragmentOutputIndexe
     return false;
 }
 
-RangeUI AddUniforms(const ShaderMap<Program *> &programs,
+RangeUI AddUniforms(const ShaderMap<SharedProgramExecutable> &executables,
                     ShaderBitSet activeShaders,
                     std::vector<LinkedUniform> *outputUniforms,
                     std::vector<std::string> *outputUniformNames,
                     std::vector<std::string> *outputUniformMappedNames,
-                    const std::function<RangeUI(const ProgramState &)> &getRange)
+                    const std::function<RangeUI(const ProgramExecutable &)> &getRange)
 {
     unsigned int startRange = static_cast<unsigned int>(outputUniforms->size());
     for (ShaderType shaderType : activeShaders)
     {
-        const ProgramState &programState = programs[shaderType]->getState();
-        const RangeUI uniformRange       = getRange(programState);
+        const ProgramExecutable &executable = *executables[shaderType];
+        const RangeUI uniformRange          = getRange(executable);
 
-        const std::vector<LinkedUniform> &programUniforms = programState.getUniforms();
+        const std::vector<LinkedUniform> &programUniforms = executable.getUniforms();
         outputUniforms->insert(outputUniforms->end(), programUniforms.begin() + uniformRange.low(),
                                programUniforms.begin() + uniformRange.high());
 
-        const std::vector<std::string> &uniformNames = programState.getUniformNames();
+        const std::vector<std::string> &uniformNames = executable.getUniformNames();
         outputUniformNames->insert(outputUniformNames->end(),
                                    uniformNames.begin() + uniformRange.low(),
                                    uniformNames.begin() + uniformRange.high());
 
-        const std::vector<std::string> &uniformMappedNames = programState.getUniformMappedNames();
+        const std::vector<std::string> &uniformMappedNames = executable.getUniformMappedNames();
         outputUniformMappedNames->insert(outputUniformMappedNames->end(),
                                          uniformMappedNames.begin() + uniformRange.low(),
                                          uniformMappedNames.begin() + uniformRange.high());
@@ -386,6 +395,8 @@ ProgramExecutable::~ProgramExecutable()
 
 void ProgramExecutable::destroy(const Context *context)
 {
+    ASSERT(mImplementation != nullptr);
+
     mImplementation->destroy(context);
     SafeDelete(mImplementation);
 }
@@ -761,10 +772,10 @@ void ProgramExecutable::hasSamplerFormatConflict(size_t textureUnit)
     mActiveSamplerFormats[textureUnit] = SamplerFormat::InvalidEnum;
 }
 
-void ProgramExecutable::updateActiveSamplers(const ProgramState &programState)
+void ProgramExecutable::updateActiveSamplers(const ProgramExecutable &executable)
 {
-    const std::vector<SamplerBinding> &samplerBindings = programState.getSamplerBindings();
-    const std::vector<GLuint> &boundTextureUnits       = programState.getSamplerBoundTextureUnits();
+    const std::vector<SamplerBinding> &samplerBindings = executable.getSamplerBindings();
+    const std::vector<GLuint> &boundTextureUnits       = executable.getSamplerBoundTextureUnits();
 
     for (uint32_t samplerIndex = 0; samplerIndex < samplerBindings.size(); ++samplerIndex)
     {
@@ -775,8 +786,8 @@ void ProgramExecutable::updateActiveSamplers(const ProgramState &programState)
             GLint textureUnit = samplerBinding.getTextureUnit(boundTextureUnits, index);
             if (++mActiveSamplerRefCounts[textureUnit] == 1)
             {
-                uint32_t uniformIndex = programState.getUniformIndexFromSamplerIndex(samplerIndex);
-                setActive(textureUnit, samplerBinding, programState.getUniforms()[uniformIndex]);
+                uint32_t uniformIndex = executable.getUniformIndexFromSamplerIndex(samplerIndex);
+                setActive(textureUnit, samplerBinding, executable.getUniforms()[uniformIndex]);
             }
             else
             {
@@ -882,21 +893,18 @@ void ProgramExecutable::saveLinkedStateInfo(const ProgramState &state)
     }
 }
 
-bool ProgramExecutable::linkMergedVaryings(
-    const Caps &caps,
-    const Limitations &limitations,
-    const Version &clientVersion,
-    bool webglCompatibility,
-    const ProgramMergedVaryings &mergedVaryings,
-    const std::vector<std::string> &transformFeedbackVaryingNames,
-    const LinkingVariables &linkingVariables,
-    bool isSeparable,
-    ProgramVaryingPacking *varyingPacking)
+bool ProgramExecutable::linkMergedVaryings(const Caps &caps,
+                                           const Limitations &limitations,
+                                           const Version &clientVersion,
+                                           bool webglCompatibility,
+                                           const ProgramMergedVaryings &mergedVaryings,
+                                           const LinkingVariables &linkingVariables,
+                                           bool isSeparable,
+                                           ProgramVaryingPacking *varyingPacking)
 {
     ShaderType tfStage = GetLastPreFragmentStage(linkingVariables.isShaderStageUsedBitset);
 
-    if (!linkValidateTransformFeedback(caps, clientVersion, mergedVaryings, tfStage,
-                                       transformFeedbackVaryingNames))
+    if (!linkValidateTransformFeedback(caps, clientVersion, mergedVaryings, tfStage))
     {
         return false;
     }
@@ -930,28 +938,26 @@ bool ProgramExecutable::linkMergedVaryings(
     }
 
     if (!varyingPacking->collectAndPackUserVaryings(*mInfoLog, caps, packMode, activeShadersMask,
-                                                    mergedVaryings, transformFeedbackVaryingNames,
+                                                    mergedVaryings, mTransformFeedbackVaryingNames,
                                                     isSeparable))
     {
         return false;
     }
 
-    gatherTransformFeedbackVaryings(mergedVaryings, tfStage, transformFeedbackVaryingNames);
+    gatherTransformFeedbackVaryings(mergedVaryings, tfStage);
     updateTransformFeedbackStrides();
 
     return true;
 }
 
-bool ProgramExecutable::linkValidateTransformFeedback(
-    const Caps &caps,
-    const Version &clientVersion,
-    const ProgramMergedVaryings &varyings,
-    ShaderType stage,
-    const std::vector<std::string> &transformFeedbackVaryingNames)
+bool ProgramExecutable::linkValidateTransformFeedback(const Caps &caps,
+                                                      const Version &clientVersion,
+                                                      const ProgramMergedVaryings &varyings,
+                                                      ShaderType stage)
 {
     // Validate the tf names regardless of the actual program varyings.
     std::set<std::string> uniqueNames;
-    for (const std::string &tfVaryingName : transformFeedbackVaryingNames)
+    for (const std::string &tfVaryingName : mTransformFeedbackVaryingNames)
     {
         if (clientVersion < Version(3, 1) && tfVaryingName.find('[') != std::string::npos)
         {
@@ -982,7 +988,7 @@ bool ProgramExecutable::linkValidateTransformFeedback(
     // From OpneGLES spec. 11.1.2.1: A program will fail to link if:
     // the count specified by TransformFeedbackVaryings is non-zero, but the
     // program object has no vertex, tessellation evaluation, or geometry shader
-    if (transformFeedbackVaryingNames.size() > 0 &&
+    if (mTransformFeedbackVaryingNames.size() > 0 &&
         !gl::ShaderTypeSupportsTransformFeedback(getLinkedTransformFeedbackStage()))
     {
         *mInfoLog << "Linked transform feedback stage " << getLinkedTransformFeedbackStage()
@@ -992,7 +998,7 @@ bool ProgramExecutable::linkValidateTransformFeedback(
 
     // Validate against program varyings.
     size_t totalComponents = 0;
-    for (const std::string &tfVaryingName : transformFeedbackVaryingNames)
+    for (const std::string &tfVaryingName : mTransformFeedbackVaryingNames)
     {
         std::vector<unsigned int> subscripts;
         std::string baseName = ParseResourceName(tfVaryingName, &subscripts);
@@ -1068,14 +1074,12 @@ bool ProgramExecutable::linkValidateTransformFeedback(
     return true;
 }
 
-void ProgramExecutable::gatherTransformFeedbackVaryings(
-    const ProgramMergedVaryings &varyings,
-    ShaderType stage,
-    const std::vector<std::string> &transformFeedbackVaryingNames)
+void ProgramExecutable::gatherTransformFeedbackVaryings(const ProgramMergedVaryings &varyings,
+                                                        ShaderType stage)
 {
     // Gather the linked varyings that are used for transform feedback, they should all exist.
     mLinkedTransformFeedbackVaryings.clear();
-    for (const std::string &tfVaryingName : transformFeedbackVaryingNames)
+    for (const std::string &tfVaryingName : mTransformFeedbackVaryingNames)
     {
         std::vector<unsigned int> subscripts;
         std::string baseName = ParseResourceName(tfVaryingName, &subscripts);
@@ -1647,17 +1651,17 @@ bool ProgramExecutable::linkAtomicCounterBuffers(const Caps &caps)
     return true;
 }
 
-void ProgramExecutable::copyInputsFromProgram(const ProgramState &programState)
+void ProgramExecutable::copyInputsFromProgram(const ProgramExecutable &executable)
 {
-    mProgramInputs = programState.getProgramInputs();
+    mProgramInputs = executable.getProgramInputs();
 }
 
-void ProgramExecutable::copyShaderBuffersFromProgram(const ProgramState &programState,
+void ProgramExecutable::copyShaderBuffersFromProgram(const ProgramExecutable &executable,
                                                      ShaderType shaderType)
 {
-    AppendActiveBlocks(shaderType, programState.getUniformBlocks(), mUniformBlocks);
-    AppendActiveBlocks(shaderType, programState.getShaderStorageBlocks(), mShaderStorageBlocks);
-    AppendActiveBlocks(shaderType, programState.getAtomicCounterBuffers(), mAtomicCounterBuffers);
+    AppendActiveBlocks(shaderType, executable.getUniformBlocks(), mUniformBlocks);
+    AppendActiveBlocks(shaderType, executable.getShaderStorageBlocks(), mShaderStorageBlocks);
+    AppendActiveBlocks(shaderType, executable.getAtomicCounterBuffers(), mAtomicCounterBuffers);
 
     // Buffer variable info is queried through the program, and program pipelines don't access it.
     ASSERT(mBufferVariables.empty());
@@ -1669,10 +1673,10 @@ void ProgramExecutable::clearSamplerBindings()
     mSamplerBoundTextureUnits.clear();
 }
 
-void ProgramExecutable::copySamplerBindingsFromProgram(const ProgramState &programState)
+void ProgramExecutable::copySamplerBindingsFromProgram(const ProgramExecutable &executable)
 {
-    const std::vector<SamplerBinding> &bindings = programState.getSamplerBindings();
-    const std::vector<GLuint> &textureUnits     = programState.getSamplerBoundTextureUnits();
+    const std::vector<SamplerBinding> &bindings = executable.getSamplerBindings();
+    const std::vector<GLuint> &textureUnits     = executable.getSamplerBoundTextureUnits();
     uint16_t adjustedStartIndex                 = mSamplerBoundTextureUnits.size();
     mSamplerBoundTextureUnits.insert(mSamplerBoundTextureUnits.end(), textureUnits.begin(),
                                      textureUnits.end());
@@ -1683,50 +1687,60 @@ void ProgramExecutable::copySamplerBindingsFromProgram(const ProgramState &progr
     }
 }
 
-void ProgramExecutable::copyImageBindingsFromProgram(const ProgramState &programState)
+void ProgramExecutable::copyImageBindingsFromProgram(const ProgramExecutable &executable)
 {
-    const std::vector<ImageBinding> &bindings = programState.getImageBindings();
+    const std::vector<ImageBinding> &bindings = executable.getImageBindings();
     mImageBindings.insert(mImageBindings.end(), bindings.begin(), bindings.end());
 }
 
-void ProgramExecutable::copyOutputsFromProgram(const ProgramState &programState)
+void ProgramExecutable::copyOutputsFromProgram(const ProgramExecutable &executable)
 {
-    mOutputVariables          = programState.getOutputVariables();
-    mOutputLocations          = programState.getOutputLocations();
-    mSecondaryOutputLocations = programState.getSecondaryOutputLocations();
+    mOutputVariables          = executable.getOutputVariables();
+    mOutputLocations          = executable.getOutputLocations();
+    mSecondaryOutputLocations = executable.getSecondaryOutputLocations();
 }
 
-void ProgramExecutable::copyUniformsFromProgramMap(const ShaderMap<Program *> &programs)
+void ProgramExecutable::copyUniformsFromProgramMap(
+    const ShaderMap<SharedProgramExecutable> &executables)
 {
     // Merge default uniforms.
-    auto getDefaultRange = [](const ProgramState &state) { return state.getDefaultUniformRange(); };
+    auto getDefaultRange = [](const ProgramExecutable &state) {
+        return state.getDefaultUniformRange();
+    };
     mPODStruct.defaultUniformRange =
-        AddUniforms(programs, mPODStruct.linkedShaderStages, &mUniforms, &mUniformNames,
+        AddUniforms(executables, mPODStruct.linkedShaderStages, &mUniforms, &mUniformNames,
                     &mUniformMappedNames, getDefaultRange);
 
     // Merge sampler uniforms.
-    auto getSamplerRange = [](const ProgramState &state) { return state.getSamplerUniformRange(); };
+    auto getSamplerRange = [](const ProgramExecutable &state) {
+        return state.getSamplerUniformRange();
+    };
     mPODStruct.samplerUniformRange =
-        AddUniforms(programs, mPODStruct.linkedShaderStages, &mUniforms, &mUniformNames,
+        AddUniforms(executables, mPODStruct.linkedShaderStages, &mUniforms, &mUniformNames,
                     &mUniformMappedNames, getSamplerRange);
 
     // Merge image uniforms.
-    auto getImageRange = [](const ProgramState &state) { return state.getImageUniformRange(); };
-    mPODStruct.imageUniformRange = AddUniforms(programs, mPODStruct.linkedShaderStages, &mUniforms,
-                                               &mUniformNames, &mUniformMappedNames, getImageRange);
+    auto getImageRange = [](const ProgramExecutable &state) {
+        return state.getImageUniformRange();
+    };
+    mPODStruct.imageUniformRange =
+        AddUniforms(executables, mPODStruct.linkedShaderStages, &mUniforms, &mUniformNames,
+                    &mUniformMappedNames, getImageRange);
 
     // Merge atomic counter uniforms.
-    auto getAtomicRange = [](const ProgramState &state) {
+    auto getAtomicRange = [](const ProgramExecutable &state) {
         return state.getAtomicCounterUniformRange();
     };
     mPODStruct.atomicCounterUniformRange =
-        AddUniforms(programs, mPODStruct.linkedShaderStages, &mUniforms, &mUniformNames,
+        AddUniforms(executables, mPODStruct.linkedShaderStages, &mUniforms, &mUniformNames,
                     &mUniformMappedNames, getAtomicRange);
 
     // Merge fragment in/out uniforms.
-    auto getInoutRange = [](const ProgramState &state) { return state.getFragmentInoutRange(); };
+    auto getInoutRange = [](const ProgramExecutable &state) {
+        return state.getFragmentInoutRange();
+    };
     mPODStruct.fragmentInoutRange =
-        AddUniforms(programs, mPODStruct.linkedShaderStages, &mUniforms, &mUniformNames,
+        AddUniforms(executables, mPODStruct.linkedShaderStages, &mUniforms, &mUniformNames,
                     &mUniformMappedNames, getInoutRange);
 
     // Note: uniforms are set through the program, and the program pipeline never needs it.
@@ -1744,5 +1758,29 @@ GLuint ProgramExecutable::getAttributeLocation(const std::string &name) const
     }
 
     return static_cast<GLuint>(-1);
+}
+
+void InstallExecutable(const Context *context,
+                       const SharedProgramExecutable &toInstall,
+                       SharedProgramExecutable *executable)
+{
+    // There should never be a need to re-install the same executable.
+    ASSERT(toInstall.get() != executable->get());
+
+    // Destroy the old executable before it gets deleted.
+    UninstallExecutable(context, executable);
+
+    // Install the new executable.
+    *executable = toInstall;
+}
+
+void UninstallExecutable(const Context *context, SharedProgramExecutable *executable)
+{
+    if (executable->use_count() == 1)
+    {
+        (*executable)->destroy(context);
+    }
+
+    executable->reset();
 }
 }  // namespace gl

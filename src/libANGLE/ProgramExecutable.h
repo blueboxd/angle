@@ -196,6 +196,9 @@ struct TransformFeedbackVarying : public sh::ShaderVariable
 class ProgramState;
 class ProgramPipelineState;
 
+class ProgramExecutable;
+using SharedProgramExecutable = std::shared_ptr<ProgramExecutable>;
+
 class ProgramExecutable final : public angle::Subject
 {
   public:
@@ -287,7 +290,7 @@ class ProgramExecutable final : public angle::Subject
     void hasSamplerTypeConflict(size_t textureUnit);
     void hasSamplerFormatConflict(size_t textureUnit);
 
-    void updateActiveSamplers(const ProgramState &programState);
+    void updateActiveSamplers(const ProgramExecutable &executable);
 
     bool hasDefaultUniforms() const { return !getDefaultUniformRange().empty(); }
     bool hasTextures() const { return !getSamplerBindings().empty(); }
@@ -363,6 +366,16 @@ class ProgramExecutable final : public angle::Subject
     {
         ASSERT(blockIndex < mShaderStorageBlocks.size());
         return mShaderStorageBlocks[blockIndex].binding;
+    }
+    const InterfaceBlock &getUniformBlockByIndex(GLuint index) const
+    {
+        ASSERT(index < static_cast<GLuint>(mUniformBlocks.size()));
+        return mUniformBlocks[index];
+    }
+    const InterfaceBlock &getShaderStorageBlockByIndex(GLuint index) const
+    {
+        ASSERT(index < static_cast<GLuint>(mShaderStorageBlocks.size()));
+        return mShaderStorageBlocks[index];
     }
     const std::vector<GLsizei> &getTransformFeedbackStrides() const
     {
@@ -499,13 +512,13 @@ class ProgramExecutable final : public angle::Subject
                       GLuint *combinedImageUniformsCount,
                       std::vector<UnusedUniform> *unusedUniforms);
 
-    void copyInputsFromProgram(const ProgramState &programState);
-    void copyShaderBuffersFromProgram(const ProgramState &programState, ShaderType shaderType);
+    void copyInputsFromProgram(const ProgramExecutable &executable);
+    void copyShaderBuffersFromProgram(const ProgramExecutable &executable, ShaderType shaderType);
     void clearSamplerBindings();
-    void copySamplerBindingsFromProgram(const ProgramState &programState);
-    void copyImageBindingsFromProgram(const ProgramState &programState);
-    void copyOutputsFromProgram(const ProgramState &programState);
-    void copyUniformsFromProgramMap(const ShaderMap<Program *> &programs);
+    void copySamplerBindingsFromProgram(const ProgramExecutable &executable);
+    void copyImageBindingsFromProgram(const ProgramExecutable &executable);
+    void copyOutputsFromProgram(const ProgramExecutable &executable);
+    void copyUniformsFromProgramMap(const ShaderMap<SharedProgramExecutable> &executables);
 
     GLuint getAttributeLocation(const std::string &name) const;
 
@@ -529,22 +542,16 @@ class ProgramExecutable final : public angle::Subject
                             const Version &clientVersion,
                             bool webglCompatibility,
                             const ProgramMergedVaryings &mergedVaryings,
-                            const std::vector<std::string> &transformFeedbackVaryingNames,
                             const LinkingVariables &linkingVariables,
                             bool isSeparable,
                             ProgramVaryingPacking *varyingPacking);
 
-    bool linkValidateTransformFeedback(
-        const Caps &caps,
-        const Version &clientVersion,
-        const ProgramMergedVaryings &varyings,
-        ShaderType stage,
-        const std::vector<std::string> &transformFeedbackVaryingNames);
+    bool linkValidateTransformFeedback(const Caps &caps,
+                                       const Version &clientVersion,
+                                       const ProgramMergedVaryings &varyings,
+                                       ShaderType stage);
 
-    void gatherTransformFeedbackVaryings(
-        const ProgramMergedVaryings &varyings,
-        ShaderType stage,
-        const std::vector<std::string> &transformFeedbackVaryingNames);
+    void gatherTransformFeedbackVaryings(const ProgramMergedVaryings &varyings, ShaderType stage);
 
     void updateTransformFeedbackStrides();
 
@@ -661,6 +668,15 @@ class ProgramExecutable final : public angle::Subject
     // Vertex attributes, Fragment input varyings, etc.
     std::vector<ProgramInput> mProgramInputs;
     std::vector<TransformFeedbackVarying> mLinkedTransformFeedbackVaryings;
+    // Duplicate of ProgramState::mTransformFeedbackVaryingNames.  This is cached here because the
+    // xfb names may change, relink may fail, yet program pipeline link should be able to function
+    // with the last installed executable.  In truth, program pipeline link should have been able to
+    // hoist transform feedback varyings directly from the executable, among most other things, but
+    // that is currently not done.
+    //
+    // This array is not serialized, it's already done by the program, and will be duplicated during
+    // deserialization.
+    std::vector<std::string> mTransformFeedbackVaryingNames;
     // The size of the data written to each transform feedback buffer per vertex.
     std::vector<GLsizei> mTransformFeedbackStrides;
     // Uniforms are sorted in order:
@@ -703,6 +719,11 @@ class ProgramExecutable final : public angle::Subject
     // Cache for sampler validation
     mutable Optional<bool> mCachedValidateSamplersResult;
 };
+
+void InstallExecutable(const Context *context,
+                       const SharedProgramExecutable &toInstall,
+                       SharedProgramExecutable *executable);
+void UninstallExecutable(const Context *context, SharedProgramExecutable *executable);
 }  // namespace gl
 
 #endif  // LIBANGLE_PROGRAMEXECUTABLE_H_

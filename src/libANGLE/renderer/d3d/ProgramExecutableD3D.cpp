@@ -404,6 +404,8 @@ D3DSampler::D3DSampler() : active(false), logicalTextureUnit(0), textureType(gl:
 
 D3DImage::D3DImage() : active(false), logicalImageUnit(0) {}
 
+unsigned int ProgramExecutableD3D::mCurrentSerial = 1;
+
 ProgramExecutableD3D::ProgramExecutableD3D(const gl::ProgramExecutable *executable)
     : ProgramExecutableImpl(executable),
       mUsesPointSize(false),
@@ -412,7 +414,8 @@ ProgramExecutableD3D::ProgramExecutableD3D(const gl::ProgramExecutable *executab
       mDirtySamplerMapping(true),
       mUsedImageRange({}),
       mUsedReadonlyImageRange({}),
-      mUsedAtomicCounterRange({})
+      mUsedAtomicCounterRange({}),
+      mSerial(issueSerial())
 {}
 
 ProgramExecutableD3D::~ProgramExecutableD3D() {}
@@ -1467,7 +1470,6 @@ angle::Result ProgramExecutableD3D::getPixelExecutableForCachedOutputLayout(
 angle::Result ProgramExecutableD3D::getComputeExecutableForImage2DBindLayout(
     d3d::Context *context,
     RendererD3D *renderer,
-    const gl::SharedCompiledShaderState &computeShader,
     ShaderExecutableD3D **outExecutable,
     gl::InfoLog *infoLog)
 {
@@ -1480,12 +1482,10 @@ angle::Result ProgramExecutableD3D::getComputeExecutableForImage2DBindLayout(
         return angle::Result::Continue;
     }
 
-    std::string computeHLSL = computeShader->translatedSource;
-
     std::string finalComputeHLSL = DynamicHLSL::GenerateShaderForImage2DBindSignature(
-        *this, gl::ShaderType::Compute, mAttachedShaders[gl::ShaderType::Compute], computeHLSL,
-        mImage2DUniforms[gl::ShaderType::Compute], mImage2DBindLayoutCache[gl::ShaderType::Compute],
-        0u);
+        *this, gl::ShaderType::Compute, mAttachedShaders[gl::ShaderType::Compute],
+        mShaderHLSL[gl::ShaderType::Compute], mImage2DUniforms[gl::ShaderType::Compute],
+        mImage2DBindLayoutCache[gl::ShaderType::Compute], 0u);
 
     // Generate new compute executable
     ShaderExecutableD3D *computeExecutable = nullptr;
@@ -2331,6 +2331,11 @@ const D3DUniform *ProgramExecutableD3D::getD3DUniformFromLocation(
     const gl::VariableLocation &locationInfo) const
 {
     return mD3DUniforms[locationInfo.index];
+}
+
+unsigned int ProgramExecutableD3D::issueSerial()
+{
+    return mCurrentSerial++;
 }
 
 }  // namespace rx

@@ -308,10 +308,8 @@ class ProgramD3D::GetExecutableTask : public Closure, public d3d::Context
 
 // ProgramD3D Implementation
 
-unsigned int ProgramD3D::mCurrentSerial = 1;
-
 ProgramD3D::ProgramD3D(const gl::ProgramState &state, RendererD3D *renderer)
-    : ProgramImpl(state), mRenderer(renderer), mSerial(issueSerial())
+    : ProgramImpl(state), mRenderer(renderer)
 {}
 
 ProgramD3D::~ProgramD3D() = default;
@@ -402,7 +400,7 @@ std::unique_ptr<rx::LinkEvent> ProgramD3D::load(const gl::Context *context,
 {
     if (!getExecutable()->load(context, mRenderer, stream))
     {
-        return nullptr;
+        return std::make_unique<LinkEventDone>(angle::Result::Stop);
     }
 
     return std::make_unique<LoadBinaryLinkEvent>(context->getShaderCompileThreadPool(), this,
@@ -503,8 +501,7 @@ class ProgramD3D::GetComputeExecutableTask : public ProgramD3D::GetExecutableTas
         mExecutable->updateCachedImage2DBindLayoutFromShader(gl::ShaderType::Compute);
         ShaderExecutableD3D *computeExecutable = nullptr;
         ANGLE_TRY(mExecutable->getComputeExecutableForImage2DBindLayout(
-            this, mProgram->mRenderer, mProgram->mState.getAttachedShader(gl::ShaderType::Compute),
-            &computeExecutable, &mInfoLog));
+            this, mProgram->mRenderer, &computeExecutable, &mInfoLog));
 
         return computeExecutable ? angle::Result::Continue : angle::Result::Incomplete;
     }
@@ -763,6 +760,10 @@ std::unique_ptr<LinkEvent> ProgramD3D::link(const gl::Context *context,
 
     if (computeShader)
     {
+        const gl::SharedCompiledShaderState &shader =
+            mState.getAttachedShader(gl::ShaderType::Compute);
+        executableD3D->mShaderHLSL[gl::ShaderType::Compute] = shader->translatedSource;
+
         executableD3D->mShaderSamplers[gl::ShaderType::Compute].resize(
             caps.maxShaderTextureImageUnits[gl::ShaderType::Compute]);
         executableD3D->mImages[gl::ShaderType::Compute].resize(caps.maxImageUnits);
@@ -1126,16 +1127,6 @@ void ProgramD3D::setUniformMatrixfvInternal(GLint location,
 void ProgramD3D::reset()
 {
     getExecutable()->reset();
-}
-
-unsigned int ProgramD3D::getSerial() const
-{
-    return mSerial;
-}
-
-unsigned int ProgramD3D::issueSerial()
-{
-    return mCurrentSerial++;
 }
 
 template <typename DestT>

@@ -3943,6 +3943,8 @@ void CaptureShareGroupMidExecutionSetup(
             continue;
         }
 
+        size_t textureSetupStart = setupCalls->size();
+
         // Track this as a starting resource that may need to be restored.
         TrackedResource &trackedTextures =
             resourceTracker->getTrackedResource(context->id(), ResourceIDType::Texture);
@@ -4273,6 +4275,13 @@ void CaptureShareGroupMidExecutionSetup(
                 }
             }
         }
+
+        size_t textureSetupEnd = setupCalls->size();
+
+        // Mark the range of calls used to setup this texture
+        frameCaptureShared->markResourceSetupCallsInactive(
+            setupCalls, ResourceIDType::Texture, id.value,
+            gl::Range<size_t>(textureSetupStart, textureSetupEnd));
     }
 
     // Capture Renderbuffers.
@@ -4464,12 +4473,10 @@ void CaptureShareGroupMidExecutionSetup(
             }
         }
 
-        size_t shaderSetupEnd = setupCalls->size();
-
         // Mark the range of calls used to setup this shader
         frameCaptureShared->markResourceSetupCallsInactive(
             setupCalls, ResourceIDType::ShaderProgram, id.value,
-            gl::Range<size_t>(shaderSetupStart, shaderSetupEnd));
+            gl::Range<size_t>(shaderSetupStart, setupCalls->size()));
 
         resourceTracker->getTrackedResource(context->id(), ResourceIDType::ShaderProgram)
             .getStartingResources()
@@ -4758,6 +4765,13 @@ void CaptureMidExecutionSetup(const gl::Context *context,
                 replayState.setSamplerTexture(context, textureType,
                                               apiBindings[bindingIndex].get());
             }
+
+            // Set this texture as active so it will be generated in Setup
+            if (apiTextureID.value)
+            {
+                MarkResourceIDActive(ResourceIDType::Texture, apiTextureID.value,
+                                     shareGroupSetupCalls, resourceIDToSetupCalls);
+            }
         }
     }
 
@@ -4947,7 +4961,7 @@ void CaptureMidExecutionSetup(const gl::Context *context,
         // or compute stages.
         for (gl::ShaderType shaderType : gl::AllShaderTypes())
         {
-            gl::Program *program = pipeline->getShaderProgram(shaderType);
+            const gl::Program *program = pipeline->getShaderProgram(shaderType);
             if (!program)
             {
                 continue;
@@ -5682,19 +5696,6 @@ bool SkipCall(EntryPoint entryPoint)
     return false;
 }
 
-template <typename ParamValueType>
-struct ParamValueTrait
-{
-    static_assert(sizeof(ParamValueType) == 0, "invalid ParamValueType");
-};
-
-template <>
-struct ParamValueTrait<gl::FramebufferID>
-{
-    static constexpr const char *name = "framebufferPacked";
-    static const ParamType typeID     = ParamType::TFramebufferID;
-};
-
 std::string GetBaseName(const std::string &nameWithPath)
 {
     std::vector<std::string> result = angle::SplitString(
@@ -5702,27 +5703,6 @@ std::string GetBaseName(const std::string &nameWithPath)
     ASSERT(!result.empty());
     return result.back();
 }
-
-template <>
-struct ParamValueTrait<gl::BufferID>
-{
-    static constexpr const char *name = "bufferPacked";
-    static const ParamType typeID     = ParamType::TBufferID;
-};
-
-template <>
-struct ParamValueTrait<gl::RenderbufferID>
-{
-    static constexpr const char *name = "renderbufferPacked";
-    static const ParamType typeID     = ParamType::TRenderbufferID;
-};
-
-template <>
-struct ParamValueTrait<gl::TextureID>
-{
-    static constexpr const char *name = "texturePacked";
-    static const ParamType typeID     = ParamType::TTextureID;
-};
 }  // namespace
 
 FrameCapture::FrameCapture()  = default;
@@ -5759,23 +5739,6 @@ FrameCaptureShared::FrameCaptureShared()
     if (enabledFromEnv == "0")
     {
         mEnabled = false;
-    }
-
-    std::string pathFromEnv =
-        GetEnvironmentVarOrUnCachedAndroidProperty(kOutDirectoryVarName, kAndroidOutDir);
-    if (pathFromEnv.empty())
-    {
-        mOutDirectory = GetDefaultOutDirectory();
-    }
-    else
-    {
-        mOutDirectory = pathFromEnv;
-    }
-
-    // Ensure the capture path ends with a slash.
-    if (mOutDirectory.back() != '\\' && mOutDirectory.back() != '/')
-    {
-        mOutDirectory += '/';
     }
 
     std::string startFromEnv =
@@ -5892,10 +5855,37 @@ FrameCaptureShared::FrameCaptureShared()
 
     if (mCaptureEndFrame < mCaptureStartFrame)
     {
+        // If we're still in a situation where start frame is after end frame,
+        // capture cannot happen. Consider this a disabled state.
+        // Note: We won't get here if trigger is in use, as it sets them equal but huge.
         mEnabled = false;
     }
 
     mReplayWriter.setCaptureLabel(mCaptureLabel);
+
+    // Special case the output directory
+    if (mEnabled)
+    {
+        // Only perform output directory checks if enabled
+        // - This can avoid some expensive process name and filesystem checks
+        // - We want to emit errors if the directory doesn't exist
+        std::string pathFromEnv =
+            GetEnvironmentVarOrUnCachedAndroidProperty(kOutDirectoryVarName, kAndroidOutDir);
+        if (pathFromEnv.empty())
+        {
+            mOutDirectory = GetDefaultOutDirectory();
+        }
+        else
+        {
+            mOutDirectory = pathFromEnv;
+        }
+
+        // Ensure the capture path ends with a slash.
+        if (mOutDirectory.back() != '\\' && mOutDirectory.back() != '/')
+        {
+            mOutDirectory += '/';
+        }
+    }
 }
 
 FrameCaptureShared::~FrameCaptureShared() = default;
@@ -7752,7 +7742,7 @@ void FrameCaptureShared::maybeCapturePreCallUpdates(
     updateReadBufferSize(call.params.getReadBufferSize());
 
     std::vector<gl::ShaderProgramID> shaderProgramIDs;
-    if (FindShaderProgramIDsInCall(call, shaderProgramIDs))
+    if (FindResourceIDsInCall<gl::ShaderProgramID>(call, shaderProgramIDs))
     {
         for (gl::ShaderProgramID shaderProgramID : shaderProgramIDs)
         {
@@ -7763,6 +7753,20 @@ void FrameCaptureShared::maybeCapturePreCallUpdates(
                 // Track that this call referenced a ShaderProgram, setting it active for Setup
                 MarkResourceIDActive(ResourceIDType::ShaderProgram, shaderProgramID.value,
                                      shareGroupSetupCalls, resourceIDToSetupCalls);
+            }
+        }
+    }
+
+    std::vector<gl::TextureID> textureIDs;
+    if (FindResourceIDsInCall<gl::TextureID>(call, textureIDs))
+    {
+        for (gl::TextureID textureID : textureIDs)
+        {
+            if (isCaptureActive())
+            {
+                // Track that this call referenced a Texture, setting it active for Setup
+                MarkResourceIDActive(ResourceIDType::Texture, textureID.value, shareGroupSetupCalls,
+                                     resourceIDToSetupCalls);
             }
         }
     }
