@@ -42,7 +42,6 @@ SpvSourceOptions SpvCreateSourceOptions(const angle::FeaturesVk &features);
 struct SpvTransformOptions
 {
     gl::ShaderType shaderType           = gl::ShaderType::InvalidEnum;
-    bool negativeViewportSupported      = false;
     bool isLastPreFragmentStage         = false;
     bool isTransformFeedbackStage       = false;
     bool isTransformFeedbackEmulated    = false;
@@ -70,7 +69,7 @@ struct ShaderInterfaceVariableXfbInfo
         uint32_t rowCount    = kInvalid;
         uint32_t arrayIndex  = kInvalid;
         GLenum componentType = GL_FLOAT;
-    } podStruct;
+    } pod;
     ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
     // If empty, the whole array is captured.  Otherwise only the specified members are captured.
     std::vector<ShaderInterfaceVariableXfbInfo> arrayElements;
@@ -92,6 +91,7 @@ struct ShaderInterfaceVariableInfo
           varyingIsInput(false),
           varyingIsOutput(false),
           hasTransformFeedback(false),
+          isArray(false),
           padding(0),
           attributeComponentCount(0),
           attributeLocationCount(0)
@@ -123,7 +123,8 @@ struct ShaderInterfaceVariableInfo
     uint8_t varyingIsInput : 1;
     uint8_t varyingIsOutput : 1;
     uint8_t hasTransformFeedback : 1;
-    uint8_t padding : 4;
+    uint8_t isArray : 1;
+    uint8_t padding : 3;
 
     // For vertex attributes, this is the number of components / locations.  These are used by the
     // vertex attribute aliasing transformation only.

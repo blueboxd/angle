@@ -3801,7 +3801,7 @@ angle::Result StateManager11::getUAVsForShaderStorageBuffers(const gl::Context *
     const gl::ProgramExecutable *executable = glState.getProgramExecutable();
     angle::FixedVector<Buffer11 *, gl::IMPLEMENTATION_MAX_SHADER_STORAGE_BUFFER_BINDINGS>
         previouslyBound;
-    for (size_t blockIndex = 0; blockIndex < executable->getActiveShaderStorageBlockCount();
+    for (size_t blockIndex = 0; blockIndex < executable->getShaderStorageBlocks().size();
          blockIndex++)
     {
         GLuint binding = executable->getShaderStorageBlockBinding(static_cast<GLuint>(blockIndex));
@@ -3883,7 +3883,7 @@ angle::Result StateManager11::getUAVsForAtomicCounterBuffers(const gl::Context *
     const gl::ProgramExecutable *executable = glState.getProgramExecutable();
     for (const auto &atomicCounterBuffer : executable->getAtomicCounterBuffers())
     {
-        GLuint binding     = atomicCounterBuffer.binding;
+        GLuint binding     = atomicCounterBuffer.pod.binding;
         const auto &buffer = glState.getIndexedAtomicCounterBuffer(binding);
         const unsigned int registerIndex =
             mExecutableD3D->getAtomicCounterBufferRegisterIndex(binding, shaderType);
