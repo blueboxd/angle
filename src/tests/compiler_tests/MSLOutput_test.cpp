@@ -30,7 +30,8 @@ class MSLOutputTest : public MatchOutputCodeTest
   public:
     MSLOutputTest() : MatchOutputCodeTest(GL_FRAGMENT_SHADER, SH_MSL_METAL_OUTPUT)
     {
-        ShCompileOptions defaultCompileOptions = {};
+        ShCompileOptions defaultCompileOptions       = {};
+        defaultCompileOptions.rescopeGlobalVariables = true;
         setDefaultCompileOptions(defaultCompileOptions);
     }
 };

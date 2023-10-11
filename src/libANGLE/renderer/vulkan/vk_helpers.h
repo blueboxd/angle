@@ -10,6 +10,7 @@
 #define LIBANGLE_RENDERER_VULKAN_VK_HELPERS_H_
 
 #include "common/MemoryBuffer.h"
+#include "libANGLE/renderer/vulkan/MemoryTracking.h"
 #include "libANGLE/renderer/vulkan/Suballocation.h"
 #include "libANGLE/renderer/vulkan/vk_cache_utils.h"
 #include "libANGLE/renderer/vulkan/vk_format_utils.h"
@@ -999,6 +1000,7 @@ class RenderPassAttachment final
     void finalizeLoadStore(Context *context,
                            uint32_t currentCmdCount,
                            bool hasUnresolveAttachment,
+                           bool hasResolveAttachment,
                            RenderPassLoadOp *loadOp,
                            RenderPassStoreOp *storeOp,
                            bool *isInvalidatedOut);
@@ -2487,6 +2489,10 @@ class ImageHelper final : public Resource, public angle::Subject
     }
     const Semaphore &getAcquireNextImageSemaphore() const { return mAcquireNextImageSemaphore; }
     void resetAcquireNextImageSemaphore() { mAcquireNextImageSemaphore.release(); }
+    bool isBackedByExternalMemory() const
+    {
+        return mMemoryAllocationType == MemoryAllocationType::ImageExternal;
+    }
 
   private:
     ANGLE_ENABLE_STRUCT_PADDING_WARNINGS
@@ -2732,7 +2738,8 @@ class ImageHelper final : public Resource, public angle::Subject
                                       void *pixels);
 
     bool canCopyWithTransformForReadPixels(const PackPixelsParams &packPixelsParams,
-                                           const angle::Format *readFormat);
+                                           const angle::Format *readFormat,
+                                           ptrdiff_t pixelsOffset);
     bool canCopyWithComputeForReadPixels(const PackPixelsParams &packPixelsParams,
                                          const angle::Format *readFormat,
                                          ptrdiff_t pixelsOffset);
@@ -3216,7 +3223,7 @@ class ShaderProgramHelper : angle::NonCopyable
     // exists in cache.
     template <typename PipelineHash>
     ANGLE_INLINE angle::Result createGraphicsPipeline(
-        ContextVk *contextVk,
+        vk::Context *context,
         GraphicsPipelineCache<PipelineHash> *graphicsPipelines,
         PipelineCacheAccess *pipelineCache,
         const RenderPass &compatibleRenderPass,
@@ -3227,19 +3234,19 @@ class ShaderProgramHelper : angle::NonCopyable
         const GraphicsPipelineDesc **descPtrOut,
         PipelineHelper **pipelineOut) const
     {
-        return graphicsPipelines->createPipeline(contextVk, pipelineCache, compatibleRenderPass,
+        return graphicsPipelines->createPipeline(context, pipelineCache, compatibleRenderPass,
                                                  pipelineLayout, mShaders, specConsts, source,
                                                  pipelineDesc, descPtrOut, pipelineOut);
     }
 
-    void createMonolithicPipelineCreationTask(ContextVk *contextVk,
+    void createMonolithicPipelineCreationTask(vk::Context *context,
                                               PipelineCacheAccess *pipelineCache,
                                               const GraphicsPipelineDesc &desc,
                                               const PipelineLayout &pipelineLayout,
                                               const SpecializationConstants &specConsts,
                                               PipelineHelper *pipeline) const;
 
-    angle::Result getOrCreateComputePipeline(ContextVk *contextVk,
+    angle::Result getOrCreateComputePipeline(vk::Context *context,
                                              ComputePipelineCache *computePipelines,
                                              PipelineCacheAccess *pipelineCache,
                                              const PipelineLayout &pipelineLayout,
