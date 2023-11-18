@@ -161,6 +161,13 @@ struct FrontendFeatures : FeatureSetBase
         &members, "http://anglebug.com/8280"
     };
 
+    FeatureInfo compileJobIsThreadSafe = {
+        "compileJobIsThreadSafe",
+        FeatureCategory::FrontendFeatures,
+        "If false, parts of the compile job cannot be parallelized",
+        &members, "http://anglebug.com/8297"
+    };
+
     FeatureInfo linkJobIsThreadSafe = {
         "linkJobIsThreadSafe",
         FeatureCategory::FrontendFeatures,
@@ -173,6 +180,13 @@ struct FrontendFeatures : FeatureSetBase
         FeatureCategory::FrontendWorkarounds,
         "Make egl surface uncurrent when calling eglDestroySurface(), if the surface is still bound by the context of current render thread",
         &members, "https://issuetracker.google.com/292285899"
+    };
+
+    FeatureInfo forceMinimumMaxVertexAttributes = {
+        "forceMinimumMaxVertexAttributes",
+        FeatureCategory::FrontendFeatures,
+        "Force the minimum GL_MAX_VERTEX_ATTRIBS that the context's client version allows.",
+        &members, ""
     };
 
 };

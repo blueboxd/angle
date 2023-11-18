@@ -590,20 +590,24 @@ const char *ValidateProgramDrawAdvancedBlendState(const Context *context,
     const BlendEquationBitSet &supportedBlendEquations = executable.getAdvancedBlendEquations();
     const DrawBufferMask &enabledDrawBufferMask        = state.getBlendStateExt().getEnabledMask();
 
-    for (size_t blendEnabledBufferIndex : enabledDrawBufferMask)
+    // Zero (default) means everything is BlendEquationType::Add, so check can be skipped
+    if (state.getBlendStateExt().getEquationColorBits() != 0)
     {
-        const gl::BlendEquationType &enabledBlendEquation = gl::FromGLenum<gl::BlendEquationType>(
-            state.getBlendStateExt().getEquationColorIndexed(blendEnabledBufferIndex));
-
-        if (enabledBlendEquation < gl::BlendEquationType::Multiply ||
-            enabledBlendEquation > gl::BlendEquationType::HslLuminosity)
+        for (size_t blendEnabledBufferIndex : enabledDrawBufferMask)
         {
-            continue;
-        }
+            const gl::BlendEquationType enabledBlendEquation =
+                state.getBlendStateExt().getEquationColorIndexed(blendEnabledBufferIndex);
 
-        if (!supportedBlendEquations.test(enabledBlendEquation))
-        {
-            return gl::err::kBlendEquationNotEnabled;
+            if (enabledBlendEquation < gl::BlendEquationType::Multiply ||
+                enabledBlendEquation > gl::BlendEquationType::HslLuminosity)
+            {
+                continue;
+            }
+
+            if (!supportedBlendEquations.test(enabledBlendEquation))
+            {
+                return gl::err::kBlendEquationNotEnabled;
+            }
         }
     }
 
@@ -7640,12 +7644,6 @@ bool ValidateTexParameterBase(const Context *context,
                 !(pname == GL_TEXTURE_WRAP_R && context->getExtensions().texture3DOES))
             {
                 ANGLE_VALIDATION_ERROR(GL_INVALID_ENUM, kES3Required);
-                return false;
-            }
-            if (target == TextureType::External &&
-                !context->getExtensions().EGLImageExternalEssl3OES)
-            {
-                ANGLE_VALIDATION_ERRORF(GL_INVALID_ENUM, kEnumNotSupported, pname);
                 return false;
             }
             if (target == TextureType::VideoImage && !context->getExtensions().videoTextureWEBGL)

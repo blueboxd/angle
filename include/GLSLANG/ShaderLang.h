@@ -26,7 +26,7 @@
 
 // Version number for shader translation API.
 // It is incremented every time the API changes.
-#define ANGLE_SH_VERSION 341
+#define ANGLE_SH_VERSION 343
 
 enum ShShaderSpec
 {
@@ -422,6 +422,9 @@ struct ShCompileOptions
     // Use an integer uniform to pass a bitset of enabled clip distances.
     uint64_t emulateClipDistanceState : 1;
 
+    // Use a uniform to emulate GL_CLIP_ORIGIN_EXT state.
+    uint64_t emulateClipOrigin : 1;
+
     // issuetracker.google.com/266235549 add aliased memory decoration to ssbo if the variable is
     // not declared with "restrict" memory qualifier in GLSL
     uint64_t aliasedUnlessRestrict : 1;
@@ -635,6 +638,9 @@ struct ShBuiltInResources
 
     // maximum number of shader storage buffer bindings
     int MaxShaderStorageBufferBindings;
+
+    // minimum point size (lower limit from ALIASED_POINT_SIZE_RANGE)
+    float MinPointSize;
 
     // maximum point size (higher limit from ALIASED_POINT_SIZE_RANGE)
     float MaxPointSize;
