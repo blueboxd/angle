@@ -1221,8 +1221,32 @@ void StateManagerGL::setClipControl(gl::ClipOrigin origin, gl::ClipDepthMode dep
     ASSERT(mFunctions->clipControl);
     mFunctions->clipControl(ToGLenum(mClipOrigin), ToGLenum(mClipDepthMode));
 
+    if (mFeatures.resyncDepthRangeOnClipControl.enabled)
+    {
+        // Change and restore depth range to trigger internal transformation
+        // state resync. This is needed to apply clip control on some drivers.
+        const float near = mNear;
+        setDepthRange(near == 0.0f ? 1.0f : 0.0f, mFar);
+        setDepthRange(near, mFar);
+    }
+
     mLocalDirtyBits.set(gl::state::DIRTY_BIT_EXTENDED);
     mLocalExtendedDirtyBits.set(gl::state::EXTENDED_DIRTY_BIT_CLIP_CONTROL);
+}
+
+void StateManagerGL::setClipControlWithEmulatedClipOrigin(const gl::ProgramExecutable *executable,
+                                                          GLenum frontFace,
+                                                          gl::ClipOrigin origin,
+                                                          gl::ClipDepthMode depth)
+{
+    ASSERT(mFeatures.emulateClipOrigin.enabled);
+    if (executable)
+    {
+        updateEmulatedClipOriginUniform(executable, origin);
+    }
+    static_assert((GL_CW ^ GL_CCW) == static_cast<GLenum>(gl::ClipOrigin::UpperLeft));
+    setFrontFace(frontFace ^ static_cast<GLenum>(origin));
+    setClipControl(gl::ClipOrigin::LowerLeft, depth);
 }
 
 void StateManagerGL::setBlendEnabled(bool enabled)
@@ -2095,6 +2119,14 @@ angle::Result StateManagerGL::syncState(const gl::Context *context,
                 setCullFace(state.getRasterizerState().cullMode);
                 break;
             case gl::state::DIRTY_BIT_FRONT_FACE:
+                if (mFeatures.emulateClipOrigin.enabled)
+                {
+                    static_assert((GL_CW ^ GL_CCW) ==
+                                  static_cast<GLenum>(gl::ClipOrigin::UpperLeft));
+                    setFrontFace(state.getRasterizerState().frontFace ^
+                                 static_cast<GLenum>(state.getClipOrigin()));
+                    break;
+                }
                 setFrontFace(state.getRasterizerState().frontFace);
                 break;
             case gl::state::DIRTY_BIT_POLYGON_OFFSET_FILL_ENABLED:
@@ -2204,14 +2236,16 @@ angle::Result StateManagerGL::syncState(const gl::Context *context,
                     gl::VertexArray::DirtyBindingBitsArray dirtBindingBits;
 
                     dirtyBits.set(gl::VertexArray::DIRTY_BIT_ELEMENT_ARRAY_BUFFER);
-                    for (size_t attrib = 0; attrib < mDefaultVAOState.attributes.size(); attrib++)
+                    for (GLint attrib = 0; attrib < context->getCaps().maxVertexAttributes;
+                         attrib++)
                     {
                         dirtyBits.set(gl::VertexArray::DIRTY_BIT_ATTRIB_0 + attrib);
                         dirtyAttribBits[attrib].set(gl::VertexArray::DIRTY_ATTRIB_ENABLED);
                         dirtyAttribBits[attrib].set(gl::VertexArray::DIRTY_ATTRIB_POINTER);
                         dirtyAttribBits[attrib].set(gl::VertexArray::DIRTY_ATTRIB_POINTER_BUFFER);
                     }
-                    for (size_t binding = 0; binding < mDefaultVAOState.bindings.size(); binding++)
+                    for (GLint binding = 0; binding < context->getCaps().maxVertexAttribBindings;
+                         binding++)
                     {
                         dirtyBits.set(gl::VertexArray::DIRTY_BIT_BINDING_0 + binding);
                         dirtBindingBits[binding].set(gl::VertexArray::DIRTY_BINDING_DIVISOR);
@@ -2280,6 +2314,11 @@ angle::Result StateManagerGL::syncState(const gl::Context *context,
                     {
                         iter.setLaterBit(gl::state::DIRTY_BIT_EXTENDED);
                         mLocalExtendedDirtyBits.set(gl::state::EXTENDED_DIRTY_BIT_CLIP_DISTANCES);
+                    }
+
+                    if (mFeatures.emulateClipOrigin.enabled)
+                    {
+                        updateEmulatedClipOriginUniform(executable, state.getClipOrigin());
                     }
                 }
 
@@ -2356,12 +2395,20 @@ angle::Result StateManagerGL::syncState(const gl::Context *context,
             case gl::state::DIRTY_BIT_EXTENDED:
             {
                 const gl::state::ExtendedDirtyBits glAndLocalExtendedDirtyBits =
-                    extendedDirtyBits | mLocalExtendedDirtyBits;
+                    (extendedDirtyBits | mLocalExtendedDirtyBits) & extendedBitMask;
                 for (size_t extendedDirtyBit : glAndLocalExtendedDirtyBits)
                 {
                     switch (extendedDirtyBit)
                     {
                         case gl::state::EXTENDED_DIRTY_BIT_CLIP_CONTROL:
+                            if (mFeatures.emulateClipOrigin.enabled)
+                            {
+                                setClipControlWithEmulatedClipOrigin(
+                                    state.getProgramExecutable(),
+                                    state.getRasterizerState().frontFace, state.getClipOrigin(),
+                                    state.getClipDepthMode());
+                                break;
+                            }
                             setClipControl(state.getClipOrigin(), state.getClipDepthMode());
                             break;
                         case gl::state::EXTENDED_DIRTY_BIT_CLIP_DISTANCES:
@@ -2412,7 +2459,7 @@ angle::Result StateManagerGL::syncState(const gl::Context *context,
                             UNREACHABLE();
                             break;
                     }
-                    mLocalExtendedDirtyBits &= ~extendedDirtyBits;
+                    mLocalExtendedDirtyBits &= ~extendedBitMask;
                 }
                 break;
             }

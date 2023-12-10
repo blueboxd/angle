@@ -423,6 +423,13 @@ struct FeaturesVk : FeatureSetBase
         &members, "https://anglebug.com/6574"
     };
 
+    FeatureInfo forceDelayedDeviceCreationForTesting = {
+        "forceDelayedDeviceCreationForTesting",
+        FeatureCategory::VulkanWorkarounds,
+        "Artificially defer device creation to after surface is enabled for testing multi-queue scenarios",
+        &members, "https://anglebug.com/8300"
+    };
+
     FeatureInfo supportsShaderFloat16 = {
         "supportsShaderFloat16",
         FeatureCategory::VulkanFeatures,
@@ -773,6 +780,13 @@ struct FeaturesVk : FeatureSetBase
         FeatureCategory::VulkanWorkarounds,
         "Round output after dithering to workaround a driver bug that rounds the output up",
         &members, "http://anglebug.com/6953"
+    };
+
+    FeatureInfo adjustClearColorPrecision = {
+        "adjustClearColorPrecision",
+        FeatureCategory::VulkanWorkarounds,
+        "Adjust normalized clear color precision based on framebuffer color channel bits count",
+        &members, "https://issuetracker.google.com/292282210"
     };
 
     FeatureInfo emulateAdvancedBlendEquations = {
@@ -1284,6 +1298,13 @@ struct FeaturesVk : FeatureSetBase
         FeatureCategory::VulkanFeatures,
         "prefer host cached memory for non static buffer usage",
         &members, "https://issuetracker.google.com/288119108"
+    };
+
+    FeatureInfo supportsExternalFormatResolve = {
+        "supportsExternalFormatResolve",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_ANDROID_external_format_resolve extension",
+        &members,
     };
 
 };

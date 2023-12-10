@@ -1307,6 +1307,7 @@ if (build_angle_deqp_tests && !is_fuchsia) {
 
   config("angle_deqp_framework_opengl_config") {
     include_dirs = [
+      "$deqp_path/framework/egl/wrapper",
       "$deqp_path/framework/opengl",
       "$deqp_path/framework/opengl/simplereference",
       "$deqp_path/framework/opengl/wrapper",
@@ -1529,6 +1530,7 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     forward_variables_from(invoker, [ "mustpass_suffix" ])
     if (mustpass_suffix != "master") {
       target_name = "${_api}_${mustpass_suffix}"
+      target_name = string_replace(target_name, "-", "_")
     }
     angle_deqp_gtest(target_name) {
       forward_variables_from(invoker, "*")
@@ -1572,13 +1574,6 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     mustpass_suffix = "multisample"
   }
 
-  angle_deqp_core_gtest("gles3") {
-    defines = [ "ANGLE_DEQP_GLES3_565_NO_DEPTH_NO_STENCIL_TESTS" ]
-    deps = [ ":angle_deqp_gles3_common" ]
-    mustpass_dir = _aosp_gles_mustpass
-    mustpass_suffix = "565-no-depth-no-stencil"
-  }
-
   angle_deqp_core_gtest("gles31") {
     defines = [ "ANGLE_DEQP_GLES31_TESTS" ]
     deps = [ ":angle_deqp_gles31_common" ]
@@ -1593,18 +1588,27 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     mustpass_suffix = "multisample"
   }
 
-  angle_deqp_core_gtest("gles31") {
-    defines = [ "ANGLE_DEQP_GLES31_565_NO_DEPTH_NO_STENCIL_TESTS" ]
-    deps = [ ":angle_deqp_gles31_common" ]
-    mustpass_dir = _aosp_gles_mustpass
-    mustpass_suffix = "565-no-depth-no-stencil"
-  }
-
   angle_deqp_core_gtest("egl") {
     defines = [ "ANGLE_DEQP_EGL_TESTS" ]
     sources = deqp_egl_sources
     mustpass_dir = _aosp_egl_mustpass
     mustpass_suffix = "master"
+  }
+
+  if (is_android) {
+    angle_deqp_core_gtest("gles3") {
+      defines = [ "ANGLE_DEQP_GLES3_565_NO_DEPTH_NO_STENCIL_TESTS" ]
+      deps = [ ":angle_deqp_gles3_common" ]
+      mustpass_dir = _aosp_gles_mustpass
+      mustpass_suffix = "565-no-depth-no-stencil"
+    }
+
+    angle_deqp_core_gtest("gles31") {
+      defines = [ "ANGLE_DEQP_GLES31_565_NO_DEPTH_NO_STENCIL_TESTS" ]
+      deps = [ ":angle_deqp_gles31_common" ]
+      mustpass_dir = _aosp_gles_mustpass
+      mustpass_suffix = "565-no-depth-no-stencil"
+    }
   }
 
   # The CTS also includes a set of "KHR" tests that are separate from the main body of dEQP tests.
@@ -1855,13 +1859,11 @@ group("angle_tests") {
       ":angle_deqp_egl_tests",
       ":angle_deqp_gl46_tests",
       ":angle_deqp_gles2_tests",
-      ":angle_deqp_gles31_565-no-depth-no-stencil_tests",
       ":angle_deqp_gles31_multisample_tests",
       ":angle_deqp_gles31_rotate180_tests",
       ":angle_deqp_gles31_rotate270_tests",
       ":angle_deqp_gles31_rotate90_tests",
       ":angle_deqp_gles31_tests",
-      ":angle_deqp_gles3_565-no-depth-no-stencil_tests",
       ":angle_deqp_gles3_multisample_tests",
       ":angle_deqp_gles3_rotate180_tests",
       ":angle_deqp_gles3_rotate270_tests",
@@ -1875,6 +1877,13 @@ group("angle_tests") {
       ":angle_deqp_khr_noctx_gles32_tests",
       ":angle_deqp_khr_single_gles32_tests",
     ]
+
+    if (is_android) {
+      deps += [
+        ":angle_deqp_gles31_565_no_depth_no_stencil_tests",
+        ":angle_deqp_gles3_565_no_depth_no_stencil_tests",
+      ]
+    }
   }
   if (build_angle_gles1_conform_tests) {
     deps += [

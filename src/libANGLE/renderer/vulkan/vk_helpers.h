@@ -1788,6 +1788,7 @@ enum class ImageLayout
     ComputeShaderWrite,
     AllGraphicsShadersReadOnly,
     AllGraphicsShadersWrite,
+    TransferDstAndComputeWrite,
 
     InvalidEnum,
     EnumCount = InvalidEnum,
@@ -1825,7 +1826,8 @@ enum class UpdateSource
 
 enum class ApplyImageUpdate
 {
-    ImmediatelyIfPossible,
+    ImmediatelyInUnlockedTailCall,
+    Immediately,
     Defer,
 };
 
@@ -2262,7 +2264,8 @@ class ImageHelper final : public Resource, public angle::Subject
     // - Image respecification, where every level (other than those explicitly skipped) is staged
     void stageSelfAsSubresourceUpdates(ContextVk *contextVk,
                                        uint32_t levelCount,
-                                       gl::TexLevelMask skipLevelsMask);
+                                       gl::TextureType textureType,
+                                       const gl::CubeFaceArray<gl::TexLevelMask> &skipLevels);
 
     // Flush staged updates for a single subresource. Can optionally take a parameter to defer
     // clears to a subsequent RenderPass load op.
@@ -2281,7 +2284,7 @@ class ImageHelper final : public Resource, public angle::Subject
                                      gl::LevelIndex levelGLEnd,
                                      uint32_t layerStart,
                                      uint32_t layerEnd,
-                                     gl::TexLevelMask skipLevelsMask);
+                                     const gl::CubeFaceArray<gl::TexLevelMask> &skipLevels);
 
     // Creates a command buffer and flushes all staged updates.  This is used for one-time
     // initialization of resources that we don't expect to accumulate further staged updates, such
@@ -2448,6 +2451,7 @@ class ImageHelper final : public Resource, public angle::Subject
                  VkImageAspectFlags aspectFlags);
     bool hasImmutableSampler() const { return mYcbcrConversionDesc.valid(); }
     uint64_t getExternalFormat() const { return mYcbcrConversionDesc.getExternalFormat(); }
+    bool isYuvResolve() const { return mYcbcrConversionDesc.getExternalFormat() != 0; }
     bool updateChromaFilter(RendererVk *rendererVk, VkFilter filter)
     {
         return mYcbcrConversionDesc.updateChromaFilter(rendererVk, filter);
@@ -2520,6 +2524,8 @@ class ImageHelper final : public Resource, public angle::Subject
                                           bool hasProtectedContent,
                                           VkMemoryPropertyFlags flags,
                                           VkDeviceSize size);
+
+    size_t getLevelUpdateCount(gl::LevelIndex level) const;
 
   private:
     ANGLE_ENABLE_STRUCT_PADDING_WARNINGS
@@ -2620,7 +2626,7 @@ class ImageHelper final : public Resource, public angle::Subject
     // Called from flushStagedUpdates, removes updates that are later superseded by another.  This
     // cannot be done at the time the updates were staged, as the image is not created (and thus the
     // extents are not known).
-    void removeSupersededUpdates(ContextVk *contextVk, gl::TexLevelMask skipLevelsMask);
+    void removeSupersededUpdates(ContextVk *contextVk, const gl::TexLevelMask skipLevelsAllFaces);
 
     void initImageMemoryBarrierStruct(Context *context,
                                       VkImageAspectFlags aspectMask,
@@ -2676,7 +2682,8 @@ class ImageHelper final : public Resource, public angle::Subject
                                         uint32_t baseArrayLayer,
                                         uint32_t layerCount);
 
-    angle::Result updateSubresourceOnHost(ContextVk *contextVk,
+    angle::Result updateSubresourceOnHost(Context *context,
+                                          ApplyImageUpdate applyUpdate,
                                           const gl::ImageIndex &index,
                                           const gl::Extents &glExtents,
                                           const gl::Offset &offset,
@@ -2788,6 +2795,14 @@ class ImageHelper final : public Resource, public angle::Subject
                                                     ? ConvertToLinear(srcDataFormatID)
                                                     : srcDataFormatID;
         return actualFormatLinear == srcDataFormatIDLinear;
+    }
+
+    static constexpr int kThreadholdForComputeTransCoding = 4096;
+    bool shouldUseComputeForTransCoding(LevelIndex level)
+    {
+        // Using texture size instead of extent size to simplify the problem.
+        gl::Extents ext = getLevelExtents2D(level);
+        return ext.width * ext.height > kThreadholdForComputeTransCoding;
     }
 
     // Vulkan objects.
@@ -3401,6 +3416,16 @@ class CommandBufferAccess : angle::NonCopyable
     {
         onImageWrite(levelStart, levelCount, layerStart, layerCount, aspectFlags,
                      ImageLayout::ComputeShaderWrite, image);
+    }
+    void onImageTransferDstAndComputeWrite(gl::LevelIndex levelStart,
+                                           uint32_t levelCount,
+                                           uint32_t layerStart,
+                                           uint32_t layerCount,
+                                           VkImageAspectFlags aspectFlags,
+                                           ImageHelper *image)
+    {
+        onImageWrite(levelStart, levelCount, layerStart, layerCount, aspectFlags,
+                     ImageLayout::TransferDstAndComputeWrite, image);
     }
     void onExternalAcquireRelease(ImageHelper *image) { onResourceAccess(image); }
     void onQueryAccess(QueryHelper *query) { onResourceAccess(query); }

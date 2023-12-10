@@ -1099,7 +1099,7 @@ ContextVk::ContextVk(const gl::State &state, gl::ErrorSet *errorSet, RendererVk 
     mGraphicsDirtyBits = mNewGraphicsCommandBufferDirtyBits;
     mComputeDirtyBits  = mNewComputeCommandBufferDirtyBits;
 
-    mActiveImages.fill(nullptr);
+    FillWithNullptr(&mActiveImages);
 
     // The following dirty bits don't affect the program pipeline:
     //
@@ -1559,6 +1559,16 @@ angle::Result ContextVk::setupDraw(const gl::Context *context,
         mXfbBaseVertex             = firstVertexOrInvalid;
         mXfbVertexCountPerInstance = vertexOrIndexCount;
         invalidateGraphicsDriverUniforms();
+    }
+
+    // Process depth stencil dynamic state only if there is there depth stencil attachment
+    if (!mGraphicsPipelineDesc->getRenderPassDesc().hasDepthAttachment())
+    {
+        dirtyBitMask = dirtyBitMask & ~kDepthDynamicStateDirtyBits;
+    }
+    if (!mGraphicsPipelineDesc->getRenderPassDesc().hasStencilAttachment())
+    {
+        dirtyBitMask = dirtyBitMask & ~kStencilDynamicStateDirtyBits;
     }
 
     DirtyBits dirtyBits = mGraphicsDirtyBits & dirtyBitMask;
@@ -2732,9 +2742,6 @@ angle::Result ContextVk::handleDirtyShaderResourcesImpl(CommandBufferHelperT *co
         this, mShareGroupVk->getUpdateDescriptorSetsBuilder(), mShaderBufferWriteDescriptorDescs,
         commandBufferHelper, mShaderBuffersDescriptorDesc, &newSharedCacheKey));
 
-    // Clear all dirty bits.
-    executableVk->resetUniformBufferDirtyBits();
-
     if (newSharedCacheKey)
     {
         // A new cache entry has been created. We record this cache key in the images and buffers so
@@ -2771,7 +2778,7 @@ angle::Result ContextVk::handleDirtyComputeShaderResources()
 template <typename CommandBufferT>
 angle::Result ContextVk::handleDirtyUniformBuffersImpl(CommandBufferT *commandBufferHelper)
 {
-    const gl::ProgramExecutable *executable = mState.getProgramExecutable();
+    gl::ProgramExecutable *executable = mState.getProgramExecutable();
     ASSERT(executable);
     ASSERT(executable->hasUniformBuffers());
 
@@ -2779,7 +2786,7 @@ angle::Result ContextVk::handleDirtyUniformBuffersImpl(CommandBufferT *commandBu
     ProgramExecutableVk *executableVk    = vk::GetImpl(executable);
     const ShaderInterfaceVariableInfoMap &variableInfoMap = executableVk->getVariableInfoMap();
 
-    const gl::Program::DirtyBits &dirtyBits = executableVk->getDirtyBits();
+    gl::ProgramExecutable::DirtyBits dirtyBits = executable->getAndResetDirtyBits();
     for (size_t blockIndex : dirtyBits)
     {
         mShaderBuffersDescriptorDesc.updateOneShaderBuffer(
@@ -2788,7 +2795,6 @@ angle::Result ContextVk::handleDirtyUniformBuffersImpl(CommandBufferT *commandBu
             static_cast<uint32_t>(blockIndex), executableVk->getUniformBufferDescriptorType(),
             limits.maxUniformBufferRange, mEmptyBuffer, mShaderBufferWriteDescriptorDescs);
     }
-    executableVk->resetUniformBufferDirtyBits();
 
     vk::SharedDescriptorSetCacheKey newSharedCacheKey;
     ANGLE_TRY(executableVk->updateShaderResourcesDescriptorSet(
@@ -3385,7 +3391,8 @@ void ContextVk::syncObjectPerfCounters(const angle::VulkanPerfCounters &commandQ
     // Return current drawFramebuffer's cache stats
     mPerfCounters.framebufferCacheSize = mShareGroupVk->getFramebufferCache().getSize();
 
-    mPerfCounters.pendingSubmissionGarbageObjects = mRenderer->getPendingSubmissionGarbageSize();
+    mPerfCounters.pendingSubmissionGarbageObjects =
+        static_cast<uint64_t>(mRenderer->getPendingSubmissionGarbageSize());
 }
 
 void ContextVk::updateOverlayOnPresent()
@@ -5170,7 +5177,8 @@ void ContextVk::updateDither()
                 continue;
             }
 
-            RenderTargetVk *attachment   = framebufferVk->getColorDrawRenderTarget(colorIndex);
+            RenderTargetVk *attachment = framebufferVk->getColorDrawRenderTarget(colorIndex);
+
             const angle::FormatID format = attachment->getImageActualFormatID();
 
             uint16_t attachmentDitherControl = sh::vk::kDitherControlNoDither;
@@ -7245,7 +7253,7 @@ angle::Result ContextVk::updateActiveTextures(const gl::Context *context, gl::Co
     const gl::ActiveTextureMask &activeTextures    = executable->getActiveSamplersMask();
     const gl::ActiveTextureTypeArray &textureTypes = executable->getActiveSamplerTypes();
 
-    mActiveTextures.fill(nullptr);
+    FillWithNullptr(&mActiveTextures);
 
     bool recreatePipelineLayout                       = false;
     ImmutableSamplerIndexMap immutableSamplerIndexMap = {};
@@ -7352,7 +7360,7 @@ angle::Result ContextVk::updateActiveImages(CommandBufferHelperT *commandBufferH
     const gl::ProgramExecutable *executable = glState.getProgramExecutable();
     ASSERT(executable);
 
-    mActiveImages.fill(nullptr);
+    FillWithNullptr(&mActiveImages);
 
     const gl::ActiveTextureMask &activeImages = executable->getActiveImagesMask();
     const gl::ActiveTextureArray<gl::ShaderBitSet> &activeImageShaderBits =

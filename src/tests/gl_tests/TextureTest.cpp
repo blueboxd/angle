@@ -904,12 +904,27 @@ class TextureCubeTest : public TexCoordDrawTest
             R"(precision highp float;
             uniform sampler2D tex2D;
             uniform samplerCube texCube;
+            uniform int cubeFace;
             varying vec2 texcoord;
 
             void main()
             {
                 gl_FragColor = texture2D(tex2D, texcoord);
-                gl_FragColor += textureCube(texCube, vec3(texcoord, 0));
+
+                vec2 scaled = vec2(1) - vec2(2) * texcoord.xy;
+                vec3 cubecoord = vec3(1, scaled.xy);
+                if (cubeFace == 1)
+                    cubecoord = vec3(-1, scaled.xy);
+                else if (cubeFace == 2)
+                    cubecoord = vec3(scaled.x, 1, scaled.y);
+                else if (cubeFace == 3)
+                    cubecoord = vec3(scaled.x, -1, scaled.y);
+                else if (cubeFace == 4)
+                    cubecoord = vec3(scaled.xy, 1);
+                else if (cubeFace == 5)
+                    cubecoord = vec3(scaled.xy, -1);
+
+                gl_FragColor += textureCube(texCube, cubecoord);
             })";
     }
 
@@ -934,6 +949,8 @@ class TextureCubeTest : public TexCoordDrawTest
         ASSERT_NE(-1, mTexture2DUniformLocation);
         mTextureCubeUniformLocation = glGetUniformLocation(mProgram, "texCube");
         ASSERT_NE(-1, mTextureCubeUniformLocation);
+        mTextureCubeFaceUniformLocation = glGetUniformLocation(mProgram, "cubeFace");
+        ASSERT_NE(-1, mTextureCubeFaceUniformLocation);
     }
 
     void testTearDown() override
@@ -946,9 +963,10 @@ class TextureCubeTest : public TexCoordDrawTest
     GLuint mTextureCube;
     GLint mTexture2DUniformLocation;
     GLint mTextureCubeUniformLocation;
+    GLint mTextureCubeFaceUniformLocation;
 };
 
-class TextureCubeTestES3 : public ANGLETest<>
+class TextureCubeTestES3 : public TextureCubeTest
 {
   protected:
     TextureCubeTestES3() {}
@@ -2279,6 +2297,16 @@ TEST_P(TextureCubeTest, CubeMapDraw)
     texData[1] = 120;
     glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
                     texData);
+    glTexSubImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    texData);
+    glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    texData);
+    glTexSubImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    texData);
+    glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Z, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    texData);
+    glTexSubImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    texData);
     EXPECT_GL_ERROR(GL_NO_ERROR);
 
     glUseProgram(mProgram);
@@ -3294,6 +3322,67 @@ TEST_P(Texture2DDepthStencilTestES3, TexSampleModesWithStencil8Swizzled)
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_texture_stencil8"));
     TestSampleWithDepthStencilMode(GL_STENCIL_INDEX8, GL_DEPTH_COMPONENT, true);
     TestSampleWithDepthStencilMode(GL_STENCIL_INDEX8, GL_STENCIL_INDEX, true);
+}
+
+// Test that updating a texture format triggers depth/stencil mode resync.
+TEST_P(Texture2DDepthStencilTestES3, Redefinition)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_ANGLE_stencil_texturing"));
+
+    constexpr char kDepthFS[] =
+        R"(#version 300 es
+precision mediump float;
+uniform highp sampler2D tex;
+out vec4 color;
+void main()
+{
+    color = texture(tex, vec2(0, 0));
+})";
+    ANGLE_GL_PROGRAM(programDepth, essl3_shaders::vs::Simple(), kDepthFS);
+
+    constexpr char kStencilFS[] =
+        R"(#version 300 es
+precision mediump float;
+uniform highp usampler2D tex;
+out vec4 color;
+void main()
+{
+    color = vec4(texelFetch(tex, ivec2(0, 0), 0)) / 255.0;
+})";
+    ANGLE_GL_PROGRAM(programStencil, essl3_shaders::vs::Simple(), kStencilFS);
+
+    // Set up a D32F with stencil mode.
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE_ANGLE, GL_STENCIL_INDEX);
+
+    const GLfloat d32f = 0.5f;
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, 1, 1, 0, GL_DEPTH_COMPONENT, GL_FLOAT,
+                 &d32f);
+    ASSERT_GL_NO_ERROR();
+
+    drawQuad(programDepth, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(128, 0, 0, 255), 1);
+
+    // Redefine the same texture as D24S8
+    const GLuint d24s8 = 0xC0;
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, 1, 1, 0, GL_DEPTH_STENCIL,
+                 GL_UNSIGNED_INT_24_8, &d24s8);
+    ASSERT_GL_NO_ERROR();
+
+    drawQuad(programStencil, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(192, 0, 0, 1), 1);
+
+    // Redefine the same texture as D16
+    const GLushort d16 = 0x4000;
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, 1, 1, 0, GL_DEPTH_COMPONENT,
+                 GL_UNSIGNED_SHORT, &d16);
+    ASSERT_GL_NO_ERROR();
+
+    drawQuad(programDepth, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(64, 0, 0, 255), 1);
 }
 
 // Test that glTexSubImage2D combined with a PBO works properly when glTexStorage2D has
@@ -6039,6 +6128,72 @@ TEST_P(Texture2DArrayTestES3, TextureArrayUseThenRedefineThenUse)
     EXPECT_PIXEL_COLOR_EQ(px, py, GLColor::green);
 }
 
+// Create a 2D array texture, use it, then redefine one level without changing dimensions.
+TEST_P(Texture2DArrayTestES3, RedefineLevelData)
+{
+    glBindTexture(GL_TEXTURE_2D_ARRAY, m2DArrayTexture);
+
+    // Fill both levels with red
+    std::vector<GLColor> pixelsRed(2 * 2 * 1, GLColor::red);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, 2, 2, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 pixelsRed.data());
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, 1, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 pixelsRed.data());
+    ASSERT_GL_NO_ERROR();
+
+    // Check that both levels are red
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m2DArrayTexture, 0, 0);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m2DArrayTexture, 1, 0);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+
+    // Redefine level 1 with green
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, 1, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 &GLColor::green);
+    ASSERT_GL_NO_ERROR();
+
+    // Check that level 0 is red and level 1 is green
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m2DArrayTexture, 0, 0);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m2DArrayTexture, 1, 0);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+}
+
+// Create a 3D texture, use it, then redefine one level without changing dimensions.
+TEST_P(Texture3DTestES3, RedefineLevelData)
+{
+    glBindTexture(GL_TEXTURE_3D, mTexture3D);
+
+    // Fill both levels with red
+    std::vector<GLColor> pixelsRed(2 * 2 * 1, GLColor::red);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, 2, 2, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 pixelsRed.data());
+    glTexImage3D(GL_TEXTURE_3D, 1, GL_RGBA8, 1, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 pixelsRed.data());
+    ASSERT_GL_NO_ERROR();
+
+    // Check that both levels are red
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, mTexture3D, 0, 0);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, mTexture3D, 1, 0);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+
+    // Redefine level 1 with green
+    glTexImage3D(GL_TEXTURE_3D, 1, GL_RGBA8, 1, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 &GLColor::green);
+    ASSERT_GL_NO_ERROR();
+
+    // Check that level 0 is red and level 1 is green
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, mTexture3D, 0, 0);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, mTexture3D, 1, 0);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+}
+
 // Test that texture completeness is updated if texture max level changes.
 // GLES 3.0.4 section 3.8.13 Texture completeness
 TEST_P(Texture2DTestES3, TextureCompletenessChangesWithMaxLevel)
@@ -7623,6 +7778,28 @@ TEST_P(TextureBorderClampTest, TextureBorderClampDXT1Srgb)
     EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(128, 64, 32, 255), 1);
 
     testCompressedFormat(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT, 8, kBorder);
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(128, 64, 32, 16), 1);
+}
+
+// Test GL_TEXTURE_BORDER_COLOR parameter with texture redefinition.
+TEST_P(TextureBorderClampTest, Redefinition)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_texture_border_clamp"));
+
+    GLColor32F kBorder = {0.5f, 0.25f, 0.125f, 0.0625f};
+
+    setUpProgram();
+
+    testFormat(GL_ALPHA, GL_UNSIGNED_BYTE, kBorder);
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(0, 0, 0, 16), 1);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, 2, 2, 0, GL_LUMINANCE_ALPHA,
+                 GL_UNSIGNED_BYTE, nullptr);
+    drawQuad(mProgram, "position", 0.5f);
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(128, 128, 128, 16), 1);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    drawQuad(mProgram, "position", 0.5f);
     EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(128, 64, 32, 16), 1);
 }
 
@@ -10345,6 +10522,225 @@ TEST_P(TextureCubeTestES3, CubeMapPixelUnpackBuffer)
     ASSERT_GL_NO_ERROR();
 
     EXPECT_PIXEL_COLOR_EQ(0, 0, angle::GLColor::red);
+}
+
+// Test creating a mutable cubemap, committing it, and then incomaptibly redefining one layer, while
+// compatibly redefining another layer.
+TEST_P(TextureCubeTestES3, IncompatibleLayerAThenCompatibleLayerB)
+{
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+
+    std::vector<uint32_t> data(32 * 32 * 4, 0xC00FFC00);
+
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Z, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, 32, 32, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Z, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    EXPECT_GL_NO_ERROR();
+}
+
+// Test creating a mutable cubemap, committing it, and then comaptibly redefining one layer, while
+// incompatibly redefining another layer.
+TEST_P(TextureCubeTestES3, CompatibleLayerAThenIncompatibleLayerB)
+{
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+
+    std::vector<uint32_t> data(32 * 32 * 4, 0xC00FFC00);
+
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Z, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Z, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, 32, 32, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    EXPECT_GL_NO_ERROR();
+}
+
+// Test creating a mutable cubemap, committing it, and then incomaptibly redefining two layers,
+// while compatibly redefining another layer.
+TEST_P(TextureCubeTestES3, IncompatibleLayerABThenCompatibleLayerC)
+{
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+
+    std::vector<uint32_t> data(32 * 32 * 4, 0xC00FFC00);
+
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Z, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, 32, 32, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGB10_A2, 32, 32, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Z, 0, GL_RGB10_A2, 16, 16, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    EXPECT_GL_NO_ERROR();
+}
+
+// Test creating a mutable cubemap, committing it, and then incomaptibly redefining two layers and
+// compatibly redefining them again.
+TEST_P(TextureCubeTestES3, IncompatibleLayerABThenCompatibleLayerAB)
+{
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+
+    constexpr uint32_t kSize = 64;
+
+    std::vector<uint32_t> data(kSize * kSize * 4 * 4, 0xC00FFC00);
+    std::vector<uint32_t> data2(kSize * kSize * 4 * 4, 0xC00003FF);
+
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Z, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, kSize * 2, kSize * 2, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGB10_A2, kSize * 2, kSize * 2, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data2.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data2.data());
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+
+    glUseProgram(mProgram);
+    glUniform1i(mTexture2DUniformLocation, 0);
+    glUniform1i(mTextureCubeUniformLocation, 1);
+
+    const int w = getWindowWidth();
+    const int h = getWindowHeight();
+
+    for (uint32_t i = 0; i < 6; ++i)
+    {
+        glUniform1i(mTextureCubeFaceUniformLocation, i);
+        glClear(GL_COLOR_BUFFER_BIT);
+        drawQuad(mProgram, "position", 0.5f);
+
+        const bool expectRed = i == 2 || i == 5;
+        const GLColor expect = expectRed ? GLColor::red : GLColor::green;
+        EXPECT_PIXEL_RECT_EQ(2, 2, w - 4, h - 4, expect);
+        EXPECT_GL_NO_ERROR();
+    }
+}
+
+// Similar to IncompatibleLayerABThenCompatibleLayerAB, but with a single-level texture
+TEST_P(TextureCubeTestES3, IncompatibleLayerABThenCompatibleLayerABSingleLevel)
+{
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+
+    constexpr uint32_t kSize = 64;
+
+    std::vector<uint32_t> data(kSize * kSize * 4 * 4, 0xC00FFC00);
+    std::vector<uint32_t> data2(kSize * kSize * 4 * 4, 0xC00003FF);
+
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Z, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+
+    glUseProgram(mProgram);
+    glUniform1i(mTexture2DUniformLocation, 0);
+    glUniform1i(mTextureCubeUniformLocation, 1);
+
+    const int w = getWindowWidth();
+    const int h = getWindowHeight();
+
+    for (uint32_t i = 0; i < 6; ++i)
+    {
+        glUniform1i(mTextureCubeFaceUniformLocation, i);
+        glClear(GL_COLOR_BUFFER_BIT);
+        drawQuad(mProgram, "position", 0.5f);
+
+        EXPECT_PIXEL_RECT_EQ(0, 0, w, h, GLColor::green);
+        EXPECT_GL_NO_ERROR();
+    }
+
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, kSize * 2, kSize * 2, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGB10_A2, kSize * 2, kSize * 2, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data2.data());
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGB10_A2, kSize, kSize, 0, GL_RGBA,
+                 GL_UNSIGNED_INT_2_10_10_10_REV, data2.data());
+
+    for (uint32_t i = 0; i < 6; ++i)
+    {
+        glUniform1i(mTextureCubeFaceUniformLocation, i);
+        glClear(GL_COLOR_BUFFER_BIT);
+        drawQuad(mProgram, "position", 0.5f);
+
+        const bool expectRed = i == 2 || i == 5;
+        const GLColor expect = expectRed ? GLColor::red : GLColor::green;
+        EXPECT_PIXEL_RECT_EQ(2, 2, w - 4, h - 4, expect);
+        EXPECT_GL_NO_ERROR();
+    }
 }
 
 // Verify that using negative texture base level and max level generates GL_INVALID_VALUE.

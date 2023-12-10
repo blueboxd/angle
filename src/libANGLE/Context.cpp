@@ -439,11 +439,6 @@ bool GetIsExternal(const egl::AttributeMap &attribs)
     return (attribs.get(EGL_EXTERNAL_CONTEXT_ANGLE, EGL_FALSE) == EGL_TRUE);
 }
 
-bool GetSaveAndRestoreState(const egl::AttributeMap &attribs)
-{
-    return (attribs.get(EGL_EXTERNAL_CONTEXT_SAVE_STATE_ANGLE, EGL_FALSE) == EGL_TRUE);
-}
-
 void GetPerfMonitorString(const std::string &name,
                           GLsizei bufSize,
                           GLsizei *length,
@@ -624,7 +619,6 @@ Context::Context(egl::Display *display,
       mRefCount(0),
       mOverlay(mImplementation.get()),
       mIsExternal(GetIsExternal(attribs)),
-      mSaveAndRestoreState(GetSaveAndRestoreState(attribs)),
       mIsDestroyed(false)
 {
     for (angle::SubjectIndex uboIndex = kUniformBuffer0SubjectIndex;
@@ -827,6 +821,8 @@ egl::Error Context::onDestroy(const egl::Display *display)
         // The context is never current, so default resources are not allocated.
         return egl::NoError();
     }
+
+    mState.ensureNoPendingLink(this);
 
     // eglDestoryContext() must have been called for this Context and there must not be any Threads
     // that still have it current.
@@ -3981,6 +3977,14 @@ void Context::initCaps()
     ANGLE_LIMIT_CAP(caps->maxRenderbufferSize, IMPLEMENTATION_MAX_RENDERBUFFER_SIZE);
     ANGLE_LIMIT_CAP(caps->maxColorAttachments, IMPLEMENTATION_MAX_DRAW_BUFFERS);
     ANGLE_LIMIT_CAP(caps->maxVertexAttributes, MAX_VERTEX_ATTRIBS);
+    if (mDisplay->getFrontendFeatures().forceMinimumMaxVertexAttributes.enabled &&
+        getClientVersion() <= Version(2, 0))
+    {
+        // Only limit GL_MAX_VERTEX_ATTRIBS on ES2 or lower, the ES3+ cap is already at the minimum
+        // (16)
+        static_assert(MAX_VERTEX_ATTRIBS == 16);
+        ANGLE_LIMIT_CAP(caps->maxVertexAttributes, 8);
+    }
     ANGLE_LIMIT_CAP(caps->maxVertexAttribStride,
                     static_cast<GLint>(limits::kMaxVertexAttribStride));
 
