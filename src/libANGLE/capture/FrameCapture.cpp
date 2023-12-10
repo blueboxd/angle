@@ -516,6 +516,8 @@ void WriteGLFloatValue(std::ostream &out, GLfloat value)
     }
     else
     {
+        // Write a decimal point to preserve the zero sign on replay
+        out << (value == 0.0 ? std::showpoint : std::noshowpoint);
         out << std::setprecision(16);
         out << value;
     }
@@ -4633,11 +4635,11 @@ void CaptureShareGroupMidExecutionSetup(
     }
 
     // Capture EGL Sync Objects
-    const egl::SyncMap eglSyncMap = context->getDisplay()->getSyncsForCapture();
+    const egl::SyncMap &eglSyncMap = context->getDisplay()->getSyncsForCapture();
     for (const auto &eglSyncIter : eglSyncMap)
     {
         egl::SyncID eglSyncID    = {eglSyncIter.first};
-        const egl::Sync *eglSync = eglSyncIter.second;
+        const egl::Sync *eglSync = eglSyncIter.second.get();
         EGLSync eglSyncObject    = gl::unsafe_int_to_pointer_cast<EGLSync>(eglSyncID.value);
 
         if (!eglSync)

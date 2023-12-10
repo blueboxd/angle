@@ -478,7 +478,8 @@ static const char *GetOperatorString(TOperator op,
         case TOperator::EOpCosh:
             return "metal::cosh";
         case TOperator::EOpTanh:
-            return "metal::tanh";
+            return resultType.getPrecision() == TPrecision::EbpHigh ? "metal::precise::tanh"
+                                                                    : "metal::tanh";
         case TOperator::EOpAsinh:
             return "metal::asinh";
         case TOperator::EOpAcosh:
@@ -1193,7 +1194,8 @@ void GenMetalTraverser::emitFieldDeclaration(const TField &field,
         case TQualifier::EvqFragmentOut:
         case TQualifier::EvqFragmentInOut:
         case TQualifier::EvqFragData:
-            if (mPipelineStructs.fragmentOut.external == &parent)
+            if (mPipelineStructs.fragmentOut.external == &parent ||
+                mPipelineStructs.fragmentOut.externalExtra == &parent)
             {
                 if ((type.isVector() &&
                      (basic == TBasicType::EbtInt || basic == TBasicType::EbtUInt ||
@@ -1260,7 +1262,7 @@ void GenMetalTraverser::emitFieldDeclaration(const TField &field,
             if (field.symbolType() == SymbolType::AngleInternal)
             {
                 mOut << " [[sample_mask, function_constant("
-                     << sh::mtl::kMultisampledRenderingConstName << ")]]";
+                     << sh::mtl::kSampleMaskWriteEnabledConstName << ")]]";
             }
             break;
 

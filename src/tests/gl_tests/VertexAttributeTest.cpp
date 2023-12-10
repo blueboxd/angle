@@ -1829,17 +1829,14 @@ void main()
 // GL_RG32_SNORM_ANGLEX is used when using glVertexAttribPointer with certain parameters.
 TEST_P(VertexAttributeTestES3, DrawWithUnalignedData)
 {
-    // http://anglebug.com/7068
-    ANGLE_SKIP_TEST_IF(IsMac());
-
     constexpr char kVS[] = R"(#version 300 es
 precision highp float;
 in highp vec4 a_position;
-in highp ivec2 a_ColorTest;
+in highp vec2 a_ColorTest;
 out highp vec2 v_colorTest;
 
 void main() {
-    v_colorTest = vec2(a_ColorTest);
+    v_colorTest = a_ColorTest;
     gl_Position = a_position;
 })";
 
@@ -1849,7 +1846,8 @@ in highp vec2 v_colorTest;
 out vec4 fragColor;
 
 void main() {
-    if(v_colorTest.x > 0.5) {
+    // The input value is 0x01000000 / 0x7FFFFFFF
+    if(abs(v_colorTest.x - 0.0078125) < 0.001) {
         fragColor = vec4(0.0, 1.0, 0.0, 1.0);
     } else {
         fragColor = vec4(1.0, 0.0, 0.0, 1.0);
