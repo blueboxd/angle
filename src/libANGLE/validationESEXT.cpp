@@ -322,13 +322,6 @@ bool ValidateGetCompressedTexImageANGLE(const Context *context,
         return false;
     }
 
-    if (texture->isCompressedFormatEmulated(context, target, level))
-    {
-        // TODO (anglebug.com/7464): We can't currently read back from an emulated format
-        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kInvalidEmulatedFormat);
-        return false;
-    }
-
     return true;
 }
 
@@ -402,7 +395,7 @@ bool ValidateDrawElementsInstancedBaseVertexEXT(const Context *context,
     }
 
     return ValidateDrawElementsInstancedBase(context, entryPoint, mode, count, type, indices,
-                                             instancecount);
+                                             instancecount, 0);
 }
 
 bool ValidateDrawRangeElementsBaseVertexEXT(const Context *context,
@@ -544,7 +537,8 @@ bool ValidateDrawArraysInstancedBaseInstanceEXT(const Context *context,
         return false;
     }
 
-    return ValidateDrawArraysInstancedBase(context, entryPoint, mode, first, count, instanceCount);
+    return ValidateDrawArraysInstancedBase(context, entryPoint, mode, first, count, instanceCount,
+                                           baseInstance);
 }
 
 bool ValidateDrawElementsInstancedBaseInstanceEXT(const Context *context,
@@ -563,7 +557,7 @@ bool ValidateDrawElementsInstancedBaseInstanceEXT(const Context *context,
     }
 
     return ValidateDrawElementsInstancedBase(context, entryPoint, mode, count, type, indices,
-                                             instancecount);
+                                             instancecount, baseinstance);
 }
 
 bool ValidateDrawElementsInstancedBaseVertexBaseInstanceEXT(const Context *context,
@@ -583,7 +577,7 @@ bool ValidateDrawElementsInstancedBaseVertexBaseInstanceEXT(const Context *conte
     }
 
     return ValidateDrawElementsInstancedBase(context, entryPoint, mode, count, typePacked, indices,
-                                             instancecount);
+                                             instancecount, baseinstance);
 }
 
 bool ValidateDrawElementsBaseVertexOES(const Context *context,
@@ -619,7 +613,7 @@ bool ValidateDrawElementsInstancedBaseVertexOES(const Context *context,
     }
 
     return ValidateDrawElementsInstancedBase(context, entryPoint, mode, count, type, indices,
-                                             instancecount);
+                                             instancecount, 0);
 }
 
 bool ValidateDrawRangeElementsBaseVertexOES(const Context *context,
@@ -4188,5 +4182,47 @@ bool ValidateLogicOpANGLE(const PrivateState &state,
     }
 
     return ValidateLogicOpCommon(state, errors, entryPoint, opcodePacked);
+}
+
+bool ValidateFramebufferFoveationConfigQCOM(const Context *context,
+                                            angle::EntryPoint entryPoint,
+                                            FramebufferID framebufferPacked,
+                                            GLuint numLayers,
+                                            GLuint focalPointsPerLayer,
+                                            GLuint requestedFeatures,
+                                            const GLuint *providedFeatures)
+{
+    UNIMPLEMENTED();
+    return false;
+}
+
+bool ValidateFramebufferFoveationParametersQCOM(const Context *context,
+                                                angle::EntryPoint entryPoint,
+                                                FramebufferID framebufferPacked,
+                                                GLuint layer,
+                                                GLuint focalPoint,
+                                                GLfloat focalX,
+                                                GLfloat focalY,
+                                                GLfloat gainX,
+                                                GLfloat gainY,
+                                                GLfloat foveaArea)
+{
+    UNIMPLEMENTED();
+    return false;
+}
+
+bool ValidateTextureFoveationParametersQCOM(const Context *context,
+                                            angle::EntryPoint entryPoint,
+                                            TextureID texturePacked,
+                                            GLuint layer,
+                                            GLuint focalPoint,
+                                            GLfloat focalX,
+                                            GLfloat focalY,
+                                            GLfloat gainX,
+                                            GLfloat gainY,
+                                            GLfloat foveaArea)
+{
+    UNIMPLEMENTED();
+    return false;
 }
 }  // namespace gl

@@ -438,8 +438,8 @@ void ProgramPipeline::updateFragmentInoutRangeAndEnablesPerSampleShading()
         return;
     }
 
-    mState.mExecutable->mPod.fragmentInoutRange = fragmentExecutable->mPod.fragmentInoutRange;
-    mState.mExecutable->mPod.hasDiscard         = fragmentExecutable->mPod.hasDiscard;
+    mState.mExecutable->mPod.fragmentInoutIndices = fragmentExecutable->mPod.fragmentInoutIndices;
+    mState.mExecutable->mPod.hasDiscard           = fragmentExecutable->mPod.hasDiscard;
     mState.mExecutable->mPod.enablesPerSampleShading =
         fragmentExecutable->mPod.enablesPerSampleShading;
 }
@@ -612,7 +612,9 @@ angle::Result ProgramPipeline::link(const Context *context)
     for (ShaderType shaderType : mState.mExecutable->getLinkedShaderStages())
     {
         const SharedProgramExecutable &executable = getShaderProgramExecutable(shaderType);
-        mState.mExecutable->copyShaderBuffersFromProgram(*executable, shaderType);
+        mState.mExecutable->copyUniformBuffersFromProgram(*executable, shaderType,
+                                                          &mState.mUniformBlockMap[shaderType]);
+        mState.mExecutable->copyStorageBuffersFromProgram(*executable, shaderType);
         mState.mExecutable->copySamplerBindingsFromProgram(*executable);
         mState.mExecutable->copyImageBindingsFromProgram(*executable);
     }
@@ -624,14 +626,14 @@ angle::Result ProgramPipeline::link(const Context *context)
         mState.mExecutable->copyOutputsFromProgram(*executable);
     }
 
+    mState.mExecutable->mActiveSamplerRefCounts.fill(0);
+    updateExecutable();
+
     if (mState.mExecutable->hasLinkedShaderStage(ShaderType::Vertex) ||
         mState.mExecutable->hasLinkedShaderStage(ShaderType::Compute))
     {
         ANGLE_TRY(getImplementation()->link(context, mergedVaryings, varyingPacking));
     }
-
-    mState.mExecutable->mActiveSamplerRefCounts.fill(0);
-    updateExecutable();
 
     mState.mIsLinked = true;
     onStateChange(angle::SubjectMessage::ProgramRelinked);
@@ -776,18 +778,6 @@ angle::Result ProgramPipeline::syncState(const Context *context)
     return angle::Result::Continue;
 }
 
-void ProgramPipeline::onUniformBufferStateChange(size_t uniformBufferIndex)
-{
-    for (const ShaderType shaderType : mState.mExecutable->getLinkedShaderStages())
-    {
-        Program *shaderProgram = mState.mPrograms[shaderType];
-        if (shaderProgram)
-        {
-            shaderProgram->onUniformBufferStateChange(uniformBufferIndex);
-        }
-    }
-}
-
 void ProgramPipeline::onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMessage message)
 {
     switch (message)
@@ -830,6 +820,33 @@ void ProgramPipeline::onSubjectStateChange(angle::SubjectIndex index, angle::Sub
             break;
         case angle::SubjectMessage::ProgramUniformUpdated:
             mProgramPipelineImpl->onProgramUniformUpdate(static_cast<ShaderType>(index));
+            break;
+        case angle::SubjectMessage::ProgramUniformBlockBindingUpdated:
+            if (mState.mIsLinked)
+            {
+                // The program's UBO bindings have changed.  Currently, we don't track _which_ UBO
+                // has its binding changed, and we update all here.
+                ShaderType shaderType                     = static_cast<ShaderType>(index);
+                const SharedProgramExecutable &executable = getShaderProgramExecutable(shaderType);
+                const std::vector<InterfaceBlock> &blocks = executable->getUniformBlocks();
+                for (size_t blockIndex = 0; blockIndex < blocks.size(); ++blockIndex)
+                {
+                    if (!blocks[blockIndex].isActive(shaderType))
+                    {
+                        continue;
+                    }
+                    const uint32_t blockIndexInPPO =
+                        mState.mUniformBlockMap[shaderType][static_cast<uint32_t>(blockIndex)];
+                    ASSERT(blockIndexInPPO < mState.mExecutable->mUniformBlocks.size());
+
+                    // Set the block buffer binding in the PPO to the same binding as the program's.
+                    mState.mExecutable->remapUniformBlockBinding(
+                        {blockIndexInPPO}, executable->getUniformBlockBinding(blockIndex));
+                }
+
+                // Notify the context that the bindings have changed.
+                onStateChange(angle::SubjectMessage::ProgramUniformBlockBindingUpdated);
+            }
             break;
         default:
             UNREACHABLE();

@@ -11,6 +11,7 @@
 
 #include "common/bitset_utils.h"
 #include "common/debug.h"
+#include "common/system_utils.h"
 #include "common/utilities.h"
 #include "image_util/loadimage.h"
 #include "libANGLE/Context.h"
@@ -42,10 +43,18 @@
 #include "libANGLE/renderer/vulkan/TransformFeedbackVk.h"
 #include "libANGLE/renderer/vulkan/VertexArrayVk.h"
 
+#include <fstream>
 #include <iostream>
+#include <sstream>
 
 namespace rx
 {
+
+#if defined(ANGLE_PLATFORM_ANDROID)
+constexpr const char *kDefaultPipelineCacheGraphDumpPath = "/data/local/tmp/angle_dumps/";
+#else
+constexpr const char *kDefaultPipelineCacheGraphDumpPath = "";
+#endif  // ANGLE_PLATFORM_ANDROID
 
 namespace
 {
@@ -671,7 +680,24 @@ VkDependencyFlags GetLocalDependencyFlags(ContextVk *contextVk)
 
 void DumpPipelineCacheGraph(ContextVk *contextVk, const std::ostringstream &graph)
 {
-    std::ostream &out = std::cout;
+    std::string dumpPath = contextVk->getPipelineCacheGraphDumpPath();
+    if (dumpPath.size() == 0)
+    {
+        WARN() << "No path supplied for pipeline cache graph dump!";
+        return;
+    }
+
+    std::string filename = dumpPath;
+    filename += angle::GetExecutableName();
+    filename += ".dump";
+
+    INFO() << "Dumping pipeline cache transition graph to: \"" << filename << "\"";
+
+    std::ofstream out = std::ofstream(filename, std::ofstream::binary);
+    if (!out.is_open())
+    {
+        ERR() << "Failed to open \"" << filename << "\"";
+    }
 
     out << "digraph {\n" << " node [shape=box";
     if (contextVk->getFeatures().supportsPipelineCreationFeedback.enabled)
@@ -681,6 +707,7 @@ void DumpPipelineCacheGraph(ContextVk *contextVk, const std::ostringstream &grap
     out << "]\n";
     out << graph.str();
     out << "}\n";
+    out.close();
 }
 
 bool BlendModeSupportsDither(const gl::State &state, size_t colorIndex)
@@ -788,30 +815,24 @@ void UpdateImagesWithSharedCacheKey(const gl::ActiveTextureArray<TextureVk *> &a
     }
 }
 
-template <typename T>
-void UpdateBuffersWithSharedCacheKey(const gl::BufferVector &buffers,
-                                     const std::vector<T> &blocks,
-                                     VkDescriptorType descriptorType,
-                                     const vk::SharedDescriptorSetCacheKey &sharedCacheKey)
+void UpdateBufferWithSharedCacheKey(const gl::OffsetBindingPointer<gl::Buffer> &bufferBinding,
+                                    VkDescriptorType descriptorType,
+                                    const vk::SharedDescriptorSetCacheKey &sharedCacheKey)
 {
-    for (const T &block : blocks)
+    if (bufferBinding.get() != nullptr)
     {
-        const gl::OffsetBindingPointer<gl::Buffer> &bufferBinding = buffers[block.pod.binding];
-        if (bufferBinding.get() != nullptr)
+        // For simplicity, we do not check if uniform is active or duplicate. The worst case is
+        // we unnecessarily delete the cache entry when buffer bound to inactive uniform is
+        // destroyed.
+        BufferVk *bufferVk             = vk::GetImpl(bufferBinding.get());
+        vk::BufferHelper &bufferHelper = bufferVk->getBuffer();
+        if (vk::IsDynamicDescriptor(descriptorType))
         {
-            // For simplicity, we do not check if uniform is active or duplicate. The worst case is
-            // we unnecessarily delete the cache entry when image bound to inactive uniform is
-            // destroyed.
-            BufferVk *bufferVk             = vk::GetImpl(bufferBinding.get());
-            vk::BufferHelper &bufferHelper = bufferVk->getBuffer();
-            if (vk::IsDynamicDescriptor(descriptorType))
-            {
-                bufferHelper.getBufferBlock()->onNewDescriptorSet(sharedCacheKey);
-            }
-            else
-            {
-                bufferHelper.onNewDescriptorSet(sharedCacheKey);
-            }
+            bufferHelper.getBufferBlock()->onNewDescriptorSet(sharedCacheKey);
+        }
+        else
+        {
+            bufferHelper.onNewDescriptorSet(sharedCacheKey);
         }
     }
 }
@@ -1207,6 +1228,17 @@ ContextVk::ContextVk(const gl::State &state, gl::ErrorSet *errorSet, RendererVk 
 #undef ANGLE_ADD_PERF_MONITOR_COUNTER_GROUP
 
     mPerfMonitorCounters.push_back(vulkanGroup);
+
+    mDumpPipelineCacheGraph =
+        (angle::GetEnvironmentVarOrAndroidProperty("ANGLE_DUMP_PIPELINE_CACHE_GRAPH",
+                                                   "angle.dump_pipeline_cache_graph") == "1");
+
+    mPipelineCacheGraphDumpPath = angle::GetEnvironmentVarOrAndroidProperty(
+        "ANGLE_PIPELINE_CACHE_GRAPH_DUMP_PATH", "angle.pipeline_cache_graph_dump_path");
+    if (mPipelineCacheGraphDumpPath.size() == 0)
+    {
+        mPipelineCacheGraphDumpPath = kDefaultPipelineCacheGraphDumpPath;
+    }
 }
 
 ContextVk::~ContextVk()
@@ -1576,24 +1608,24 @@ angle::Result ContextVk::setupDraw(const gl::Context *context,
 
     DirtyBits dirtyBits = mGraphicsDirtyBits & dirtyBitMask;
 
-    if (dirtyBits.none())
+    if (dirtyBits.any())
     {
-        ASSERT(hasActiveRenderPass());
-        return angle::Result::Continue;
-    }
+        // Flush any relevant dirty bits.
+        for (DirtyBits::Iterator dirtyBitIter = dirtyBits.begin(); dirtyBitIter != dirtyBits.end();
+             ++dirtyBitIter)
+        {
+            ASSERT(mGraphicsDirtyBitHandlers[*dirtyBitIter]);
+            ANGLE_TRY(
+                (this->*mGraphicsDirtyBitHandlers[*dirtyBitIter])(&dirtyBitIter, dirtyBitMask));
+        }
 
-    // Flush any relevant dirty bits.
-    for (DirtyBits::Iterator dirtyBitIter = dirtyBits.begin(); dirtyBitIter != dirtyBits.end();
-         ++dirtyBitIter)
-    {
-        ASSERT(mGraphicsDirtyBitHandlers[*dirtyBitIter]);
-        ANGLE_TRY((this->*mGraphicsDirtyBitHandlers[*dirtyBitIter])(&dirtyBitIter, dirtyBitMask));
+        mGraphicsDirtyBits &= ~dirtyBitMask;
     }
-
-    mGraphicsDirtyBits &= ~dirtyBitMask;
 
     // Render pass must be always available at this point.
     ASSERT(hasActiveRenderPass());
+
+    ASSERT(mState.getProgramExecutable()->getAndResetDirtyBits().none());
 
     return angle::Result::Continue;
 }
@@ -1818,13 +1850,16 @@ angle::Result ContextVk::setupDispatch(const gl::Context *context)
     DirtyBits dirtyBits = mComputeDirtyBits;
 
     // Flush any relevant dirty bits.
-    for (size_t dirtyBit : dirtyBits)
+    for (DirtyBits::Iterator dirtyBitIter = dirtyBits.begin(); dirtyBitIter != dirtyBits.end();
+         ++dirtyBitIter)
     {
-        ASSERT(mComputeDirtyBitHandlers[dirtyBit]);
-        ANGLE_TRY((this->*mComputeDirtyBitHandlers[dirtyBit])());
+        ASSERT(mComputeDirtyBitHandlers[*dirtyBitIter]);
+        ANGLE_TRY((this->*mComputeDirtyBitHandlers[*dirtyBitIter])(&dirtyBitIter));
     }
 
     mComputeDirtyBits.reset();
+
+    ASSERT(mState.getProgramExecutable()->getAndResetDirtyBits().none());
 
     return angle::Result::Continue;
 }
@@ -1835,7 +1870,7 @@ angle::Result ContextVk::handleDirtyGraphicsMemoryBarrier(DirtyBits::Iterator *d
     return handleDirtyMemoryBarrierImpl(dirtyBitsIterator, dirtyBitMask);
 }
 
-angle::Result ContextVk::handleDirtyComputeMemoryBarrier()
+angle::Result ContextVk::handleDirtyComputeMemoryBarrier(DirtyBits::Iterator *dirtyBitsIterator)
 {
     return handleDirtyMemoryBarrierImpl(nullptr, {});
 }
@@ -1886,7 +1921,7 @@ bool ContextVk::renderPassUsesStorageResources() const
     const std::vector<gl::InterfaceBlock> &blocks = executable->getShaderStorageBlocks();
     for (uint32_t bufferIndex = 0; bufferIndex < blocks.size(); ++bufferIndex)
     {
-        uint32_t binding = blocks[bufferIndex].pod.binding;
+        const uint32_t binding = executable->getShaderStorageBlockBinding(bufferIndex);
         const gl::OffsetBindingPointer<gl::Buffer> &bufferBinding =
             mState.getIndexedShaderStorageBuffer(binding);
 
@@ -1907,7 +1942,7 @@ bool ContextVk::renderPassUsesStorageResources() const
         executable->getAtomicCounterBuffers();
     for (uint32_t bufferIndex = 0; bufferIndex < atomicCounterBuffers.size(); ++bufferIndex)
     {
-        uint32_t binding = atomicCounterBuffers[bufferIndex].pod.binding;
+        const uint32_t binding = executable->getAtomicCounterBufferBinding(bufferIndex);
         const gl::OffsetBindingPointer<gl::Buffer> &bufferBinding =
             mState.getIndexedAtomicCounterBuffer(binding);
 
@@ -1976,7 +2011,7 @@ angle::Result ContextVk::handleDirtyGraphicsEventLog(DirtyBits::Iterator *dirtyB
     return handleDirtyEventLogImpl(mRenderPassCommandBuffer);
 }
 
-angle::Result ContextVk::handleDirtyComputeEventLog()
+angle::Result ContextVk::handleDirtyComputeEventLog(DirtyBits::Iterator *dirtyBitsIterator)
 {
     return handleDirtyEventLogImpl(&mOutsideRenderPassCommands->getCommandBuffer());
 }
@@ -2456,7 +2491,7 @@ angle::Result ContextVk::handleDirtyGraphicsPipelineBinding(DirtyBits::Iterator 
     return angle::Result::Continue;
 }
 
-angle::Result ContextVk::handleDirtyComputePipelineDesc()
+angle::Result ContextVk::handleDirtyComputePipelineDesc(DirtyBits::Iterator *dirtyBitsIterator)
 {
     if (mCurrentComputePipeline == nullptr)
     {
@@ -2475,7 +2510,7 @@ angle::Result ContextVk::handleDirtyComputePipelineDesc()
     return angle::Result::Continue;
 }
 
-angle::Result ContextVk::handleDirtyComputePipelineBinding()
+angle::Result ContextVk::handleDirtyComputePipelineBinding(DirtyBits::Iterator *dirtyBitsIterator)
 {
     ASSERT(mCurrentComputePipeline);
 
@@ -2546,7 +2581,7 @@ angle::Result ContextVk::handleDirtyGraphicsTextures(DirtyBits::Iterator *dirtyB
     return handleDirtyTexturesImpl(mRenderPassCommands, PipelineType::Graphics);
 }
 
-angle::Result ContextVk::handleDirtyComputeTextures()
+angle::Result ContextVk::handleDirtyComputeTextures(DirtyBits::Iterator *dirtyBitsIterator)
 {
     return handleDirtyTexturesImpl(mOutsideRenderPassCommands, PipelineType::Compute);
 }
@@ -2675,10 +2710,21 @@ angle::Result ContextVk::handleDirtyGraphicsBlendBarrier(DirtyBits::Iterator *di
 
 template <typename CommandBufferHelperT>
 angle::Result ContextVk::handleDirtyShaderResourcesImpl(CommandBufferHelperT *commandBufferHelper,
-                                                        PipelineType pipelineType)
+                                                        PipelineType pipelineType,
+                                                        DirtyBits::Iterator *dirtyBitsIterator)
 {
     const gl::ProgramExecutable *executable = mState.getProgramExecutable();
     ASSERT(executable);
+
+    // DIRTY_BIT_UNIFORM_BUFFERS is set when uniform buffer bindings change.
+    // DIRTY_BIT_SHADER_RESOURCES gets set when the program executable has changed. In that case,
+    // this function will update entire the shader resource descriptorSet.  This means there is no
+    // need to process uniform buffer bindings again.
+    dirtyBitsIterator->resetLaterBit(DIRTY_BIT_UNIFORM_BUFFERS);
+
+    // This function processes uniform buffers, so it doesn't matter which are dirty.  The following
+    // makes sure the dirty bits are reset.
+    executable->getAndResetDirtyBits();
 
     const bool hasImages               = executable->hasImages();
     const bool hasStorageBuffers       = executable->hasStorageBuffers();
@@ -2706,7 +2752,7 @@ angle::Result ContextVk::handleDirtyShaderResourcesImpl(CommandBufferHelperT *co
     if (hasUniformBuffers)
     {
         mShaderBuffersDescriptorDesc.updateShaderBuffers(
-            this, commandBufferHelper, variableInfoMap,
+            this, commandBufferHelper, *executable, variableInfoMap,
             mState.getOffsetBindingPointerUniformBuffers(), executable->getUniformBlocks(),
             executableVk->getUniformBufferDescriptorType(), limits.maxUniformBufferRange,
             mEmptyBuffer, mShaderBufferWriteDescriptorDescs);
@@ -2714,7 +2760,7 @@ angle::Result ContextVk::handleDirtyShaderResourcesImpl(CommandBufferHelperT *co
     if (hasStorageBuffers)
     {
         mShaderBuffersDescriptorDesc.updateShaderBuffers(
-            this, commandBufferHelper, variableInfoMap,
+            this, commandBufferHelper, *executable, variableInfoMap,
             mState.getOffsetBindingPointerShaderStorageBuffers(),
             executable->getShaderStorageBlocks(), executableVk->getStorageBufferDescriptorType(),
             limits.maxStorageBufferRange, mEmptyBuffer, mShaderBufferWriteDescriptorDescs);
@@ -2722,7 +2768,7 @@ angle::Result ContextVk::handleDirtyShaderResourcesImpl(CommandBufferHelperT *co
     if (hasAtomicCounterBuffers)
     {
         mShaderBuffersDescriptorDesc.updateAtomicCounters(
-            this, commandBufferHelper, variableInfoMap,
+            this, commandBufferHelper, *executable, variableInfoMap,
             mState.getOffsetBindingPointerAtomicCounterBuffers(),
             executable->getAtomicCounterBuffers(), limits.minStorageBufferOffsetAlignment,
             mEmptyBuffer, mShaderBufferWriteDescriptorDescs);
@@ -2766,17 +2812,14 @@ angle::Result ContextVk::handleDirtyShaderResourcesImpl(CommandBufferHelperT *co
 angle::Result ContextVk::handleDirtyGraphicsShaderResources(DirtyBits::Iterator *dirtyBitsIterator,
                                                             DirtyBits dirtyBitMask)
 {
-    // DIRTY_BIT_UNIFORM_BUFFERS will be set when uniform buffer binding changed.
-    // DIRTY_BIT_SHADER_RESOURCES gets set when program executable changed. When program executable
-    // changed, handleDirtyShaderResourcesImpl will update entire shader resource descriptorSet.
-    // This means there is no need to process uniform buffer binding change if it is also set.
-    dirtyBitsIterator->resetLaterBit(DIRTY_BIT_UNIFORM_BUFFERS);
-    return handleDirtyShaderResourcesImpl(mRenderPassCommands, PipelineType::Graphics);
+    return handleDirtyShaderResourcesImpl(mRenderPassCommands, PipelineType::Graphics,
+                                          dirtyBitsIterator);
 }
 
-angle::Result ContextVk::handleDirtyComputeShaderResources()
+angle::Result ContextVk::handleDirtyComputeShaderResources(DirtyBits::Iterator *dirtyBitsIterator)
 {
-    return handleDirtyShaderResourcesImpl(mOutsideRenderPassCommands, PipelineType::Compute);
+    return handleDirtyShaderResourcesImpl(mOutsideRenderPassCommands, PipelineType::Compute,
+                                          dirtyBitsIterator);
 }
 
 template <typename CommandBufferT>
@@ -2793,11 +2836,13 @@ angle::Result ContextVk::handleDirtyUniformBuffersImpl(CommandBufferT *commandBu
     gl::ProgramExecutable::DirtyBits dirtyBits = executable->getAndResetDirtyBits();
     for (size_t blockIndex : dirtyBits)
     {
+        const GLuint binding = executable->getUniformBlockBinding(blockIndex);
         mShaderBuffersDescriptorDesc.updateOneShaderBuffer(
             this, commandBufferHelper, variableInfoMap,
-            mState.getOffsetBindingPointerUniformBuffers(), executable->getUniformBlocks(),
-            static_cast<uint32_t>(blockIndex), executableVk->getUniformBufferDescriptorType(),
-            limits.maxUniformBufferRange, mEmptyBuffer, mShaderBufferWriteDescriptorDescs);
+            mState.getOffsetBindingPointerUniformBuffers(),
+            executable->getUniformBlocks()[blockIndex], binding,
+            executableVk->getUniformBufferDescriptorType(), limits.maxUniformBufferRange,
+            mEmptyBuffer, mShaderBufferWriteDescriptorDescs);
     }
 
     vk::SharedDescriptorSetCacheKey newSharedCacheKey;
@@ -2822,7 +2867,7 @@ angle::Result ContextVk::handleDirtyGraphicsUniformBuffers(DirtyBits::Iterator *
     return handleDirtyUniformBuffersImpl(mRenderPassCommands);
 }
 
-angle::Result ContextVk::handleDirtyComputeUniformBuffers()
+angle::Result ContextVk::handleDirtyComputeUniformBuffers(DirtyBits::Iterator *dirtyBitsIterator)
 {
     return handleDirtyUniformBuffersImpl(mOutsideRenderPassCommands);
 }
@@ -2988,7 +3033,7 @@ angle::Result ContextVk::handleDirtyGraphicsUniforms(DirtyBits::Iterator *dirtyB
     return handleDirtyUniformsImpl(mRenderPassCommands);
 }
 
-angle::Result ContextVk::handleDirtyComputeUniforms()
+angle::Result ContextVk::handleDirtyComputeUniforms(DirtyBits::Iterator *dirtyBitsIterator)
 {
     return handleDirtyUniformsImpl(mOutsideRenderPassCommands);
 }
@@ -3307,7 +3352,7 @@ void ContextVk::handleDirtyGraphicsDynamicScissorImpl(bool isPrimitivesGenerated
     }
 }
 
-angle::Result ContextVk::handleDirtyComputeDescriptorSets()
+angle::Result ContextVk::handleDirtyComputeDescriptorSets(DirtyBits::Iterator *dirtyBitsIterator)
 {
     return handleDirtyDescriptorSetsImpl(mOutsideRenderPassCommands, PipelineType::Compute);
 }
@@ -4753,6 +4798,10 @@ void ContextVk::updateColorMasks()
                                                  framebufferVk->getEmulatedAlphaAttachmentMask(),
                                                  framebufferVk->getState().getEnabledDrawBuffers());
 
+    // This function may be called outside of ContextVk::syncState, and so invalidates the graphics
+    // pipeline.
+    invalidateCurrentGraphicsPipeline();
+
     onColorAccessChange();
 }
 
@@ -4784,6 +4833,10 @@ void ContextVk::updateBlendFuncsAndEquations()
 
     mGraphicsPipelineDesc->updateBlendEquations(&mGraphicsPipelineTransition, blendStateExt,
                                                 mCachedDrawFramebufferColorAttachmentMask);
+
+    // This function may be called outside of ContextVk::syncState, and so invalidates the graphics
+    // pipeline.
+    invalidateCurrentGraphicsPipeline();
 }
 
 void ContextVk::updateSampleMaskWithRasterizationSamples(const uint32_t rasterizationSamples)
@@ -6240,23 +6293,36 @@ void ContextVk::updateShaderResourcesWithSharedCacheKey(
 
     if (executable->hasUniformBuffers())
     {
-        UpdateBuffersWithSharedCacheKey(
-            mState.getOffsetBindingPointerUniformBuffers(), executable->getUniformBlocks(),
-            executableVk->getUniformBufferDescriptorType(), sharedCacheKey);
+        const std::vector<gl::InterfaceBlock> &blocks = executable->getUniformBlocks();
+        for (uint32_t bufferIndex = 0; bufferIndex < blocks.size(); ++bufferIndex)
+        {
+            const GLuint binding = executable->getUniformBlockBinding(bufferIndex);
+            UpdateBufferWithSharedCacheKey(mState.getOffsetBindingPointerUniformBuffers()[binding],
+                                           executableVk->getUniformBufferDescriptorType(),
+                                           sharedCacheKey);
+        }
     }
     if (executable->hasStorageBuffers())
     {
-        UpdateBuffersWithSharedCacheKey(mState.getOffsetBindingPointerShaderStorageBuffers(),
-                                        executable->getShaderStorageBlocks(),
-                                        executableVk->getStorageBufferDescriptorType(),
-                                        sharedCacheKey);
+        const std::vector<gl::InterfaceBlock> &blocks = executable->getShaderStorageBlocks();
+        for (uint32_t bufferIndex = 0; bufferIndex < blocks.size(); ++bufferIndex)
+        {
+            const GLuint binding = executable->getShaderStorageBlockBinding(bufferIndex);
+            UpdateBufferWithSharedCacheKey(
+                mState.getOffsetBindingPointerShaderStorageBuffers()[binding],
+                executableVk->getStorageBufferDescriptorType(), sharedCacheKey);
+        }
     }
     if (executable->hasAtomicCounterBuffers())
     {
-        UpdateBuffersWithSharedCacheKey(mState.getOffsetBindingPointerAtomicCounterBuffers(),
-                                        executable->getAtomicCounterBuffers(),
-                                        executableVk->getAtomicCounterBufferDescriptorType(),
-                                        sharedCacheKey);
+        const std::vector<gl::AtomicCounterBuffer> &blocks = executable->getAtomicCounterBuffers();
+        for (uint32_t bufferIndex = 0; bufferIndex < blocks.size(); ++bufferIndex)
+        {
+            const GLuint binding = executable->getAtomicCounterBufferBinding(bufferIndex);
+            UpdateBufferWithSharedCacheKey(
+                mState.getOffsetBindingPointerAtomicCounterBuffers()[binding],
+                executableVk->getAtomicCounterBufferDescriptorType(), sharedCacheKey);
+        }
     }
     if (executable->hasImages())
     {
@@ -6327,6 +6393,13 @@ void ContextVk::onDrawFramebufferRenderPassDescChange(FramebufferVk *framebuffer
     if (renderPassDescChangedOut)
     {
         // If render pass desc has changed while processing the dirty bits, notify the caller.
+        // In most paths, |renderPassDescChangedOut| is nullptr and the pipeline will be
+        // invalidated.
+        //
+        // |renderPassDescChangedOut| only serves |ContextVk::handleDirtyGraphicsRenderPass|, which
+        // may need to reprocess the pipeline while processing dirty bits.  At that point, marking
+        // the pipeline dirty is ineffective, and the pipeline dirty bit handler is directly called
+        // as a result of setting this variable to true.
         *renderPassDescChangedOut = true;
     }
     else
@@ -6919,7 +6992,7 @@ angle::Result ContextVk::handleDirtyGraphicsDriverUniforms(DirtyBits::Iterator *
     return angle::Result::Continue;
 }
 
-angle::Result ContextVk::handleDirtyComputeDriverUniforms()
+angle::Result ContextVk::handleDirtyComputeDriverUniforms(DirtyBits::Iterator *dirtyBitsIterator)
 {
     // Create the driver uniform object that will be used as push constant argument.
     ComputeDriverUniforms driverUniforms = {};
@@ -8562,9 +8635,9 @@ angle::Result ContextVk::endRenderPassIfComputeReadAfterTransformFeedbackWrite()
 
     for (uint32_t bufferIndex = 0; bufferIndex < blocks.size(); ++bufferIndex)
     {
-        const gl::InterfaceBlock &block = blocks[bufferIndex];
+        const GLuint binding = executable->getUniformBlockBinding(bufferIndex);
         const gl::OffsetBindingPointer<gl::Buffer> &bufferBinding =
-            mState.getIndexedUniformBuffer(block.pod.binding);
+            mState.getIndexedUniformBuffer(binding);
 
         if (bufferBinding.get() == nullptr)
         {

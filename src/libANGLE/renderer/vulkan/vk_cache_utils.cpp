@@ -27,7 +27,11 @@
 
 namespace rx
 {
+#if defined(ANGLE_DUMP_PIPELINE_CACHE_GRAPH)
+constexpr bool kDumpPipelineCacheGraph = true;
+#else
 constexpr bool kDumpPipelineCacheGraph = false;
+#endif  // ANGLE_DUMP_PIPELINE_CACHE_GRAPH
 
 namespace vk
 {
@@ -2345,6 +2349,11 @@ angle::Result InitializePipelineFromLibraries(Context *context,
     }
 
     return angle::Result::Continue;
+}
+
+bool ShouldDumpPipelineCacheGraph(ContextVk *contextVk)
+{
+    return kDumpPipelineCacheGraph && contextVk->isPipelineCacheGraphDumpEnabled();
 }
 }  // anonymous namespace
 
@@ -5216,20 +5225,18 @@ void WriteDescriptorDescs::updateInputAttachments(
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     FramebufferVk *framebufferVk)
 {
-    const std::vector<gl::LinkedUniform> &uniforms = executable.getUniforms();
-
     if (!executable.usesFramebufferFetch())
     {
         return;
     }
 
-    const uint32_t baseUniformIndex              = executable.getFragmentInoutRange().low();
-    const gl::LinkedUniform &baseInputAttachment = uniforms.at(baseUniformIndex);
+    const uint32_t firstInputAttachment =
+        static_cast<uint32_t>(executable.getFragmentInoutIndices().first());
 
     const ShaderInterfaceVariableInfo &baseInfo = variableInfoMap.getVariableById(
-        gl::ShaderType::Fragment, baseInputAttachment.getId(gl::ShaderType::Fragment));
+        gl::ShaderType::Fragment, sh::vk::spirv::kIdInputAttachment0 + firstInputAttachment);
 
-    uint32_t baseBinding = baseInfo.binding - baseInputAttachment.getLocation();
+    const uint32_t baseBinding = baseInfo.binding - firstInputAttachment;
 
     for (size_t colorIndex : framebufferVk->getState().getColorAttachmentsMask())
     {
@@ -5742,14 +5749,13 @@ void DescriptorSetDescBuilder::updateOneShaderBuffer(
     CommandBufferT *commandBufferHelper,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
-    const std::vector<gl::InterfaceBlock> &blocks,
-    uint32_t blockIndex,
+    const gl::InterfaceBlock &block,
+    uint32_t bufferIndex,
     VkDescriptorType descriptorType,
     VkDeviceSize maxBoundBufferRange,
     const BufferHelper &emptyBuffer,
     const WriteDescriptorDescs &writeDescriptorDescs)
 {
-    const gl::InterfaceBlock &block = blocks[blockIndex];
     if (block.activeShaders().none())
     {
         return;
@@ -5763,7 +5769,7 @@ void DescriptorSetDescBuilder::updateOneShaderBuffer(
     uint32_t arrayElement  = block.pod.isArray ? block.pod.arrayElement : 0;
     uint32_t infoDescIndex = writeDescriptorDescs[binding].descriptorInfoIndex + arrayElement;
 
-    const gl::OffsetBindingPointer<gl::Buffer> &bufferBinding = buffers[block.pod.binding];
+    const gl::OffsetBindingPointer<gl::Buffer> &bufferBinding = buffers[bufferIndex];
     if (bufferBinding.get() == nullptr)
     {
         setEmptyBuffer(infoDescIndex, descriptorType, emptyBuffer);
@@ -5838,6 +5844,7 @@ template <typename CommandBufferT>
 void DescriptorSetDescBuilder::updateShaderBuffers(
     ContextVk *contextVk,
     CommandBufferT *commandBufferHelper,
+    const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
     const std::vector<gl::InterfaceBlock> &blocks,
@@ -5846,12 +5853,18 @@ void DescriptorSetDescBuilder::updateShaderBuffers(
     const BufferHelper &emptyBuffer,
     const WriteDescriptorDescs &writeDescriptorDescs)
 {
+    const bool isUniformBuffer = descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
+                                 descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+
     // Now that we have the proper array elements counts, initialize the info structures.
     for (uint32_t blockIndex = 0; blockIndex < blocks.size(); ++blockIndex)
     {
-        updateOneShaderBuffer(contextVk, commandBufferHelper, variableInfoMap, buffers, blocks,
-                              blockIndex, descriptorType, maxBoundBufferRange, emptyBuffer,
-                              writeDescriptorDescs);
+        const GLuint binding = isUniformBuffer
+                                   ? executable.getUniformBlockBinding(blockIndex)
+                                   : executable.getShaderStorageBlockBinding(blockIndex);
+        updateOneShaderBuffer(contextVk, commandBufferHelper, variableInfoMap, buffers,
+                              blocks[blockIndex], binding, descriptorType, maxBoundBufferRange,
+                              emptyBuffer, writeDescriptorDescs);
     }
 }
 
@@ -5859,6 +5872,7 @@ template <typename CommandBufferT>
 void DescriptorSetDescBuilder::updateAtomicCounters(
     ContextVk *contextVk,
     CommandBufferT *commandBufferHelper,
+    const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
     const std::vector<gl::AtomicCounterBuffer> &atomicCounterBuffers,
@@ -5887,9 +5901,10 @@ void DescriptorSetDescBuilder::updateAtomicCounters(
         setEmptyBuffer(infoIndex, kStorageBufferDescriptorType, emptyBuffer);
     }
 
-    for (const gl::AtomicCounterBuffer &atomicCounterBuffer : atomicCounterBuffers)
+    for (uint32_t bufferIndex = 0; bufferIndex < atomicCounterBuffers.size(); ++bufferIndex)
     {
-        int arrayElement                                          = atomicCounterBuffer.pod.binding;
+        const gl::AtomicCounterBuffer &atomicCounterBuffer = atomicCounterBuffers[bufferIndex];
+        const GLuint arrayElement = executable.getAtomicCounterBufferBinding(bufferIndex);
         const gl::OffsetBindingPointer<gl::Buffer> &bufferBinding = buffers[arrayElement];
 
         uint32_t infoIndex = baseInfoIndex + arrayElement;
@@ -5936,8 +5951,8 @@ template void DescriptorSetDescBuilder::updateOneShaderBuffer<vk::RenderPassComm
     RenderPassCommandBufferHelper *commandBufferHelper,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
-    const std::vector<gl::InterfaceBlock> &blocks,
-    uint32_t blockIndex,
+    const gl::InterfaceBlock &block,
+    uint32_t bufferIndex,
     VkDescriptorType descriptorType,
     VkDeviceSize maxBoundBufferRange,
     const BufferHelper &emptyBuffer,
@@ -5948,8 +5963,8 @@ template void DescriptorSetDescBuilder::updateOneShaderBuffer<OutsideRenderPassC
     OutsideRenderPassCommandBufferHelper *commandBufferHelper,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
-    const std::vector<gl::InterfaceBlock> &blocks,
-    uint32_t blockIndex,
+    const gl::InterfaceBlock &block,
+    uint32_t bufferIndex,
     VkDescriptorType descriptorType,
     VkDeviceSize maxBoundBufferRange,
     const BufferHelper &emptyBuffer,
@@ -5958,6 +5973,7 @@ template void DescriptorSetDescBuilder::updateOneShaderBuffer<OutsideRenderPassC
 template void DescriptorSetDescBuilder::updateShaderBuffers<OutsideRenderPassCommandBufferHelper>(
     ContextVk *contextVk,
     OutsideRenderPassCommandBufferHelper *commandBufferHelper,
+    const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
     const std::vector<gl::InterfaceBlock> &blocks,
@@ -5969,6 +5985,7 @@ template void DescriptorSetDescBuilder::updateShaderBuffers<OutsideRenderPassCom
 template void DescriptorSetDescBuilder::updateShaderBuffers<RenderPassCommandBufferHelper>(
     ContextVk *contextVk,
     RenderPassCommandBufferHelper *commandBufferHelper,
+    const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
     const std::vector<gl::InterfaceBlock> &blocks,
@@ -5980,6 +5997,7 @@ template void DescriptorSetDescBuilder::updateShaderBuffers<RenderPassCommandBuf
 template void DescriptorSetDescBuilder::updateAtomicCounters<OutsideRenderPassCommandBufferHelper>(
     ContextVk *contextVk,
     OutsideRenderPassCommandBufferHelper *commandBufferHelper,
+    const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
     const std::vector<gl::AtomicCounterBuffer> &atomicCounterBuffers,
@@ -5990,6 +6008,7 @@ template void DescriptorSetDescBuilder::updateAtomicCounters<OutsideRenderPassCo
 template void DescriptorSetDescBuilder::updateAtomicCounters<RenderPassCommandBufferHelper>(
     ContextVk *contextVk,
     RenderPassCommandBufferHelper *commandBufferHelper,
+    const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
     const std::vector<gl::AtomicCounterBuffer> &atomicCounterBuffers,
@@ -6106,20 +6125,18 @@ angle::Result DescriptorSetDescBuilder::updateInputAttachments(
     FramebufferVk *framebufferVk,
     const WriteDescriptorDescs &writeDescriptorDescs)
 {
-    const std::vector<gl::LinkedUniform> &uniforms = executable.getUniforms();
-
     if (!executable.usesFramebufferFetch())
     {
         return angle::Result::Continue;
     }
 
-    const uint32_t baseUniformIndex              = executable.getFragmentInoutRange().low();
-    const gl::LinkedUniform &baseInputAttachment = uniforms.at(baseUniformIndex);
+    const uint32_t firstInputAttachment =
+        static_cast<uint32_t>(executable.getFragmentInoutIndices().first());
 
     const ShaderInterfaceVariableInfo &baseInfo = variableInfoMap.getVariableById(
-        gl::ShaderType::Fragment, baseInputAttachment.getId(gl::ShaderType::Fragment));
+        gl::ShaderType::Fragment, sh::vk::spirv::kIdInputAttachment0 + firstInputAttachment);
 
-    uint32_t baseBinding = baseInfo.binding - baseInputAttachment.getLocation();
+    const uint32_t baseBinding = baseInfo.binding - firstInputAttachment;
 
     for (size_t colorIndex : framebufferVk->getState().getColorAttachmentsMask())
     {
@@ -6893,7 +6910,7 @@ angle::Result RenderPassCache::MakeRenderPass(vk::Context *context,
 template <typename Hash>
 void GraphicsPipelineCache<Hash>::destroy(ContextVk *contextVk)
 {
-    if (kDumpPipelineCacheGraph && !mPayload.empty())
+    if (vk::ShouldDumpPipelineCacheGraph(contextVk) && !mPayload.empty())
     {
         vk::DumpPipelineCacheGraph<Hash>(contextVk, mPayload);
     }
@@ -6914,7 +6931,7 @@ void GraphicsPipelineCache<Hash>::destroy(ContextVk *contextVk)
 template <typename Hash>
 void GraphicsPipelineCache<Hash>::release(ContextVk *contextVk)
 {
-    if (kDumpPipelineCacheGraph && !mPayload.empty())
+    if (vk::ShouldDumpPipelineCacheGraph(contextVk) && !mPayload.empty())
     {
         vk::DumpPipelineCacheGraph<Hash>(contextVk, mPayload);
     }

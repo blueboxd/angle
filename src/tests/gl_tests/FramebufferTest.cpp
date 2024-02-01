@@ -725,6 +725,49 @@ TEST_P(FramebufferTest_ES3, InvalidateDepthStencil)
     EXPECT_GL_NO_ERROR();
 }
 
+// Test that invalidating an FB with a stencil attachment, which
+// generates Validation errors, will not fail
+TEST_P(FramebufferTest_ES3, InvalidateStencilAttachmentOnly)
+{
+    constexpr GLsizei kBufferSize = 4096;
+    std::vector<uint8_t> abdata(kBufferSize);
+    GLBuffer arrayBuffer;
+    glBindBuffer(GL_ARRAY_BUFFER, arrayBuffer);
+    glBufferData(GL_ARRAY_BUFFER, kBufferSize, abdata.data(), GL_STATIC_DRAW);
+
+    std::vector<uint8_t> eabdata(kBufferSize);
+    GLBuffer elementArrayBuffer;
+    glBindBuffer(GL_ARRAY_BUFFER, elementArrayBuffer);
+    glBufferData(GL_ARRAY_BUFFER, kBufferSize, eabdata.data(), GL_STATIC_DRAW);
+
+    GLTexture stencilTexture;
+    glBindTexture(GL_TEXTURE_2D, stencilTexture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, 32, 32);
+
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), essl1_shaders::fs::UniformColor());
+    glUseProgram(program);
+
+    glEnableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, arrayBuffer);
+    glVertexAttribPointer(0, 4, GL_SHORT, GL_TRUE, 8, nullptr);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementArrayBuffer);
+
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, stencilTexture, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
+    GLVertexArray vertexArray;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementArrayBuffer);
+    glDrawElements(GL_TRIANGLE_STRIP, 26, GL_UNSIGNED_INT, nullptr);
+    EXPECT_GL_NO_ERROR();
+
+    std::array<GLenum, 1> attachments = {GL_STENCIL_ATTACHMENT};
+    glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, attachments.data());
+    EXPECT_GL_NO_ERROR();
+}
+
 // Test that invalidating stencil-only attachment doesn't crash.
 TEST_P(FramebufferTest_ES3, InvalidateStencilOnly)
 {
@@ -6308,8 +6351,7 @@ void main()
 
 ANGLE_INSTANTIATE_TEST_ES2_AND(AddMockTextureNoRenderTargetTest,
                                ES2_D3D9().enable(Feature::AddMockTextureNoRenderTarget),
-                               ES2_D3D11().enable(Feature::AddMockTextureNoRenderTarget),
-                               ES2_VULKAN().enable(Feature::ForceDelayedDeviceCreationForTesting));
+                               ES2_D3D11().enable(Feature::AddMockTextureNoRenderTarget));
 
 ANGLE_INSTANTIATE_TEST_ES2(FramebufferTest);
 ANGLE_INSTANTIATE_TEST_ES2(FramebufferExtensionsTest);
@@ -6326,9 +6368,7 @@ ANGLE_INSTANTIATE_TEST(FramebufferTest_ES3Metal,
                        ES3_METAL().enable(Feature::LimitMaxColorTargetBitsForTesting));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(FramebufferTest_ES31);
-ANGLE_INSTANTIATE_TEST_ES31_AND(
-    FramebufferTest_ES31,
-    ES31_VULKAN().disable(Feature::SupportsImagelessFramebuffer),
-    ES31_VULKAN().enable(Feature::ForceDelayedDeviceCreationForTesting));
+ANGLE_INSTANTIATE_TEST_ES31_AND(FramebufferTest_ES31,
+                                ES31_VULKAN().disable(Feature::SupportsImagelessFramebuffer));
 ANGLE_INSTANTIATE_TEST_ES3(FramebufferTestWithFormatFallback);
 ANGLE_INSTANTIATE_TEST_ES3(DefaultFramebufferTest);

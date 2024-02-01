@@ -416,13 +416,6 @@ struct FeaturesVk : FeatureSetBase
         &members, "https://anglebug.com/6574"
     };
 
-    FeatureInfo forceDelayedDeviceCreationForTesting = {
-        "forceDelayedDeviceCreationForTesting",
-        FeatureCategory::VulkanWorkarounds,
-        "Artificially defer device creation to after surface is enabled for testing multi-queue scenarios",
-        &members, "https://anglebug.com/8300"
-    };
-
     FeatureInfo supportsShaderFloat16 = {
         "supportsShaderFloat16",
         FeatureCategory::VulkanFeatures,
@@ -1300,6 +1293,13 @@ struct FeaturesVk : FeatureSetBase
         &members, "https://issuetracker.google.com/288119108"
     };
 
+    FeatureInfo requireCachedBitForStagingBuffer = {
+        "requireCachedBitForStagingBuffer",
+        FeatureCategory::VulkanWorkarounds,
+        "use cached bit as required bit instead of preferred bit for staging buffers",
+        &members, "https://issuetracker.google.com/315836169"
+    };
+
     FeatureInfo supportsExternalFormatResolve = {
         "supportsExternalFormatResolve",
         FeatureCategory::VulkanFeatures,
@@ -1307,18 +1307,26 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
-    FeatureInfo forceAHBLayerCountToOne = {
-        "forceAHBLayerCountToOne",
-        FeatureCategory::VulkanWorkarounds,
-        "Force AHB's layerCount to 1",
-        &members, "http://b/239181279"
-    };
-
     FeatureInfo disableSeparateShaderObjects = {
         "disableSeparateShaderObjects",
         FeatureCategory::VulkanAppWorkarounds,
         "Disable GL_EXT_separate_shader_objects and cap core ES version to 3.0",
         &members, "https://issuetracker.google.com/309028728"
+    };
+
+    FeatureInfo forceSampleUsageForImageWithExternalFormat = {
+        "forceSampleUsageForImageWithExternalFormat",
+        FeatureCategory::VulkanAppWorkarounds,
+        "Force enable VK_IMAGE_USAGE_SAMPLED_BIT usage for images with external format",
+        &members, "https://issuetracker.google.com/155487768"
+    };
+
+    FeatureInfo avoidOpSelectWithMismatchingRelaxedPrecision = {
+        "avoidOpSelectWithMismatchingRelaxedPrecision",
+        FeatureCategory::VulkanWorkarounds,
+        "On some drivers, the OpSelect SPIR-V instruction with arguments with mismatching "
+        "RelaxedPrecision decoration causes a crash",
+        &members, "http://anglebug.com/8503"
     };
 
 };

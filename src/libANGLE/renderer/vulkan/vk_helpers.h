@@ -725,11 +725,20 @@ class PipelineBarrier : angle::NonCopyable
 };
 using PipelineBarrierArray = angle::PackedEnumMap<PipelineStage, PipelineBarrier>;
 
-enum class MemoryCoherency
+enum class MemoryCoherency : uint8_t
 {
-    NonCoherent,
-    Coherent
+    CachedNonCoherent,
+    CachedPreferCoherent,
+    UnCachedCoherent,
+
+    InvalidEnum = 3,
+    EnumCount   = 3,
 };
+ANGLE_INLINE bool IsCached(MemoryCoherency coherency)
+{
+    return coherency == MemoryCoherency::CachedNonCoherent ||
+           coherency == MemoryCoherency::CachedPreferCoherent;
+}
 
 enum class MemoryHostVisibility
 {
@@ -788,7 +797,7 @@ class BufferHelper : public ReadWriteResource
     VkDeviceSize getBlockMemorySize() const { return mSuballocation.getBlockMemorySize(); }
     bool isHostVisible() const { return mSuballocation.isHostVisible(); }
     bool isCoherent() const { return mSuballocation.isCoherent(); }
-
+    bool isCached() const { return mSuballocation.isCached(); }
     bool isMapped() const { return mSuballocation.isMapped(); }
 
     // Also implicitly sets up the correct barriers.
@@ -887,6 +896,9 @@ class BufferHelper : public ReadWriteResource
     DescriptorSetCacheManager mDescriptorSetCacheManager;
     // For external buffer
     GLeglClientBufferEXT mClientBuffer;
+
+    // Whether ANGLE currently has ownership of this resource or it's released to external.
+    bool mIsReleasedToExternal;
 };
 
 class BufferPool : angle::NonCopyable
@@ -1892,7 +1904,8 @@ class ImageHelper final : public Resource, public angle::Subject
                                uint32_t mipLevels,
                                uint32_t layerCount,
                                bool isRobustResourceInitEnabled,
-                               bool hasProtectedContent);
+                               bool hasProtectedContent,
+                               YcbcrConversionDesc conversionDesc);
     VkResult initMemory(Context *context,
                         const MemoryProperties &memoryProperties,
                         VkMemoryPropertyFlags flags,
@@ -2466,20 +2479,10 @@ class ImageHelper final : public Resource, public angle::Subject
         y2yDesc.updateConversionModel(VK_SAMPLER_YCBCR_MODEL_CONVERSION_RGB_IDENTITY);
         return y2yDesc;
     }
-    void updateYcbcrConversionDesc(RendererVk *rendererVk,
-                                   uint64_t externalFormat,
-                                   VkSamplerYcbcrModelConversion conversionModel,
-                                   VkSamplerYcbcrRange colorRange,
-                                   VkChromaLocation xChromaOffset,
-                                   VkChromaLocation yChromaOffset,
-                                   VkFilter chromaFilter,
-                                   VkComponentMapping components,
-                                   angle::FormatID intendedFormatID)
-    {
-        mYcbcrConversionDesc.update(rendererVk, externalFormat, conversionModel, colorRange,
-                                    xChromaOffset, yChromaOffset, chromaFilter, components,
-                                    intendedFormatID);
-    }
+
+    static YcbcrConversionDesc deriveConversionDesc(Context *context,
+                                                    angle::FormatID actualFormatID,
+                                                    angle::FormatID intendedFormatID);
 
     // Used by framebuffer and render pass functions to decide loadOps and invalidate/un-invalidate
     // render target contents.
@@ -2841,6 +2844,9 @@ class ImageHelper final : public Resource, public angle::Subject
     RenderPassUsageFlags mRenderPassUsageFlags;
     // The QueueSerial that associated with the last barrier.
     QueueSerial mBarrierQueueSerial;
+
+    // Whether ANGLE currently has ownership of this resource or it's released to external.
+    bool mIsReleasedToExternal;
 
     // For imported images
     YcbcrConversionDesc mYcbcrConversionDesc;

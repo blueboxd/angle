@@ -439,14 +439,6 @@
             "issue": "https://anglebug.com/6574"
         },
         {
-            "name": "force_delayed_device_creation_for_testing",
-            "category": "Workarounds",
-            "description": [
-                "Artificially defer device creation to after surface is enabled for testing multi-queue scenarios"
-            ],
-            "issue": "https://anglebug.com/8300"
-        },
-        {
             "name": "supports_shader_float16",
             "category": "Features",
             "description": [
@@ -1409,19 +1401,19 @@
             "issue": "https://issuetracker.google.com/288119108"
         },
         {
+            "name": "require_cached_bit_for_staging_buffer",
+            "category": "Workarounds",
+            "description": [
+                "use cached bit as required bit instead of preferred bit for staging buffers"
+            ],
+            "issue": "https://issuetracker.google.com/315836169"
+        },
+        {
             "name": "supports_external_format_resolve",
             "category": "Features",
             "description": [
                 "VkDevice supports the VK_ANDROID_external_format_resolve extension"
             ]
-        },
-        {
-            "name": "force_AHB_layer_count_to_one",
-            "category": "Workarounds",
-            "description": [
-                "Force AHB's layerCount to 1"
-            ],
-            "issue": "http://b/239181279"
         },
         {
             "name": "disable_separate_shader_objects",
@@ -1430,6 +1422,23 @@
                 "Disable GL_EXT_separate_shader_objects and cap core ES version to 3.0"
             ],
             "issue": "https://issuetracker.google.com/309028728"
+        },
+        {
+            "name": "force_sample_usage_for_image_with_external_format",
+            "category": "AppWorkarounds",
+            "description": [
+                "Force enable VK_IMAGE_USAGE_SAMPLED_BIT usage for images with external format"
+            ],
+            "issue": "https://issuetracker.google.com/155487768"
+        },
+        {
+            "name": "avoid_OpSelect_with_mismatching_RelaxedPrecision",
+            "category": "Workarounds",
+            "description": [
+                "On some drivers, the OpSelect SPIR-V instruction with arguments with mismatching ",
+                "RelaxedPrecision decoration causes a crash"
+            ],
+            "issue": "http://anglebug.com/8503"
         }
     ]
 }

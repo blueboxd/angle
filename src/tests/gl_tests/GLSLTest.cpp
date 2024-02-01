@@ -9094,6 +9094,45 @@ void main()
     EXPECT_NE(compileResult, 0);
 }
 
+// Test that packing of excessive 3-column variables does not overflow the count of 3-column
+// variables in VariablePacker
+TEST_P(WebGL2GLSLTest, ExcessiveMat3UniformPacking)
+{
+    std::ostringstream srcStream;
+
+    srcStream << "#version 300 es\n";
+    srcStream << "precision mediump float;\n";
+    srcStream << "out vec4 finalColor;\n";
+    srcStream << "in vec4 color;\n";
+    srcStream << "uniform mat4 r[254];\n";
+
+    srcStream << "uniform mat3 ";
+    constexpr size_t kNumUniforms = 10000;
+    for (size_t i = 0; i < kNumUniforms; ++i)
+    {
+        if (i > 0)
+        {
+            srcStream << ", ";
+        }
+        srcStream << "m3a_" << i << "[256]";
+    }
+    srcStream << ";\n";
+
+    srcStream << "void main(void) { finalColor = color; }\n";
+    std::string src = std::move(srcStream).str();
+
+    GLuint shader = glCreateShader(GL_VERTEX_SHADER);
+
+    const char *sourceArray[1] = {src.c_str()};
+    GLint lengths[1]           = {static_cast<GLint>(src.length())};
+    glShaderSource(shader, 1, sourceArray, lengths);
+    glCompileShader(shader);
+
+    GLint compileResult;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compileResult);
+    EXPECT_EQ(compileResult, 0);
+}
+
 // Test that a varying with a flat qualifier that is used as an operand of a folded ternary operator
 // is handled correctly.
 TEST_P(GLSLTest_ES3, FlatVaryingUsedInFoldedTernary)
@@ -16080,6 +16119,55 @@ void main()
     EXPECT_NE(compileResult, 0);
 }
 
+// Test robustness of out-of-bounds lod in texelFetch
+TEST_P(WebGL2GLSLTest, TexelFetchLodOutOfBounds)
+{
+    constexpr char kVS[] = R"(#version 300 es
+in vec4 vertexPosition;
+void main() {
+    gl_Position = vertexPosition;
+})";
+
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform highp sampler2DArray textureArray;
+uniform int textureLod;
+out vec4 fragColor;
+void main() {
+    fragColor = texelFetch(textureArray, ivec3(gl_FragCoord.xy, 0), textureLod);
+})";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glUseProgram(program);
+    const GLint lodLoc = glGetUniformLocation(program, "textureLod");
+    EXPECT_NE(lodLoc, -1);
+    const GLint textureLoc = glGetUniformLocation(program, "textureArray");
+    EXPECT_NE(textureLoc, -1);
+
+    const GLint attribLocation = glGetAttribLocation(program, "vertexPosition");
+    GLBuffer buffer;
+    glBindBuffer(GL_ARRAY_BUFFER, buffer);
+    constexpr float vertices[12] = {
+        -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1,
+    };
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(attribLocation);
+    glVertexAttribPointer(attribLocation, 2, GL_FLOAT, false, 0, 0);
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8, 16, 16, 3);
+    glUniform1i(textureLoc, 0);
+
+    // Test LOD too large
+    glUniform1i(lodLoc, 0x7FFF);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    // Test LOD negative
+    glUniform1i(lodLoc, -1);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+
 // Test that framebuffer fetch transforms gl_LastFragData in the presence of gl_FragCoord without
 // failing validation (adapted from a Chromium test, see anglebug.com/6951)
 TEST_P(GLSLTest, FramebufferFetchWithLastFragData)
@@ -18450,19 +18538,189 @@ void main() {
     EXPECT_EQ(0u, shader);
 }
 
+// Regression test for const globals losing const qualifiers during MSL
+// translation and exceeding available temporary registers on Apple GPUs.
+TEST_P(GLSLTest_ES3, LargeConstGlobalArraysOfStructs)
+{
+    const int n = 128;
+    std::stringstream fragmentShader;
+    fragmentShader << "#version 300 es\n"
+                   << "precision mediump float;\n"
+                   << "uniform mediump int zero;\n"
+                   << "out vec4 color;\n"
+                   << "struct S { vec3 A; vec3 B; float C; };\n";
+    for (int i = 0; i < 3; ++i)
+    {
+        fragmentShader << "const S s" << i << "[" << n << "] = S[" << n << "](\n";
+        for (int j = 0; j < n; ++j)
+        {
+            fragmentShader << "  S(vec3(0., 1., 0.), vec3(" << j << "), 0.)"
+                           << (j != n - 1 ? ",\n" : "\n");
+        }
+        fragmentShader << ");\n";
+    }
+    // To ensure that the array is not rescoped, it must be accessed from two functions.
+    // To ensure that the array is not optimized out, it must be accessed with a dynamic index.
+    fragmentShader << "vec4 foo() {\n"
+                   << "  return vec4(s0[zero].A * s1[zero].A * s2[zero].A, 1.0);\n"
+                   << "}\n"
+                   << "void main() {\n"
+                   << "  color = foo() * vec4(s0[zero].A * s1[zero].A * s2[zero].A, 1.0);\n"
+                   << "}\n";
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), fragmentShader.str().c_str());
+
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that framebuffer fetch emulation does not add a user-visible uniform.
+TEST_P(GLSLTest, FramebufferFetchDoesNotAddUniforms)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_shader_framebuffer_fetch"));
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_draw_buffers"));
+
+    static constexpr char kFS[] = R"(#version 100
+#extension GL_EXT_shader_framebuffer_fetch : require
+#extension GL_EXT_draw_buffers : require
+uniform highp vec4 u_color;
+
+void main (void)
+{
+    gl_FragData[0] = gl_LastFragData[0] + u_color;
+    gl_FragData[1] = gl_LastFragData[1] + u_color;
+    gl_FragData[2] = gl_LastFragData[2] + u_color;
+    gl_FragData[3] = gl_LastFragData[3] + u_color;
+})";
+
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFS);
+    glUseProgram(program);
+
+    GLint activeUniforms = 0, uniformsMaxLength = 0;
+    glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &activeUniforms);
+    glGetProgramiv(program, GL_ACTIVE_UNIFORM_MAX_LENGTH, &uniformsMaxLength);
+
+    // There should be only one active uniform
+    EXPECT_EQ(activeUniforms, 1);
+
+    // And that is u_color
+    GLsizei nameLen = uniformsMaxLength;
+    std::vector<char> name(uniformsMaxLength);
+
+    GLint size;
+    GLenum type;
+
+    glGetActiveUniform(program, 0, uniformsMaxLength, &nameLen, &size, &type, name.data());
+    EXPECT_EQ(std::string(name.data()), "u_color");
+    EXPECT_EQ(size, 1);
+    EXPECT_EQ(type, static_cast<GLenum>(GL_FLOAT_VEC4));
+}
+
+// Test that framebuffer fetch emulation does not add a user-visible uniform.
+TEST_P(GLSLTest_ES31, FramebufferFetchDoesNotAddUniforms)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_shader_framebuffer_fetch"));
+
+    static constexpr char kFS[] = R"(#version 310 es
+#extension GL_EXT_shader_framebuffer_fetch : require
+layout(location = 0) inout highp vec4 o_color;
+
+layout(std140, binding = 0) buffer outBlock {
+    highp vec4 data[256];
+};
+
+uniform highp vec4 u_color;
+void main (void)
+{
+    uint index = uint(gl_FragCoord.y) * 16u + uint(gl_FragCoord.x);
+    data[index] = o_color;
+    o_color += u_color;
+})";
+
+    ANGLE_GL_PROGRAM(program, essl31_shaders::vs::Simple(), kFS);
+    glUseProgram(program);
+
+    GLint activeUniforms = 0, uniformsMaxLength = 0;
+    glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &activeUniforms);
+    glGetProgramiv(program, GL_ACTIVE_UNIFORM_MAX_LENGTH, &uniformsMaxLength);
+
+    // There should be only one active uniform
+    EXPECT_EQ(activeUniforms, 1);
+
+    // And that is u_color
+    GLsizei nameLen = uniformsMaxLength;
+    std::vector<char> name(uniformsMaxLength);
+
+    GLint size;
+    GLenum type;
+
+    glGetActiveUniform(program, 0, uniformsMaxLength, &nameLen, &size, &type, name.data());
+    EXPECT_EQ(std::string(name.data()), "u_color");
+    EXPECT_EQ(size, 1);
+    EXPECT_EQ(type, static_cast<GLenum>(GL_FLOAT_VEC4));
+}
+
+// Test that advanced blend emulation does not add a user-visible uniform.
+TEST_P(GLSLTest_ES31, AdvancedBlendEquationsDoesNotAddUniforms)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_KHR_blend_equation_advanced"));
+
+    static constexpr char kFS[] = R"(#version 310 es
+#extension GL_KHR_blend_equation_advanced : require
+
+layout (blend_support_multiply) out;
+
+out highp vec4 o_color;
+
+layout(std140, binding = 0) buffer outBlock {
+    highp vec4 data[256];
+};
+
+uniform highp vec4 u_color;
+void main (void)
+{
+    o_color = u_color;
+})";
+
+    ANGLE_GL_PROGRAM(program, essl31_shaders::vs::Simple(), kFS);
+    glUseProgram(program);
+
+    GLint activeUniforms = 0, uniformsMaxLength = 0;
+    glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &activeUniforms);
+    glGetProgramiv(program, GL_ACTIVE_UNIFORM_MAX_LENGTH, &uniformsMaxLength);
+
+    // There should be only one active uniform
+    EXPECT_EQ(activeUniforms, 1);
+
+    // And that is u_color
+    GLsizei nameLen = uniformsMaxLength;
+    std::vector<char> name(uniformsMaxLength);
+
+    GLint size;
+    GLenum type;
+
+    glGetActiveUniform(program, 0, uniformsMaxLength, &nameLen, &size, &type, name.data());
+    EXPECT_EQ(std::string(name.data()), "u_color");
+    EXPECT_EQ(size, 1);
+    EXPECT_EQ(type, static_cast<GLenum>(GL_FLOAT_VEC4));
+}
+
 }  // anonymous namespace
 
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
     GLSLTest,
     ES3_OPENGL().enable(Feature::ScalarizeVecAndMatConstructorArgs),
-    ES3_OPENGLES().enable(Feature::ScalarizeVecAndMatConstructorArgs));
+    ES3_OPENGLES().enable(Feature::ScalarizeVecAndMatConstructorArgs),
+    ES3_VULKAN().enable(Feature::AvoidOpSelectWithMismatchingRelaxedPrecision));
 
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3(GLSLTestNoValidation);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLTest_ES3);
-ANGLE_INSTANTIATE_TEST_ES3_AND(GLSLTest_ES3,
-                               ES3_OPENGL().enable(Feature::ScalarizeVecAndMatConstructorArgs),
-                               ES3_OPENGLES().enable(Feature::ScalarizeVecAndMatConstructorArgs));
+ANGLE_INSTANTIATE_TEST_ES3_AND(
+    GLSLTest_ES3,
+    ES3_OPENGL().enable(Feature::ScalarizeVecAndMatConstructorArgs),
+    ES3_OPENGLES().enable(Feature::ScalarizeVecAndMatConstructorArgs),
+    ES3_VULKAN().enable(Feature::AvoidOpSelectWithMismatchingRelaxedPrecision));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLTestLoops);
 ANGLE_INSTANTIATE_TEST_ES3(GLSLTestLoops);

@@ -928,6 +928,62 @@ TEST_P(VertexAttributeTest, UnsignedPacked1010102ExtensionNormalized)
     };
 }
 
+// Test that mixing array and current vertex attribute values works with the same matrix input
+TEST_P(VertexAttributeTest, MixedMatrixSources)
+{
+    constexpr char kVS[] = R"(
+attribute vec4 a_position;
+attribute mat4 a_matrix;
+varying vec4 v_color;
+void main() {
+    v_color = vec4(0.5, 0.25, 0.125, 0.0625) * a_matrix;
+    gl_Position = a_position;
+})";
+
+    constexpr char kFS[] = R"(
+precision mediump float;
+varying vec4 v_color;
+void main() {
+    gl_FragColor = v_color;
+})";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glBindAttribLocation(program, 0, "a_position");
+    glBindAttribLocation(program, 1, "a_matrix");
+    glLinkProgram(program);
+    glUseProgram(program);
+    ASSERT_GL_NO_ERROR();
+
+    GLBuffer buffer;
+    for (size_t i = 0; i < 4; ++i)
+    {
+        // Setup current attributes for all columns except one
+        for (size_t col = 0; col < 4; ++col)
+        {
+            GLfloat v[4] = {0.0, 0.0, 0.0, 0.0};
+            v[col]       = col == i ? 0.0 : 1.0;
+            glVertexAttrib4fv(1 + col, v);
+            glDisableVertexAttribArray(1 + col);
+        }
+
+        // Setup vertex array data for the i-th column
+        GLfloat data[16]{};
+        data[0 * 4 + i] = 1.0;
+        data[1 * 4 + i] = 1.0;
+        data[2 * 4 + i] = 1.0;
+        data[3 * 4 + i] = 1.0;
+        glBindBuffer(GL_ARRAY_BUFFER, buffer);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(data), data, GL_STATIC_DRAW);
+        glVertexAttribPointer(1 + i, 4, GL_FLOAT, GL_FALSE, 0, reinterpret_cast<void *>(0));
+        glEnableVertexAttribArray(1 + i);
+        ASSERT_GL_NO_ERROR();
+
+        glClear(GL_COLOR_BUFFER_BIT);
+        drawIndexedQuad(program, "a_position", 0.0f, 1.0f, true);
+        EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(128, 64, 32, 16), 1);
+    }
+}
+
 class VertexAttributeTestES3 : public VertexAttributeTest
 {
   protected:
@@ -2408,10 +2464,10 @@ void main() {
         glDrawArraysInstanced(GL_TRIANGLES, 0, 6, kInstanceCount);
 
         EXPECT_GL_NO_ERROR();
-        EXPECT_PIXEL_COLOR_EQ(0, getWindowHeight() / 2, GLColor::red);
-        EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2, getWindowHeight() / 2, GLColor::green);
-        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
-        EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2, 0, GLColor::yellow);
+        EXPECT_PIXEL_COLOR_EQ(0, getWindowHeight() / 2, GLColor::red) << i;
+        EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2, getWindowHeight() / 2, GLColor::green) << i;
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue) << i;
+        EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2, 0, GLColor::yellow) << i;
 
         glBindVertexArray(vao[1]);
         glUseProgram(computeProgram.get());
@@ -2422,11 +2478,12 @@ void main() {
         glDrawArraysInstanced(GL_TRIANGLES, 0, 6, kInstanceCount);
 
         EXPECT_GL_NO_ERROR();
-        EXPECT_PIXEL_COLOR_EQ(0, getWindowHeight() / 2, GLColor::yellow);
-        EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2, getWindowHeight() / 2, GLColor::blue);
-        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
-        EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2, 0, GLColor::red);
+        EXPECT_PIXEL_COLOR_EQ(0, getWindowHeight() / 2, GLColor::yellow) << i;
+        EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2, getWindowHeight() / 2, GLColor::blue) << i;
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green) << i;
+        EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2, 0, GLColor::red) << i;
     }
+    ASSERT_GL_NO_ERROR();
 }
 
 TEST_P(VertexAttributeTestES31, UseComputeShaderToUpdateVertexBuffer)

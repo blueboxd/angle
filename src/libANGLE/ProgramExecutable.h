@@ -232,6 +232,9 @@ class ProgramPipelineState;
 class ProgramExecutable;
 using SharedProgramExecutable = std::shared_ptr<ProgramExecutable>;
 
+using ProgramPipelineUniformBlockIndexMap =
+    angle::FastMap<uint32_t, IMPLEMENTATION_MAX_COMBINED_SHADER_UNIFORM_BUFFERS>;
+
 class ProgramExecutable final : public angle::Subject
 {
   public:
@@ -337,7 +340,7 @@ class ProgramExecutable final : public angle::Subject
     {
         return !getLinkedTransformFeedbackVaryings().empty();
     }
-    bool usesFramebufferFetch() const { return (mPod.fragmentInoutRange.length() > 0); }
+    bool usesFramebufferFetch() const { return mPod.fragmentInoutIndices.any(); }
 
     // Count the number of uniform and storage buffer declarations, counting arrays as one.
     size_t getTransformFeedbackBufferCount() const { return mTransformFeedbackStrides.size(); }
@@ -357,10 +360,6 @@ class ProgramExecutable final : public angle::Subject
     const std::vector<std::string> &getUniformMappedNames() const { return mUniformMappedNames; }
     const std::vector<InterfaceBlock> &getUniformBlocks() const { return mUniformBlocks; }
     const std::vector<VariableLocation> &getUniformLocations() const { return mUniformLocations; }
-    const UniformBlockBindingMask &getActiveUniformBlockBindings() const
-    {
-        return mPod.activeUniformBlockBindings;
-    }
     const std::vector<SamplerBinding> &getSamplerBindings() const { return mSamplerBindings; }
     const std::vector<GLuint> &getSamplerBoundTextureUnits() const
     {
@@ -372,7 +371,7 @@ class ProgramExecutable final : public angle::Subject
     const RangeUI &getSamplerUniformRange() const { return mPod.samplerUniformRange; }
     const RangeUI &getImageUniformRange() const { return mPod.imageUniformRange; }
     const RangeUI &getAtomicCounterUniformRange() const { return mPod.atomicCounterUniformRange; }
-    const RangeUI &getFragmentInoutRange() const { return mPod.fragmentInoutRange; }
+    DrawBufferMask getFragmentInoutIndices() const { return mPod.fragmentInoutIndices; }
     bool hasClipDistance() const { return mPod.hasClipDistance; }
     bool hasDiscard() const { return mPod.hasDiscard; }
     bool enablesPerSampleShading() const { return mPod.enablesPerSampleShading; }
@@ -386,15 +385,29 @@ class ProgramExecutable final : public angle::Subject
     {
         return mPod.computeShaderLocalSize;
     }
+    void remapUniformBlockBinding(UniformBlockIndex uniformBlockIndex, GLuint uniformBlockBinding);
     GLuint getUniformBlockBinding(size_t uniformBlockIndex) const
     {
         ASSERT(uniformBlockIndex < mUniformBlocks.size());
-        return mUniformBlocks[uniformBlockIndex].pod.binding;
+
+        // Unlike SSBOs and atomic counter buffers, GLES allows UBOs bindings to be remapped.  Note
+        // that desktop GL allows SSBO bindings to also be remapped, but that's not allowed in GLES.
+        //
+        // It's therefore important to never directly reference block.pod.inShaderBinding unless the
+        // specific shader-specified binding is required.
+        return mUniformBlockIndexToBufferBinding[uniformBlockIndex];
     }
     GLuint getShaderStorageBlockBinding(size_t blockIndex) const
     {
         ASSERT(blockIndex < mShaderStorageBlocks.size());
-        return mShaderStorageBlocks[blockIndex].pod.binding;
+        // The buffer binding for SSBOs is the one specified in the shader
+        return mShaderStorageBlocks[blockIndex].pod.inShaderBinding;
+    }
+    GLuint getAtomicCounterBufferBinding(size_t blockIndex) const
+    {
+        ASSERT(blockIndex < mAtomicCounterBuffers.size());
+        // The buffer binding for atomic counter buffers is the one specified in the shader
+        return mAtomicCounterBuffers[blockIndex].pod.inShaderBinding;
     }
     const InterfaceBlock &getUniformBlockByIndex(size_t index) const
     {
@@ -623,7 +636,10 @@ class ProgramExecutable final : public angle::Subject
                       std::vector<UnusedUniform> *unusedUniforms);
 
     void copyInputsFromProgram(const ProgramExecutable &executable);
-    void copyShaderBuffersFromProgram(const ProgramExecutable &executable, ShaderType shaderType);
+    void copyUniformBuffersFromProgram(const ProgramExecutable &executable,
+                                       ShaderType shaderType,
+                                       ProgramPipelineUniformBlockIndexMap *ppoUniformBlockMap);
+    void copyStorageBuffersFromProgram(const ProgramExecutable &executable, ShaderType shaderType);
     void clearSamplerBindings();
     void copySamplerBindingsFromProgram(const ProgramExecutable &executable);
     void copyImageBindingsFromProgram(const ProgramExecutable &executable);
@@ -696,7 +712,7 @@ class ProgramExecutable final : public angle::Subject
         DIRTY_BIT_COUNT = DIRTY_BIT_UNIFORM_BLOCK_BINDING_MAX,
     };
     static_assert(DIRTY_BIT_UNIFORM_BLOCK_BINDING_0 == 0,
-                  "UniformBlockBindingMask must match DirtyBits because UniformBlockBindingMask is "
+                  "ProgramUniformBlockMask must match DirtyBits because ProgramUniformBlockMask is "
                   "used directly to set dirty bits.");
 
     using DirtyBits = angle::BitSet<DIRTY_BIT_COUNT>;
@@ -704,6 +720,15 @@ class ProgramExecutable final : public angle::Subject
     ANGLE_INLINE bool hasAnyDirtyBit() const { return mDirtyBits.any(); }
 
     DirtyBits getAndResetDirtyBits() const;
+    void onUniformBufferStateChange(size_t uniformBufferIndex)
+    {
+        mDirtyBits |= mUniformBufferBindingToUniformBlocks[uniformBufferIndex];
+    }
+
+    const ProgramUniformBlockArray<GLuint> &getUniformBlockIndexToBufferBindingForCapture() const
+    {
+        return mUniformBlockIndexToBufferBinding;
+    }
 
   private:
     friend class Program;
@@ -755,6 +780,7 @@ class ProgramExecutable final : public angle::Subject
     GLuint getSamplerUniformBinding(const VariableLocation &uniformLocation) const;
     GLuint getImageUniformBinding(const VariableLocation &uniformLocation) const;
 
+    void initInterfaceBlockBindings();
     void setUniformValuesFromBindingQualifiers();
 
     // Both these function update the cached uniform values and return a modified "count"
@@ -842,12 +868,14 @@ class ProgramExecutable final : public angle::Subject
         RangeUI samplerUniformRange;
         RangeUI imageUniformRange;
         RangeUI atomicCounterUniformRange;
-        RangeUI fragmentInoutRange;
+
+        // 1 byte.  Bitset of which input attachments have been declared
+        DrawBufferMask fragmentInoutIndices;
 
         // GL_EXT_geometry_shader.
+        uint8_t pad0;
         PrimitiveMode geometryShaderInputPrimitiveType;
         PrimitiveMode geometryShaderOutputPrimitiveType;
-        uint8_t pad0, pad1;
         int32_t geometryShaderInvocations;
         int32_t geometryShaderMaxVertices;
         GLenum transformFeedbackBufferMode;
@@ -871,8 +899,6 @@ class ProgramExecutable final : public angle::Subject
         // 4 bytes
         rx::SpecConstUsageBits specConstUsageBits;
 
-        // 8 bytes. For faster iteration on the blocks currently being bound.
-        UniformBlockBindingMask activeUniformBlockBindings;
         // 24 bytes
         ShaderMap<int> linkedShaderVersions;
     } mPod;
@@ -915,8 +941,7 @@ class ProgramExecutable final : public angle::Subject
     //  2. Sampler uniforms
     //  3. Image uniforms
     //  4. Atomic counter uniforms
-    //  5. Subpass Input uniforms (Only for Vulkan)
-    //  6. Uniform block uniforms
+    //  5. Uniform block uniforms
     // This makes opaque uniform validation easier, since we don't need a separate list.
     // For generating the entries and naming them we follow the spec: GLES 3.1 November 2016 section
     // 7.3.1.1 Naming Active Resources. There's a separate entry for each struct member and each
@@ -951,6 +976,21 @@ class ProgramExecutable final : public angle::Subject
     // need to reset them to zero if using non base vertex or base instance draw calls.
     GLint mCachedBaseVertex;
     GLuint mCachedBaseInstance;
+
+    // GLES allows uniform block indices in the program to be remapped to arbitrary buffer bindings
+    // through calls to glUniformBlockBinding.  (Desktop GL also includes
+    // glShaderStorageBlockBinding, which does not exist in GLES).
+    // This is not a part of the link results, and must be reset on glProgramBinary, so it's not
+    // serialized.
+    // A map from the program uniform block index to the buffer binding it is mapped to.
+    ProgramUniformBlockArray<GLuint> mUniformBlockIndexToBufferBinding;
+    // The reverse of the above map, i.e. from buffer bindings to the uniform blocks that are mapped
+    // to it.  For example, if the program's uniform blocks 1, 3 and 4 are mapped to buffer binding
+    // 2, then mUniformBufferBindingToUniformBlocks[2] will be {1, 3, 4}.
+    //
+    // This is used to efficiently mark uniform blocks dirty when a buffer bound to a binding has
+    // been modified.
+    UniformBufferBindingArray<ProgramUniformBlockMask> mUniformBufferBindingToUniformBlocks;
 
     // Cache for sampler validation
     mutable Optional<bool> mCachedValidateSamplersResult;
