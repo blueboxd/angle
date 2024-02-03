@@ -52,6 +52,7 @@
 #include "libANGLE/queryutils.h"
 #include "libANGLE/renderer/DisplayImpl.h"
 #include "libANGLE/renderer/Format.h"
+#include "libANGLE/trace.h"
 #include "libANGLE/validationES.h"
 
 #if defined(ANGLE_PLATFORM_APPLE)
@@ -1062,7 +1063,7 @@ GLuint Context::createShaderProgramv(ShaderType type, GLsizei count, const GLcha
         Shader *shaderObject = getShaderNoResolveCompile(shaderID);
         ASSERT(shaderObject);
         shaderObject->setSource(this, count, strings, nullptr);
-        shaderObject->compile(this);
+        shaderObject->compile(this, angle::JobResultExpectancy::Immediate);
         const ShaderProgramID programID = PackParam<ShaderProgramID>(createProgram());
         if (programID.value)
         {
@@ -1077,11 +1078,14 @@ GLuint Context::createShaderProgramv(ShaderType type, GLsizei count, const GLcha
                 // As per Khronos issue 2261:
                 // https://gitlab.khronos.org/Tracker/vk-gl-cts/issues/2261
                 // We must wait to mark the program separable until it's successfully compiled.
-                programObject->setSeparable(true);
+                programObject->setSeparable(this, true);
 
                 programObject->attachShader(this, shaderObject);
 
-                if (programObject->link(this) != angle::Result::Continue)
+                // Note: the result expectancy of this link could be turned to Future if
+                // |detachShader| below is made not to resolve the link.
+                if (programObject->link(this, angle::JobResultExpectancy::Immediate) !=
+                    angle::Result::Continue)
                 {
                     deleteShader(shaderID);
                     deleteProgram(programID);
@@ -2934,7 +2938,7 @@ void Context::bindUniformLocation(ShaderProgramID program,
     Program *programObject = getProgramResolveLink(program);
     ASSERT(programObject);
 
-    programObject->bindUniformLocation(location, name);
+    programObject->bindUniformLocation(this, location, name);
 }
 
 GLuint Context::getProgramResourceIndex(ShaderProgramID program,
@@ -3336,7 +3340,7 @@ void Context::getSamplerParameterfvRobust(SamplerID sampler,
 void Context::programParameteri(ShaderProgramID program, GLenum pname, GLint value)
 {
     gl::Program *programObject = getProgramResolveLink(program);
-    SetProgramParameteri(programObject, pname, value);
+    SetProgramParameteri(this, programObject, pname, value);
 }
 
 void Context::initRendererString()
@@ -3916,7 +3920,6 @@ void Context::initCaps()
         mSupportedExtensions.textureCompressionRgtcEXT                       = false;
         mSupportedExtensions.textureCompressionS3tcSrgbEXT                   = false;
         mSupportedExtensions.textureCompressionAstcSliced3dKHR               = false;
-        mSupportedExtensions.textureFilteringHintCHROMIUM                    = false;
 
         caps->compressedTextureFormats.clear();
     }
@@ -6119,7 +6122,7 @@ void Context::bindAttribLocation(ShaderProgramID program, GLuint index, const GL
     // Ideally we could share the program query with the validation layer if possible.
     Program *programObject = getProgramResolveLink(program);
     ASSERT(programObject);
-    programObject->bindAttributeLocation(index, name);
+    programObject->bindAttributeLocation(this, index, name);
 }
 
 void Context::bindBufferBase(BufferBinding target, GLuint index, BufferID buffer)
@@ -6719,7 +6722,7 @@ void Context::compileShader(ShaderProgramID shader)
     {
         return;
     }
-    shaderObject->compile(this);
+    shaderObject->compile(this, angle::JobResultExpectancy::Future);
 }
 
 void Context::deleteBuffers(GLsizei n, const BufferID *buffers)
@@ -7191,7 +7194,7 @@ void Context::linkProgram(ShaderProgramID program)
 {
     Program *programObject = getProgramNoResolveLink(program);
     ASSERT(programObject);
-    ANGLE_CONTEXT_TRY(programObject->link(this));
+    ANGLE_CONTEXT_TRY(programObject->link(this, angle::JobResultExpectancy::Future));
 }
 
 void Context::releaseShaderCompiler()
@@ -7216,8 +7219,8 @@ void Context::bindFragDataLocationIndexed(ShaderProgramID program,
                                           const char *name)
 {
     Program *programObject = getProgramNoResolveLink(program);
-    programObject->bindFragmentOutputLocation(colorNumber, name);
-    programObject->bindFragmentOutputIndex(index, name);
+    programObject->bindFragmentOutputLocation(this, colorNumber, name);
+    programObject->bindFragmentOutputIndex(this, index, name);
 }
 
 void Context::bindFragDataLocation(ShaderProgramID program, GLuint colorNumber, const char *name)
@@ -7666,7 +7669,7 @@ void Context::transformFeedbackVaryings(ShaderProgramID program,
 {
     Program *programObject = getProgramResolveLink(program);
     ASSERT(programObject);
-    programObject->setTransformFeedbackVaryings(count, varyings, bufferMode);
+    programObject->setTransformFeedbackVaryings(this, count, varyings, bufferMode);
 }
 
 void Context::getTransformFeedbackVarying(ShaderProgramID program,
@@ -9245,6 +9248,46 @@ std::shared_ptr<angle::WorkerThreadPool> Context::getShaderCompileThreadPool() c
         return mDisplay->getMultiThreadPool();
     }
     return mDisplay->getSingleThreadPool();
+}
+
+std::shared_ptr<angle::WorkerThreadPool> Context::getLinkSubTaskThreadPool() const
+{
+    return getFrontendFeatures().alwaysRunLinkSubJobsThreaded.enabled
+               ? getWorkerThreadPool()
+               : getShaderCompileThreadPool();
+}
+
+std::shared_ptr<angle::WaitableEvent> Context::postCompileLinkTask(
+    const std::shared_ptr<angle::Closure> &task,
+    angle::JobThreadSafety safety,
+    angle::JobResultExpectancy resultExpectancy) const
+{
+    // If the compile/link job is not thread safe, use the single-thread pool.  Otherwise, the pool
+    // that is configured by the application (through GL_KHR_parallel_shader_compile) is used.
+    const bool isThreadSafe = safety == angle::JobThreadSafety::Safe;
+    std::shared_ptr<angle::WorkerThreadPool> workerPool =
+        isThreadSafe ? getShaderCompileThreadPool() : getSingleThreadPool();
+
+    // If the job is thread-safe, but it's still not going to be threaded, then it's performed as an
+    // unlocked tail call to allow other threads to proceed.  This is only possible if the results
+    // of the call are not immediately needed in the same entry point call.
+    if (isThreadSafe && !workerPool->isAsync() &&
+        resultExpectancy == angle::JobResultExpectancy::Future &&
+        !getShareGroup()->getFrameCaptureShared()->enabled())
+    {
+        std::shared_ptr<angle::AsyncWaitableEvent> event =
+            std::make_shared<angle::AsyncWaitableEvent>();
+        auto unlockedTask = [task, event](void *resultOut) {
+            ANGLE_TRACE_EVENT0("gpu.angle", "Compile/Link (unlocked)");
+            (*task)();
+            event->markAsReady();
+        };
+        egl::Display::GetCurrentThreadUnlockedTailCall()->add(unlockedTask);
+        return event;
+    }
+
+    // Otherwise, just schedule the task on the pool
+    return workerPool->postWorkerTask(task);
 }
 
 std::shared_ptr<angle::WorkerThreadPool> Context::getSingleThreadPool() const
