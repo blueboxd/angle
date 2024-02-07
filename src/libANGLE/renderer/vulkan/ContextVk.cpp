@@ -1625,7 +1625,7 @@ angle::Result ContextVk::setupDraw(const gl::Context *context,
     // Render pass must be always available at this point.
     ASSERT(hasActiveRenderPass());
 
-    ASSERT(mState.getProgramExecutable()->getAndResetDirtyBits().none());
+    ASSERT(mState.getAndResetDirtyUniformBlocks().none());
 
     return angle::Result::Continue;
 }
@@ -1859,7 +1859,7 @@ angle::Result ContextVk::setupDispatch(const gl::Context *context)
 
     mComputeDirtyBits.reset();
 
-    ASSERT(mState.getProgramExecutable()->getAndResetDirtyBits().none());
+    ASSERT(mState.getAndResetDirtyUniformBlocks().none());
 
     return angle::Result::Continue;
 }
@@ -2724,7 +2724,7 @@ angle::Result ContextVk::handleDirtyShaderResourcesImpl(CommandBufferHelperT *co
 
     // This function processes uniform buffers, so it doesn't matter which are dirty.  The following
     // makes sure the dirty bits are reset.
-    executable->getAndResetDirtyBits();
+    mState.getAndResetDirtyUniformBlocks();
 
     const bool hasImages               = executable->hasImages();
     const bool hasStorageBuffers       = executable->hasStorageBuffers();
@@ -2833,7 +2833,7 @@ angle::Result ContextVk::handleDirtyUniformBuffersImpl(CommandBufferT *commandBu
     ProgramExecutableVk *executableVk    = vk::GetImpl(executable);
     const ShaderInterfaceVariableInfoMap &variableInfoMap = executableVk->getVariableInfoMap();
 
-    gl::ProgramExecutable::DirtyBits dirtyBits = executable->getAndResetDirtyBits();
+    gl::ProgramUniformBlockMask dirtyBits = mState.getAndResetDirtyUniformBlocks();
     for (size_t blockIndex : dirtyBits)
     {
         const GLuint binding = executable->getUniformBlockBinding(blockIndex);
@@ -5860,6 +5860,9 @@ angle::Result ContextVk::syncState(const gl::Context *context,
                             {
                                 mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_FRAGMENT_SHADING_RATE);
                             }
+                            break;
+                        case gl::state::EXTENDED_DIRTY_BIT_FOVEATED_RENDERING:
+                            // Noop until addition of backend support for QCOM foveated extensions
                             break;
                         default:
                             UNREACHABLE();
