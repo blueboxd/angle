@@ -98,6 +98,8 @@ const char *GetCommandString(CommandID id)
             return "FillBuffer";
         case CommandID::ImageBarrier:
             return "ImageBarrier";
+        case CommandID::ImageWaitEvent:
+            return "ImageWaitEvent";
         case CommandID::InsertDebugUtilsLabel:
             return "InsertDebugUtilsLabel";
         case CommandID::MemoryBarrier:
@@ -154,6 +156,8 @@ const char *GetCommandString(CommandID id)
             return "SetStencilTestEnable";
         case CommandID::SetStencilWriteMask:
             return "SetStencilWriteMask";
+        case CommandID::SetVertexInput:
+            return "SetVertexInput";
         case CommandID::SetViewport:
             return "SetViewport";
         case CommandID::WaitEvents:
@@ -519,6 +523,17 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                                          0, nullptr, 0, nullptr, 1, imageMemoryBarriers);
                     break;
                 }
+                case CommandID::ImageWaitEvent:
+                {
+                    const ImageWaitEventParams *params =
+                        getParamPtr<ImageWaitEventParams>(currentCommand);
+                    const VkImageMemoryBarrier *imageMemoryBarriers =
+                        GetFirstArrayParameter<VkImageMemoryBarrier>(params);
+                    vkCmdWaitEvents(cmdBuffer, 1, &(params->event), params->srcStageMask,
+                                    params->dstStageMask, 0, nullptr, 0, nullptr, 1,
+                                    imageMemoryBarriers);
+                    break;
+                }
                 case CommandID::InsertDebugUtilsLabel:
                 {
                     const DebugUtilsLabelParams *params =
@@ -658,7 +673,8 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                     const VkExtent2D fragmentSize = {params->fragmentWidth, params->fragmentHeight};
                     const VkFragmentShadingRateCombinerOpKHR ops[2] = {
                         VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR,
-                        VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR};
+                        static_cast<VkFragmentShadingRateCombinerOpKHR>(
+                            params->vkFragmentShadingRateCombinerOp1)};
                     vkCmdSetFragmentShadingRateKHR(cmdBuffer, &fragmentSize, ops);
                     break;
                 }
@@ -749,6 +765,22 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                                              params->writeFrontMask);
                     vkCmdSetStencilWriteMask(cmdBuffer, VK_STENCIL_FACE_BACK_BIT,
                                              params->writeBackMask);
+                    break;
+                }
+                case CommandID::SetVertexInput:
+                {
+                    const SetVertexInputParams *params =
+                        getParamPtr<SetVertexInputParams>(currentCommand);
+                    const VkVertexInputBindingDescription2EXT *vertexBindingDescriptions =
+                        GetFirstArrayParameter<VkVertexInputBindingDescription2EXT>(params);
+                    const VkVertexInputAttributeDescription2EXT *vertexAttributeDescriptions =
+                        GetNextArrayParameter<VkVertexInputAttributeDescription2EXT,
+                                              VkVertexInputBindingDescription2EXT>(
+                            vertexBindingDescriptions, params->vertexBindingDescriptionCount);
+
+                    vkCmdSetVertexInputEXT(
+                        cmdBuffer, params->vertexBindingDescriptionCount, vertexBindingDescriptions,
+                        params->vertexAttributeDescriptionCount, vertexAttributeDescriptions);
                     break;
                 }
                 case CommandID::SetViewport:

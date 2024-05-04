@@ -326,7 +326,6 @@ class Framebuffer final : public angle::ObserverInterface,
                        float gainY,
                        float foveaArea);
     const FocalPoint &getFocalPoint(uint32_t layer, uint32_t focalPoint) const;
-    bool canSupportFoveatedRendering() const;
     GLuint getSupportedFoveationFeatures() const;
     bool hasAnyAttachmentChanged() const { return mAttachmentChangedAfterEnablingFoveation; }
 
@@ -522,11 +521,7 @@ class Framebuffer final : public angle::ObserverInterface,
                           bool isMultiview,
                           GLsizei samples);
 
-    void markDrawAttachmentsInitialized(bool color, bool depth, bool stencil);
-    void markBufferInitialized(GLenum bufferType, GLint bufferIndex);
-    angle::Result ensureBufferInitialized(const Context *context,
-                                          GLenum bufferType,
-                                          GLint bufferIndex);
+    void markAttachmentsInitialized(const DrawBufferMask &color, bool depth, bool stencil);
 
     // Checks that we have a partially masked clear:
     // * some color channels are masked out

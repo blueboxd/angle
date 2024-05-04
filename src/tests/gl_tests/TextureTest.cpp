@@ -2092,6 +2092,29 @@ TEST_P(Texture2DTest, ZeroSizedUploads)
     EXPECT_GL_NO_ERROR();
 }
 
+// Tests uploading a red texture and immediately reading from it.
+TEST_P(Texture2DTest, SimpleUpload)
+{
+    const GLuint width            = getWindowWidth();
+    const GLuint height           = getWindowHeight();
+    const GLuint windowPixelCount = width * height;
+    std::vector<GLColor> pixelsRed(windowPixelCount, GLColor::red);
+    glBindTexture(GL_TEXTURE_2D, mTexture2D);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 pixelsRed.data());
+    EXPECT_GL_ERROR(GL_NO_ERROR);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mTexture2D, 0);
+
+    EXPECT_GL_ERROR(GL_NO_ERROR);
+    std::vector<GLColor> output(windowPixelCount, GLColor::green);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, output.data());
+    EXPECT_EQ(pixelsRed, output);
+}
+
 // Test that interleaved superseded updates work as expected
 TEST_P(Texture2DTest, InterleavedSupersedingTextureUpdates)
 {
@@ -3890,6 +3913,188 @@ TEST_P(Texture2DTestES3, TexStorage2DCycleThroughYuvSourcesNoData)
     ASSERT_GL_NO_ERROR();
 }
 
+// Test functionality of GL_ANGLE_yuv_internal_format with multiple YUV samplers while
+// switching sampler uniform values.
+TEST_P(Texture2DTestES3, TexStorage2DMultipleYuvSamplersSwitchSamplerUniformValues)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_ANGLE_yuv_internal_format"));
+
+    // Create YUV texture
+    GLTexture yuvTexture;
+    GLubyte yuvColor[6]         = {40, 40, 40, 40, 240, 109};
+    GLubyte expectedRgbColor[4] = {0, 0, 255, 255};
+
+    // Create YUV texture
+    // Create 2 plane YCbCr 420 texture
+    GLTexture twoPlaneYuvTexture;
+    createImmutableTexture2D(twoPlaneYuvTexture, 2, 2, GL_G8_B8R8_2PLANE_420_UNORM_ANGLE,
+                             GL_G8_B8R8_2PLANE_420_UNORM_ANGLE, GL_UNSIGNED_BYTE, 1, yuvColor);
+    // Create 3 plane YCbCr 420 texture
+    GLTexture threePlaneYuvTexture;
+    createImmutableTexture2D(threePlaneYuvTexture, 2, 2, GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE,
+                             GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE, GL_UNSIGNED_BYTE, 1, nullptr);
+    // Create program with 2 samplers
+    const char *vertexShaderSource   = getVertexShaderSource();
+    const char *fragmentShaderSource = R"(#version 300 es
+precision highp float;
+uniform sampler2D tex0;
+uniform sampler2D tex1;
+uniform int texIndex;
+in vec2 texcoord;
+out vec4 fragColor;
+void main()
+{
+    vec4 color0 = texture(tex0, texcoord);
+    vec4 color1 = texture(tex1, texcoord);
+    if (texIndex == 0)
+    {
+        fragColor = color0;
+    }
+    else
+    {
+        fragColor = color1;
+    }
+})";
+    ANGLE_GL_PROGRAM(twoSamplersProgram, vertexShaderSource, fragmentShaderSource);
+    glUseProgram(twoSamplersProgram);
+    GLint tex0Location = glGetUniformLocation(twoSamplersProgram, "tex0");
+    ASSERT_NE(-1, tex0Location);
+    GLint tex1Location = glGetUniformLocation(twoSamplersProgram, "tex1");
+    ASSERT_NE(-1, tex1Location);
+    GLint texIndexLocation = glGetUniformLocation(twoSamplersProgram, "texIndex");
+    ASSERT_NE(-1, texIndexLocation);
+    // Bind 2 plane YUV source
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, twoPlaneYuvTexture);
+    ASSERT_GL_NO_ERROR();
+    // Bind 3 plane YUV source
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, threePlaneYuvTexture);
+    ASSERT_GL_NO_ERROR();
+
+    // Set sampler uniform values and draw
+    glUniform1i(tex0Location, 0);
+    glUniform1i(tex1Location, 1);
+    // Set texture index selector to the 2 plane texture unit
+    glUniform1i(texIndexLocation, 0);
+    drawQuad(twoSamplersProgram, "position", 0.5f);
+    ASSERT_GL_NO_ERROR();
+    EXPECT_PIXEL_NEAR(0, 0, expectedRgbColor[0], expectedRgbColor[1], expectedRgbColor[2],
+                      expectedRgbColor[3], 1);
+    ASSERT_GL_NO_ERROR();
+
+    // Switch sampler uniform values and draw
+    glUniform1i(tex0Location, 1);
+    glUniform1i(tex1Location, 0);
+    // Set texture index selector to the 2 plane texture unit
+    glUniform1i(texIndexLocation, 1);
+    drawQuad(twoSamplersProgram, "position", 0.5f);
+    ASSERT_GL_NO_ERROR();
+    EXPECT_PIXEL_NEAR(0, 0, expectedRgbColor[0], expectedRgbColor[1], expectedRgbColor[2],
+                      expectedRgbColor[3], 1);
+    ASSERT_GL_NO_ERROR();
+
+    // Switch back sampler uniform values and draw
+    glUniform1i(tex0Location, 0);
+    glUniform1i(tex1Location, 1);
+    // Set texture index selector to the 2 plane texture unit
+    glUniform1i(texIndexLocation, 0);
+    drawQuad(twoSamplersProgram, "position", 0.5f);
+    ASSERT_GL_NO_ERROR();
+    EXPECT_PIXEL_NEAR(0, 0, expectedRgbColor[0], expectedRgbColor[1], expectedRgbColor[2],
+                      expectedRgbColor[3], 1);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test functionality of GL_ANGLE_yuv_internal_format with multiple YUV samplers while
+// switching bound textures.
+TEST_P(Texture2DTestES3, TexStorage2DMultipleYuvSamplersSwitchBoundTextures)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_ANGLE_yuv_internal_format"));
+
+    // Create YUV texture
+    GLTexture yuvTexture;
+    GLubyte yuvColor[6]         = {40, 40, 40, 40, 240, 109};
+    GLubyte expectedRgbColor[4] = {0, 0, 255, 255};
+
+    // Create YUV texture
+    // Create 2 plane YCbCr 420 texture
+    GLTexture twoPlaneYuvTexture;
+    createImmutableTexture2D(twoPlaneYuvTexture, 2, 2, GL_G8_B8R8_2PLANE_420_UNORM_ANGLE,
+                             GL_G8_B8R8_2PLANE_420_UNORM_ANGLE, GL_UNSIGNED_BYTE, 1, yuvColor);
+    // Create 3 plane YCbCr 420 texture
+    GLTexture threePlaneYuvTexture;
+    createImmutableTexture2D(threePlaneYuvTexture, 2, 2, GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE,
+                             GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE, GL_UNSIGNED_BYTE, 1, nullptr);
+    // Create program with 2 samplers
+    const char *vertexShaderSource   = getVertexShaderSource();
+    const char *fragmentShaderSource = R"(#version 300 es
+precision highp float;
+uniform sampler2D tex0;
+uniform sampler2D tex1;
+uniform int texIndex;
+in vec2 texcoord;
+out vec4 fragColor;
+void main()
+{
+    vec4 color0 = texture(tex0, texcoord);
+    vec4 color1 = texture(tex1, texcoord);
+    if (texIndex == 0)
+    {
+        fragColor = color0;
+    }
+    else
+    {
+        fragColor = color1;
+    }
+})";
+    ANGLE_GL_PROGRAM(twoSamplersProgram, vertexShaderSource, fragmentShaderSource);
+    glUseProgram(twoSamplersProgram);
+    GLint tex0Location = glGetUniformLocation(twoSamplersProgram, "tex0");
+    ASSERT_NE(-1, tex0Location);
+    GLint tex1Location = glGetUniformLocation(twoSamplersProgram, "tex1");
+    ASSERT_NE(-1, tex1Location);
+    GLint texIndexLocation = glGetUniformLocation(twoSamplersProgram, "texIndex");
+    ASSERT_NE(-1, texIndexLocation);
+    // Set sampler uniform values
+    glUniform1i(tex0Location, 0);
+    glUniform1i(tex1Location, 1);
+
+    // Bind 2 plane YUV source
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, twoPlaneYuvTexture);
+    ASSERT_GL_NO_ERROR();
+    // Bind 3 plane YUV source
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, threePlaneYuvTexture);
+    ASSERT_GL_NO_ERROR();
+    // Set texture index selector to the 2 plane texture unit
+    glUniform1i(texIndexLocation, 0);
+    // Draw
+    drawQuad(twoSamplersProgram, "position", 0.5f);
+    ASSERT_GL_NO_ERROR();
+    EXPECT_PIXEL_NEAR(0, 0, expectedRgbColor[0], expectedRgbColor[1], expectedRgbColor[2],
+                      expectedRgbColor[3], 1);
+    ASSERT_GL_NO_ERROR();
+
+    // Bind 3 plane YUV source
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, threePlaneYuvTexture);
+    ASSERT_GL_NO_ERROR();
+    // Bind 2 plane YUV source
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, twoPlaneYuvTexture);
+    ASSERT_GL_NO_ERROR();
+    // Set texture index selector to the 2 plane texture unit
+    glUniform1i(texIndexLocation, 1);
+    // Draw
+    drawQuad(twoSamplersProgram, "position", 0.5f);
+    ASSERT_GL_NO_ERROR();
+    EXPECT_PIXEL_NEAR(0, 0, expectedRgbColor[0], expectedRgbColor[1], expectedRgbColor[2],
+                      expectedRgbColor[3], 1);
+    ASSERT_GL_NO_ERROR();
+}
+
 // Tests CopySubImage for float formats
 TEST_P(Texture2DTest, CopySubImageFloat_R_R)
 {
@@ -4514,7 +4719,7 @@ TEST_P(Texture2DTestES3, ChangeTexSizeWithTexStorage)
     // Draw with the new texture so it's created in the back end
     ANGLE_GL_PROGRAM(blueProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Blue());
     glUseProgram(blueProgram);
-    drawQuad(blueProgram.get(), std::string(essl1_shaders::PositionAttrib()), 0.0f);
+    drawQuad(blueProgram, std::string(essl1_shaders::PositionAttrib()), 0.0f);
     ASSERT_GL_NO_ERROR();
     EXPECT_PIXEL_RECT_EQ(0, 0, kSizeLarge, kSizeLarge, GLColor::blue);
 
@@ -4524,7 +4729,7 @@ TEST_P(Texture2DTestES3, ChangeTexSizeWithTexStorage)
 
     // Create a source texture/FBO to blit from
     GLTexture sourceTex;
-    glBindTexture(GL_TEXTURE_2D, sourceTex.get());
+    glBindTexture(GL_TEXTURE_2D, sourceTex);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kSizeSmall, kSizeSmall);
     ASSERT_GL_NO_ERROR();
     GLFramebuffer sourceFbo;
@@ -4534,7 +4739,7 @@ TEST_P(Texture2DTestES3, ChangeTexSizeWithTexStorage)
     // Fill the source texture with green
     ANGLE_GL_PROGRAM(greenProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
     glUseProgram(greenProgram);
-    drawQuad(greenProgram.get(), std::string(essl1_shaders::PositionAttrib()), 0.0f);
+    drawQuad(greenProgram, std::string(essl1_shaders::PositionAttrib()), 0.0f);
     ASSERT_GL_NO_ERROR();
     EXPECT_PIXEL_RECT_EQ(0, 0, kSizeSmall, kSizeSmall, GLColor::green);
 
@@ -4550,7 +4755,7 @@ TEST_P(Texture2DTestES3, ChangeTexSizeWithTexStorage)
     glBindTexture(GL_TEXTURE_2D, mTexture2D);
     ANGLE_GL_PROGRAM(texProgram, essl1_shaders::vs::Texture2D(), essl1_shaders::fs::Texture2D());
     glUseProgram(texProgram);
-    drawQuad(texProgram.get(), std::string(essl1_shaders::PositionAttrib()), 0.0f);
+    drawQuad(texProgram, std::string(essl1_shaders::PositionAttrib()), 0.0f);
     EXPECT_PIXEL_RECT_EQ(0, 0, getWindowWidth(), getWindowHeight(), GLColor::green);
 }
 
@@ -9923,7 +10128,7 @@ TEST_P(Texture2DTestES3, UnpackSkipPixelsOutOfBounds)
     ASSERT_GL_NO_ERROR();
 
     GLBuffer buf;
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buf.get());
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buf);
     std::vector<GLColor> pixelsGreen(128u * 128u, GLColor::green);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, pixelsGreen.size() * 4u, pixelsGreen.data(),
                  GL_DYNAMIC_COPY);
@@ -9974,7 +10179,7 @@ TEST_P(Texture2DTestES3, UnpackCompatibleFormatButDifferentType)
 
     // Create unpack buffer with GL_RGBA8
     GLBuffer buf;
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buf.get());
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buf);
     std::vector<GLColor> pixelsGreen(128u * 128u, GLColor::green);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, pixelsGreen.size() * 4u, pixelsGreen.data(),
                  GL_DYNAMIC_COPY);
@@ -10014,7 +10219,7 @@ TEST_P(Texture2DTestES3, UnpackOverlappingRowsFromUnpackBuffer)
     ASSERT_GL_NO_ERROR();
 
     GLBuffer buf;
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buf.get());
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buf);
     std::vector<GLColor> pixelsGreen((height - 1u) * unpackRowLength + width + unpackSkipPixels,
                                      GLColor::green);
 
@@ -10297,7 +10502,7 @@ TEST_P(Texture2DTestES3, UnsizedAlphaUnpackBuffer)
     // Pull in the color data from the unpack buffer.
     GLBuffer unpackBuffer;
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackBuffer.get());
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackBuffer);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, getWindowWidth() * getWindowHeight(), bufferData.data(),
                  GL_STATIC_DRAW);
 
@@ -10324,7 +10529,7 @@ TEST_P(Texture2DTestES3, StaleUnpackData)
 
     GLBuffer unpackBuffer;
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackBuffer.get());
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackBuffer);
     GLsizei bufferSize = pixelCount * sizeof(GLColor);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, bufferSize, pixels.data(), GL_STATIC_DRAW);
 
@@ -10381,12 +10586,12 @@ TEST_P(Texture2DTestES3, TextureBaseMaxLevelRoundingValidation)
 TEST_P(Texture3DTestES3, FormatRedefinitionBug)
 {
     GLTexture tex;
-    glBindTexture(GL_TEXTURE_3D, tex.get());
+    glBindTexture(GL_TEXTURE_3D, tex);
     glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, 1, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
     GLFramebuffer framebuffer;
-    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer.get());
-    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex.get(), 0, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0, 0);
 
     glCheckFramebufferStatus(GL_FRAMEBUFFER);
 
@@ -10411,7 +10616,7 @@ TEST_P(Texture3DTestES3, TexSubImageWithPBO)
     std::vector<uint8_t> pixelData(128 * 128 * 8 * 4, 0x1f);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, 128 * 128 * 8 * 4, pixelData.data(), GL_STATIC_DRAW);
 
-    glBindTexture(GL_TEXTURE_3D, tex.get());
+    glBindTexture(GL_TEXTURE_3D, tex);
     glTexStorage3D(GL_TEXTURE_3D, 8, GL_RGBA8, 128, 128, 8);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -10442,10 +10647,10 @@ TEST_P(Texture3DTestES3, BasicUnpackBufferOOB)
     // 2D tests
     {
         GLTexture tex;
-        glBindTexture(GL_TEXTURE_2D, tex.get());
+        glBindTexture(GL_TEXTURE_2D, tex);
 
         GLBuffer pbo;
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo.get());
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
 
         // Test OOB
         glBufferData(GL_PIXEL_UNPACK_BUFFER, sizeof(GLColor) * 2 * 2 - 1, nullptr, GL_STATIC_DRAW);
@@ -10461,10 +10666,10 @@ TEST_P(Texture3DTestES3, BasicUnpackBufferOOB)
     // 3D tests
     {
         GLTexture tex;
-        glBindTexture(GL_TEXTURE_3D, tex.get());
+        glBindTexture(GL_TEXTURE_3D, tex);
 
         GLBuffer pbo;
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo.get());
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
 
         // Test OOB
         glBufferData(GL_PIXEL_UNPACK_BUFFER, sizeof(GLColor) * 2 * 2 * 2 - 1, nullptr,
@@ -10729,7 +10934,7 @@ TEST_P(TextureCubeTestES3, CubeMapPixelUnpackBuffer)
 
     std::vector<RGBA16F> pixels(kFaceWidth * kFaceHeight, redColor);
     GLBuffer buffer;
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer.get());
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, pixels.size() * sizeof(RGBA16F), pixels.data(),
                  GL_DYNAMIC_DRAW);
     EXPECT_GL_NO_ERROR();
@@ -11195,9 +11400,6 @@ TEST_P(Texture2DTestES3Foveation, Clear)
     glFramebufferFoveationParametersQCOM(mFramebuffer, 0, 0, 0.0f, 0.0f, 8.0f, 8.0f, 0.0f);
     EXPECT_GL_NO_ERROR();
 
-    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
-    glUseProgram(program);
-
     // Clear
     glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -11213,6 +11415,43 @@ TEST_P(Texture2DTestES3Foveation, ClearThenDraw)
 
     // Switch to foveated framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer);
+
+    // Just need 1 focal point
+    GLuint providedFeatures = 0;
+    glFramebufferFoveationConfigQCOM(mFramebuffer, 1, 1, GL_FOVEATION_ENABLE_BIT_QCOM,
+                                     &providedFeatures);
+    ASSERT_NE(providedFeatures & GL_FOVEATION_ENABLE_BIT_QCOM, 0u);
+    // Set foveation parameters
+    glFramebufferFoveationParametersQCOM(mFramebuffer, 0, 0, 0.0f, 0.0f, 8.0f, 8.0f, 0.0f);
+    EXPECT_GL_NO_ERROR();
+
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
+    glUseProgram(program);
+
+    // Clear
+    glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    EXPECT_GL_NO_ERROR();
+
+    // Draw
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+    EXPECT_GL_NO_ERROR();
+
+    EXPECT_PIXEL_COLOR_EQ(0, 0, angle::GLColor::green);
+}
+
+// QCOM framebuffer foveated rendering with rendebuffer attachment + clear then draw
+TEST_P(Texture2DTestES3Foveation, RenderbufferAttachmentClearThenDraw)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_QCOM_framebuffer_foveated"));
+
+    // Switch to foveated framebuffer and attach a renderbuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer);
+    GLRenderbuffer renderbuffer;
+    glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, getWindowWidth(), getWindowHeight());
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, renderbuffer);
+    EXPECT_GL_NO_ERROR();
 
     // Just need 1 focal point
     GLuint providedFeatures = 0;
@@ -11437,6 +11676,58 @@ TEST_P(Texture2DTestES3Foveation, DrawThenUseAsBlitTarget)
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mFramebuffer);
     glBlitFramebuffer(0, 0, getWindowWidth(), getWindowHeight(), 0, 0, getWindowWidth(),
                       getWindowHeight(), GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    EXPECT_PIXEL_COLOR_EQ(0, 0, angle::GLColor::blue);
+}
+
+// QCOM framebuffer foveated rendering, reuse texture between 2 foveated framebuffers
+TEST_P(Texture2DTestES3Foveation, ReuseTextureForFoveatedDraw)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_QCOM_framebuffer_foveated"));
+
+    // Switch to foveated framebuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer);
+
+    // Just need 1 focal point
+    GLuint providedFeatures = 0;
+    glFramebufferFoveationConfigQCOM(mFramebuffer, 1, 1, GL_FOVEATION_ENABLE_BIT_QCOM,
+                                     &providedFeatures);
+    ASSERT_NE(providedFeatures & GL_FOVEATION_ENABLE_BIT_QCOM, 0u);
+    // Set foveation parameters
+    glFramebufferFoveationParametersQCOM(mFramebuffer, 0, 0, 0.0f, 0.0f, 8.0f, 8.0f, 0.0f);
+    EXPECT_GL_NO_ERROR();
+
+    ANGLE_GL_PROGRAM(greenProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
+    glUseProgram(greenProgram);
+
+    // Draw
+    drawQuad(greenProgram, essl1_shaders::PositionAttrib(), 0.5f);
+    EXPECT_GL_NO_ERROR();
+
+    // Create another framebuffer
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+
+    // Resuse texture from mFramebuffer
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           mFramebufferColorTexture, 0);
+
+    // Configure foveation parameters of the new framebuffer
+    // Just need 1 focal point
+    providedFeatures = 0;
+    glFramebufferFoveationConfigQCOM(framebuffer, 1, 1, GL_FOVEATION_ENABLE_BIT_QCOM,
+                                     &providedFeatures);
+    ASSERT_NE(providedFeatures & GL_FOVEATION_ENABLE_BIT_QCOM, 0u);
+    // Set foveation parameters
+    glFramebufferFoveationParametersQCOM(framebuffer, 0, 0, 0.0f, 0.0f, 8.0f, 8.0f, 0.0f);
+    EXPECT_GL_NO_ERROR();
+
+    ANGLE_GL_PROGRAM(blueProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Blue());
+    glUseProgram(blueProgram);
+
+    // Draw
+    drawQuad(blueProgram, essl1_shaders::PositionAttrib(), 0.5f);
+    EXPECT_GL_NO_ERROR();
 
     EXPECT_PIXEL_COLOR_EQ(0, 0, angle::GLColor::blue);
 }
@@ -12763,7 +13054,55 @@ class TextureBufferTestES31 : public ANGLETest<>
 {
   protected:
     TextureBufferTestES31() {}
+
+    void drawWithIncompleteOrZeroTexture(bool useCompleteTexture, bool useNonZeroTexture);
 };
+
+void TextureBufferTestES31::drawWithIncompleteOrZeroTexture(bool useCompleteTexture,
+                                                            bool useNonZeroTexture)
+{
+    constexpr char kSamplerBuffer[] = R"(#version 310 es
+        #extension GL_OES_texture_buffer : require
+        precision mediump float;
+        uniform highp samplerBuffer s;
+        out vec4 colorOut;
+        void main()
+        {
+            colorOut = texelFetch(s, 0);
+        })";
+
+    ANGLE_GL_PROGRAM(program, essl31_shaders::vs::Simple(), kSamplerBuffer);
+    glUseProgram(program);
+    EXPECT_GL_NO_ERROR();
+
+    // Bind as texture buffer
+    GLTexture texture;
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_BUFFER, useNonZeroTexture ? texture.get() : 0u);
+    EXPECT_GL_NO_ERROR();
+
+    if (useCompleteTexture)
+    {
+        const std::array<GLColor, 4> kData = {GLColor::blue, GLColor::blue, GLColor::blue,
+                                              GLColor::blue};
+
+        // Create buffer and initialize with data
+        GLBuffer buffer;
+        glBindBuffer(GL_TEXTURE_BUFFER, buffer);
+        glBufferData(GL_TEXTURE_BUFFER, sizeof(kData), kData.data(), GL_DYNAMIC_DRAW);
+        glTexBufferEXT(GL_TEXTURE_BUFFER, GL_RGBA8, buffer);
+        EXPECT_GL_NO_ERROR();
+    }
+
+    // Draw texture buffer
+    drawQuad(program, essl31_shaders::PositionAttrib(), 0.5);
+    EXPECT_GL_NO_ERROR();
+
+    if (useCompleteTexture)
+    {
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
+    }
+}
 
 // Test that mutating a buffer attached to a texture returns correct results in query.
 TEST_P(TextureBufferTestES31, QueryWidthAfterBufferResize)
@@ -13090,6 +13429,87 @@ TEST_P(TextureBufferTestES31, TexBufferFormatMismatch)
     }
 }
 
+// Create an integer format texture but specify a FLOAT sampler. OpenGL
+// tolerates this but it causes a Vulkan validation error.
+TEST_P(Texture2DTestES3, TexImageFormatMismatch)
+{
+    GLint textureUnit = 2;
+    GLuint genericBuffer;
+    GLubyte genericBufferMemory[1024];
+    GLuint texture;
+    GLuint sampler;
+    GLuint vertexArray;
+
+    glGenBuffers(1, &genericBuffer);
+    glBindBuffer(GL_ARRAY_BUFFER, genericBuffer);
+    glBufferData(GL_ARRAY_BUFFER, 1024, &genericBufferMemory, GL_STATIC_DRAW);
+
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16UI, 8, 8, 0, GL_RED_INTEGER, GL_UNSIGNED_SHORT,
+                 &genericBufferMemory);
+
+    const char *vertexShaderSource   = getVertexShaderSource();
+    const char *fragmentShaderSource = getFragmentShaderSource();
+    ANGLE_GL_PROGRAM(testProgram, vertexShaderSource, fragmentShaderSource);
+
+    GLint texLocation = glGetUniformLocation(testProgram, "tex");
+    glUseProgram(testProgram);
+
+    glUniform1iv(texLocation, 1, &textureUnit);
+
+    glGenSamplers(1, &sampler);
+    glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    glBindBuffer(GL_UNIFORM_BUFFER, genericBuffer);
+
+    glActiveTexture(GL_TEXTURE0 + textureUnit);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glBindSampler(textureUnit, sampler);
+
+    glGenVertexArrays(1, &vertexArray);
+    glBindVertexArray(vertexArray);
+    glBindBuffer(GL_ARRAY_BUFFER, genericBuffer);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, genericBuffer);
+    glBindVertexArray(vertexArray);
+    glDrawElementsInstanced(GL_TRIANGLES, 4, GL_UNSIGNED_SHORT, 0, 1);
+}
+
+// Checks that drawing incomplete zero texture buffer does not crash.
+TEST_P(TextureBufferTestES31, DrawIncompleteZeroTexture)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_texture_buffer"));
+
+    drawWithIncompleteOrZeroTexture(false, false);
+}
+
+// Checks that drawing incomplete non-zero texture buffer does not crash.
+TEST_P(TextureBufferTestES31, DrawIncompleteNonZeroTexture)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_texture_buffer"));
+
+    drawWithIncompleteOrZeroTexture(false, true);
+}
+
+// Checks that drawing complete zero texture buffer produces expected results.
+TEST_P(TextureBufferTestES31, DrawCompleteZeroTexture)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_texture_buffer"));
+
+    drawWithIncompleteOrZeroTexture(true, false);
+}
+
+// Checks that drawing complete non-zero texture buffer produces expected results.
+TEST_P(TextureBufferTestES31, DrawCompleteNonZeroTexture)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_texture_buffer"));
+
+    drawWithIncompleteOrZeroTexture(true, true);
+}
+
 // Test that the correct error is generated if texture buffer support used anyway when not enabled.
 TEST_P(TextureBufferTestES31, TestErrorWhenNotEnabled)
 {
@@ -13263,8 +13683,9 @@ TEST_P(CopyImageTestES31, CubeMapCopyImageSubData)
     ASSERT_GL_NO_ERROR();
 }
 
-// Verify that copies between texture layers works
-TEST_P(CopyImageTestES31, ArraySelfCopyImageSubData)
+// Verify that copies between texture layers works, including when there is a read after write in a
+// level/layer.
+TEST_P(CopyImageTestES31, ArraySelfCopyImageSubDataWithReadAfterWrite)
 {
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_copy_image"));
 
@@ -13311,6 +13732,7 @@ TEST_P(CopyImageTestES31, ArraySelfCopyImageSubData)
                           1, kWidth >> 1, kHeight >> 1, 2);
 
     // Partially copy level 1, layer 1 to level 0, layer 3
+    // Level 1/layer 1 will be read from after being written to
     glCopyImageSubDataEXT(tex, GL_TEXTURE_2D_ARRAY, 1, kWidth / 8, kHeight / 8, 1, tex,
                           GL_TEXTURE_2D_ARRAY, 0, kWidth / 4, kHeight / 4, 3, kWidth / 4,
                           kHeight / 4, 1);
@@ -13348,6 +13770,97 @@ TEST_P(CopyImageTestES31, ArraySelfCopyImageSubData)
 
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 1, 2);
     EXPECT_PIXEL_RECT_EQ(0, 0, kWidth >> 1, kHeight >> 1, GLColor::blue);
+
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 1, 3);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth >> 1, kHeight >> 1, GLColor::green);
+
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 1, 4);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth >> 1, kHeight >> 1, GLColor::blue);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Verify that copies between texture layers works, including when there is a write after read in a
+// level/layer.
+TEST_P(CopyImageTestES31, ArraySelfCopyImageSubDataWithWriteAfterRead)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_copy_image"));
+
+    // Set up a texture with multiple layers, then verify we can copy between them
+    constexpr uint32_t kWidth  = 13;
+    constexpr uint32_t kHeight = 57;
+    constexpr uint32_t kLayers = 5;
+    constexpr uint32_t kLevels = 2;
+    std::vector<GLColor> pixelsRed(kWidth * kHeight, GLColor::red);
+    std::vector<GLColor> pixelsGreen(kWidth * kHeight, GLColor::green);
+    std::vector<GLColor> pixelsBlue(kWidth * kHeight, GLColor::blue);
+
+    const GLColor *colors[3] = {
+        pixelsRed.data(),
+        pixelsGreen.data(),
+        pixelsBlue.data(),
+    };
+
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, kLevels, GL_RGBA8, kWidth, kHeight, kLayers);
+    for (uint32_t level = 0; level < kLevels; ++level)
+    {
+        for (uint32_t layer = 0; layer < kLayers; ++layer)
+        {
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, level, 0, 0, layer, kWidth >> level,
+                            kHeight >> level, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                            colors[(level + layer) % 3]);
+        }
+    }
+    ASSERT_GL_NO_ERROR();
+
+    // The texture has the following colors:
+    //              Layer 0   Layer 1   Layer 2   Layer 3   Layer 4
+    // Level  0      Red       Green     Blue      Red       Green
+    // Level  1      Green     Blue      Red       Green     Blue
+
+    // Copy level 0, layer 0 to level 0, layer 2
+    glCopyImageSubDataEXT(tex, GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, tex, GL_TEXTURE_2D_ARRAY, 0, 0, 0,
+                          2, kWidth, kHeight, 1);
+    ASSERT_GL_NO_ERROR();
+
+    // Copy level 0, layer 1 to level 0, layer 3
+    glCopyImageSubDataEXT(tex, GL_TEXTURE_2D_ARRAY, 0, 0, 0, 1, tex, GL_TEXTURE_2D_ARRAY, 0, 0, 0,
+                          3, kWidth, kHeight, 1);
+    ASSERT_GL_NO_ERROR();
+
+    // Copy level 0, layer 0 to level 0, layer 1
+    // Level 0/layer 1 will be written to from after being read from
+    glCopyImageSubDataEXT(tex, GL_TEXTURE_2D_ARRAY, 0, 0, 0, 0, tex, GL_TEXTURE_2D_ARRAY, 0, 0, 0,
+                          1, kWidth, kHeight, 1);
+    ASSERT_GL_NO_ERROR();
+
+    // Verify colors
+    GLFramebuffer FBO;
+    glBindFramebuffer(GL_FRAMEBUFFER, FBO);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0, 0);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::red);
+
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0, 1);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::red);
+
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0, 2);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::red);
+
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0, 3);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::green);
+
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0, 4);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::green);
+
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 1, 0);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth >> 1, kHeight >> 1, GLColor::green);
+
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 1, 1);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth >> 1, kHeight >> 1, GLColor::blue);
+
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 1, 2);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth >> 1, kHeight >> 1, GLColor::red);
 
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 1, 3);
     EXPECT_PIXEL_RECT_EQ(0, 0, kWidth >> 1, kHeight >> 1, GLColor::green);
@@ -13669,13 +14182,13 @@ void RGBTextureBufferTestES31::TestInt(GLuint format)
 
     glTexBufferEXT(GL_TEXTURE_BUFFER, format, buffer);
 
-    drawQuad(program.get(), "inputAttribute", 0.5f);
+    drawQuad(program, "inputAttribute", 0.5f);
     ASSERT_GL_NO_ERROR();
     EXPECT_PIXEL_COLOR_NEAR(0, 0, col, 1);
 
     glTexBufferRangeEXT(GL_TEXTURE_BUFFER, format, buffer, byteOffset, pixelSize * 2);
     ASSERT_GL_NO_ERROR();
-    drawQuad(program.get(), "inputAttribute", 0.5f);
+    drawQuad(program, "inputAttribute", 0.5f);
     EXPECT_PIXEL_COLOR_NEAR(0, 0, col2, 1);
 
     // Now update the buffer to check the converted data also gets updated.
@@ -13683,7 +14196,7 @@ void RGBTextureBufferTestES31::TestInt(GLuint format)
     GLuint texDataUpd[] = {0, 0, 0, colUpd.R, colUpd.G, colUpd.B};  // second texel(1) colUpd
     glBufferSubData(GL_TEXTURE_BUFFER, byteOffset, sizeof(texDataUpd), texDataUpd);
     ASSERT_GL_NO_ERROR();
-    drawQuad(program.get(), "inputAttribute", 0.5f);
+    drawQuad(program, "inputAttribute", 0.5f);
     EXPECT_PIXEL_COLOR_NEAR(0, 0, colUpd, 1);
 
     // Update with glMapBuffer (hits a different code path...)
@@ -13694,7 +14207,7 @@ void RGBTextureBufferTestES31::TestInt(GLuint format)
     memcpy(mappedBuffer, texDataUpd2, sizeof(texDataUpd2));
     glUnmapBuffer(GL_TEXTURE_BUFFER);
     ASSERT_GL_NO_ERROR();
-    drawQuad(program.get(), "inputAttribute", 0.5f);
+    drawQuad(program, "inputAttribute", 0.5f);
     EXPECT_PIXEL_COLOR_NEAR(0, 0, colUpd2, 1);
 }
 
@@ -13739,7 +14252,7 @@ TEST_P(RGBTextureBufferTestES31, Float)
 
     glTexBufferEXT(GL_TEXTURE_BUFFER, GL_RGB32F, buffer);
 
-    drawQuad(program.get(), "inputAttribute", 0.5f);
+    drawQuad(program, "inputAttribute", 0.5f);
     ASSERT_GL_NO_ERROR();
     EXPECT_PIXEL_COLOR_NEAR(0, 0, col, 1);
 
@@ -13751,7 +14264,7 @@ TEST_P(RGBTextureBufferTestES31, Float)
     texDataUpd[5] = colUpd.B;
     glBufferSubData(GL_TEXTURE_BUFFER, 0, sizeof(texDataUpd), texDataUpd);
     ASSERT_GL_NO_ERROR();
-    drawQuad(program.get(), "inputAttribute", 0.5f);
+    drawQuad(program, "inputAttribute", 0.5f);
     EXPECT_PIXEL_COLOR_NEAR(0, 0, colUpd, 1);
 
     // Update with glMapBuffer (hits a different code path...)
@@ -13765,7 +14278,7 @@ TEST_P(RGBTextureBufferTestES31, Float)
     memcpy(mappedBuffer, texDataUpd2, sizeof(texDataUpd2));
     glUnmapBuffer(GL_TEXTURE_BUFFER);
     ASSERT_GL_NO_ERROR();
-    drawQuad(program.get(), "inputAttribute", 0.5f);
+    drawQuad(program, "inputAttribute", 0.5f);
     EXPECT_PIXEL_COLOR_NEAR(0, 0, colUpd2, 1);
 }
 
@@ -13811,13 +14324,13 @@ TEST_P(RGBTextureBufferTestES31, SSBOWrite)
     glBufferData(GL_SHADER_STORAGE_BUFFER, kBufferSize, nullptr, GL_STATIC_DRAW);
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, buffer, 0, kBufferSize);
 
-    drawQuad(programSSBO.get(), "inputAttribute", 0.5f);
+    drawQuad(programSSBO, "inputAttribute", 0.5f);
     ASSERT_GL_NO_ERROR();
 
     glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
     glTexBufferEXT(GL_TEXTURE_BUFFER, GL_RGB32UI, buffer);
-    drawQuad(programBufferDraw.get(), "inputAttribute", 0.5f);
+    drawQuad(programBufferDraw, "inputAttribute", 0.5f);
     EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(44, 55, 66, 255), 1);
 }
 
@@ -13900,7 +14413,8 @@ void main()
 ANGLE_INSTANTIATE_TEST(Texture2DTest,
                        ANGLE_ALL_TEST_PLATFORMS_ES2,
                        ES2_EMULATE_COPY_TEX_IMAGE_VIA_SUB(),
-                       ES2_EMULATE_COPY_TEX_IMAGE());
+                       ES2_EMULATE_COPY_TEX_IMAGE(),
+                       ES2_WEBGPU());
 ANGLE_INSTANTIATE_TEST_ES2(TextureCubeTest);
 ANGLE_INSTANTIATE_TEST_ES2(Texture2DTestWithDrawScale);
 ANGLE_INSTANTIATE_TEST_ES2(Sampler2DAsFunctionParameterTest);
@@ -13917,7 +14431,8 @@ ANGLE_INSTANTIATE_TEST_ES3(Texture2DMemoryTestES3);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(Texture2DTestES3YUV);
 ANGLE_INSTANTIATE_TEST_ES3_AND(Texture2DTestES3YUV,
-                               ES3_VULKAN().enable(Feature::PreferLinearFilterForYUV));
+                               ES3_VULKAN().enable(Feature::PreferLinearFilterForYUV),
+                               ES3_VULKAN().enable(Feature::DisableProgramCaching));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(Texture2DTestES3RobustInit);
 ANGLE_INSTANTIATE_TEST_ES3(Texture2DTestES3RobustInit);

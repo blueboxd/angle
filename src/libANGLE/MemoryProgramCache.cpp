@@ -138,7 +138,7 @@ angle::Result MemoryProgramCache::getProgram(const Context *context,
             // corrupted cache might as well not have existed.
             return angle::Result::Continue;
 
-        case egl::BlobCache::GetAndDecompressResult::GetSuccess:
+        case egl::BlobCache::GetAndDecompressResult::Success:
             ANGLE_TRY(program->loadBinary(context, uncompressedData.data(),
                                           static_cast<int>(uncompressedData.size()), resultOut));
 
@@ -182,12 +182,11 @@ angle::Result MemoryProgramCache::putProgram(const egl::BlobCache::Key &programH
         return angle::Result::Continue;
     }
 
-    angle::MemoryBuffer serializedProgram;
-    ANGLE_TRY(program->serialize(context, &serializedProgram));
+    ANGLE_TRY(program->serialize(context));
+    const angle::MemoryBuffer &serializedProgram = program->getSerializedBinary();
 
     angle::MemoryBuffer compressedData;
-    if (!egl::CompressBlobCacheData(serializedProgram.size(), serializedProgram.data(),
-                                    &compressedData))
+    if (!angle::CompressBlob(serializedProgram.size(), serializedProgram.data(), &compressedData))
     {
         ANGLE_PERF_WARNING(context->getState().getDebug(), GL_DEBUG_SEVERITY_LOW,
                            "Error compressing binary data.");

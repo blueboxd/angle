@@ -65,10 +65,13 @@ namespace gl
 namespace
 {
 constexpr state::DirtyObjects kDrawDirtyObjectsBase{
-    state::DIRTY_OBJECT_ACTIVE_TEXTURES, state::DIRTY_OBJECT_DRAW_FRAMEBUFFER,
-    state::DIRTY_OBJECT_VERTEX_ARRAY,    state::DIRTY_OBJECT_TEXTURES,
-    state::DIRTY_OBJECT_PROGRAM,         state::DIRTY_OBJECT_PROGRAM_PIPELINE_OBJECT,
-    state::DIRTY_OBJECT_SAMPLERS,        state::DIRTY_OBJECT_IMAGES,
+    state::DIRTY_OBJECT_ACTIVE_TEXTURES,
+    state::DIRTY_OBJECT_DRAW_FRAMEBUFFER,
+    state::DIRTY_OBJECT_VERTEX_ARRAY,
+    state::DIRTY_OBJECT_TEXTURES,
+    state::DIRTY_OBJECT_PROGRAM_PIPELINE_OBJECT,
+    state::DIRTY_OBJECT_SAMPLERS,
+    state::DIRTY_OBJECT_IMAGES,
 };
 
 // TexImage uses the unpack state
@@ -133,9 +136,11 @@ constexpr state::DirtyBits kComputeDirtyBits{
 };
 constexpr state::ExtendedDirtyBits kComputeExtendedDirtyBits{};
 constexpr state::DirtyObjects kComputeDirtyObjectsBase{
-    state::DIRTY_OBJECT_ACTIVE_TEXTURES, state::DIRTY_OBJECT_TEXTURES,
-    state::DIRTY_OBJECT_PROGRAM,         state::DIRTY_OBJECT_PROGRAM_PIPELINE_OBJECT,
-    state::DIRTY_OBJECT_IMAGES,          state::DIRTY_OBJECT_SAMPLERS,
+    state::DIRTY_OBJECT_ACTIVE_TEXTURES,
+    state::DIRTY_OBJECT_TEXTURES,
+    state::DIRTY_OBJECT_PROGRAM_PIPELINE_OBJECT,
+    state::DIRTY_OBJECT_IMAGES,
+    state::DIRTY_OBJECT_SAMPLERS,
 };
 
 constexpr state::DirtyBits kCopyImageDirtyBitsBase{state::DIRTY_BIT_READ_FRAMEBUFFER_BINDING};
@@ -763,7 +768,7 @@ void Context::initializeDefaultResources()
 
     mState.initializeZeroTextures(this, mZeroTextures);
 
-    ANGLE_CONTEXT_TRY(mImplementation->initialize());
+    ANGLE_CONTEXT_TRY(mImplementation->initialize(mDisplay->getImageLoadContext()));
 
     // Add context into the share group
     mState.getShareGroup()->addSharedContext(this);
@@ -3791,12 +3796,13 @@ Extensions Context::generateSupportedExtensions() const
     }
 
     // Some extensions are always available because they are implemented in the GL layer.
-    supportedExtensions.bindUniformLocationCHROMIUM   = true;
-    supportedExtensions.vertexArrayObjectOES          = true;
-    supportedExtensions.bindGeneratesResourceCHROMIUM = true;
-    supportedExtensions.clientArraysANGLE             = true;
-    supportedExtensions.requestExtensionANGLE         = true;
-    supportedExtensions.multiDrawANGLE                = true;
+    supportedExtensions.bindUniformLocationCHROMIUM      = true;
+    supportedExtensions.vertexArrayObjectOES             = true;
+    supportedExtensions.bindGeneratesResourceCHROMIUM    = true;
+    supportedExtensions.clientArraysANGLE                = true;
+    supportedExtensions.requestExtensionANGLE            = true;
+    supportedExtensions.multiDrawANGLE                   = true;
+    supportedExtensions.programBinaryReadinessQueryANGLE = true;
 
     // Enable the no error extension if the context was created with the flag.
     supportedExtensions.noErrorKHR = skipValidation();
@@ -4002,14 +4008,15 @@ void Context::initCaps()
         ANGLE_LIMIT_CAP(caps->maxVertexAttribBindings, MAX_VERTEX_ATTRIB_BINDINGS);
     }
 
-    if (mWebGLContext && getLimitations().limitWebglMaxTextureSizeTo4096)
+    const Limitations &limitations = getLimitations();
+
+    if (mWebGLContext && limitations.webGLTextureSizeLimit > 0)
     {
-        constexpr GLint kMaxTextureSize = 4096;
-        ANGLE_LIMIT_CAP(caps->max2DTextureSize, kMaxTextureSize);
-        ANGLE_LIMIT_CAP(caps->max3DTextureSize, kMaxTextureSize);
-        ANGLE_LIMIT_CAP(caps->maxCubeMapTextureSize, kMaxTextureSize);
-        ANGLE_LIMIT_CAP(caps->maxArrayTextureLayers, kMaxTextureSize);
-        ANGLE_LIMIT_CAP(caps->maxRectangleTextureSize, kMaxTextureSize);
+        ANGLE_LIMIT_CAP(caps->max2DTextureSize, limitations.webGLTextureSizeLimit);
+        ANGLE_LIMIT_CAP(caps->max3DTextureSize, limitations.webGLTextureSizeLimit);
+        ANGLE_LIMIT_CAP(caps->maxCubeMapTextureSize, limitations.webGLTextureSizeLimit);
+        ANGLE_LIMIT_CAP(caps->maxArrayTextureLayers, limitations.webGLTextureSizeLimit);
+        ANGLE_LIMIT_CAP(caps->maxRectangleTextureSize, limitations.webGLTextureSizeLimit);
     }
 
     ANGLE_LIMIT_CAP(caps->max2DTextureSize, IMPLEMENTATION_MAX_2D_TEXTURE_SIZE);
@@ -4111,13 +4118,13 @@ void Context::initCaps()
     }
 
     // Hide emulated ETC1 extension from WebGL contexts.
-    if (mWebGLContext && getLimitations().emulatedEtc1)
+    if (mWebGLContext && limitations.emulatedEtc1)
     {
         mSupportedExtensions.compressedETC1RGB8SubTextureEXT = false;
         mSupportedExtensions.compressedETC1RGB8TextureOES    = false;
     }
 
-    if (getLimitations().emulatedAstc)
+    if (limitations.emulatedAstc)
     {
         // Hide emulated ASTC extension from WebGL contexts.
         if (mWebGLContext)
@@ -4241,10 +4248,20 @@ void Context::initCaps()
                             maxShaderStorageBufferBindings);
         }
 
+        // Pixel 7 MAX_TEXTURE_SIZE is 16K
+        constexpr GLint max2DTextureSize = 16383;
+        INFO() << "Limiting GL_MAX_TEXTURE_SIZE to " << max2DTextureSize;
+        ANGLE_LIMIT_CAP(caps->max2DTextureSize, max2DTextureSize);
+
         // Pixel 4 only supports GL_MAX_SAMPLES of 4
         constexpr GLint maxSamples = 4;
         INFO() << "Limiting GL_MAX_SAMPLES to " << maxSamples;
         ANGLE_LIMIT_CAP(caps->maxSamples, maxSamples);
+
+        // Pixel 4/5 only supports GL_MAX_VERTEX_UNIFORM_VECTORS of 256
+        constexpr GLint maxVertexUniformVectors = 256;
+        INFO() << "Limiting GL_MAX_VERTEX_UNIFORM_VECTORS to " << maxVertexUniformVectors;
+        ANGLE_LIMIT_CAP(caps->maxVertexUniformVectors, maxVertexUniformVectors);
 
         // Test if we require shadow memory for coherent buffer tracking
         getShareGroup()->getFrameCaptureShared()->determineMemoryProtectionSupport(this);
@@ -6323,6 +6340,7 @@ void Context::framebufferTexture2DMultisample(GLenum target,
         ImageIndex index    = ImageIndex::MakeFromTarget(textarget, level, 1);
         framebuffer->setAttachmentMultisample(this, GL_TEXTURE, attachment, index, textureObj,
                                               samples);
+        textureObj->onBindToMSRTTFramebuffer();
     }
     else
     {
@@ -9857,15 +9875,12 @@ void Context::framebufferFoveationConfig(FramebufferID framebufferPacked,
     ASSERT(!framebuffer->isFoveationConfigured());
 
     *providedFeatures = 0;
-    if (framebuffer->canSupportFoveatedRendering())
+    // We only support GL_FOVEATION_ENABLE_BIT_QCOM feature, for now.
+    // If requestedFeatures == 0 return without configuring the framebuffer.
+    if (requestedFeatures != 0)
     {
-        // We only support GL_FOVEATION_ENABLE_BIT_QCOM feature, for now.
-        // If requestedFeatures == 0 return without configuring the framebuffer.
-        if (requestedFeatures != 0)
-        {
-            framebuffer->configureFoveation();
-            *providedFeatures = framebuffer->getSupportedFoveationFeatures();
-        }
+        framebuffer->configureFoveation();
+        *providedFeatures = framebuffer->getSupportedFoveationFeatures();
     }
 }
 
@@ -9881,9 +9896,6 @@ void Context::framebufferFoveationParameters(FramebufferID framebufferPacked,
     Framebuffer *framebuffer = getFramebuffer(framebufferPacked);
     ASSERT(framebuffer);
     framebuffer->setFocalPoint(layer, focalPoint, focalX, focalY, gainX, gainY, foveaArea);
-    mState.mDirtyBits.set(state::DIRTY_BIT_EXTENDED);
-    mState.mExtendedDirtyBits.set(
-        state::ExtendedDirtyBitType::EXTENDED_DIRTY_BIT_FOVEATED_RENDERING);
 }
 
 void Context::textureFoveationParameters(TextureID texturePacked,
@@ -9898,9 +9910,6 @@ void Context::textureFoveationParameters(TextureID texturePacked,
     Texture *texture = getTexture(texturePacked);
     ASSERT(texture);
     texture->setFocalPoint(layer, focalPoint, focalX, focalY, gainX, gainY, foveaArea);
-    mState.mDirtyBits.set(state::DIRTY_BIT_EXTENDED);
-    mState.mExtendedDirtyBits.set(
-        state::ExtendedDirtyBitType::EXTENDED_DIRTY_BIT_FOVEATED_RENDERING);
 }
 
 // ErrorSet implementation.

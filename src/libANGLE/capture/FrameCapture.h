@@ -598,6 +598,7 @@ class FrameCaptureShared final : angle::NonCopyable
                             bool coherent);
 
     void trackTextureUpdate(const gl::Context *context, const CallCapture &call);
+    void trackImageUpdate(const gl::Context *context, const CallCapture &call);
     void trackDefaultUniformUpdate(const gl::Context *context, const CallCapture &call);
     void trackVertexArrayUpdate(const gl::Context *context, const CallCapture &call);
 
@@ -710,6 +711,15 @@ class FrameCaptureShared final : angle::NonCopyable
 
     std::mutex &getFrameCaptureMutex() { return mFrameCaptureMutex; }
 
+    void setDeferredLinkProgram(gl::ShaderProgramID programID)
+    {
+        mDeferredLinkPrograms.emplace(programID);
+    }
+    bool isDeferredLinkProgram(gl::ShaderProgramID programID)
+    {
+        return (mDeferredLinkPrograms.find(programID) != mDeferredLinkPrograms.end());
+    }
+
   private:
     void writeJSON(const gl::Context *context);
     void writeCppReplayIndexFiles(const gl::Context *context, bool writeResetContextCall);
@@ -803,6 +813,9 @@ class FrameCaptureShared final : angle::NonCopyable
     ShaderSourceMap mCachedShaderSource;
     ProgramSourceMap mCachedProgramSources;
 
+    // Set of programs which were created but not linked before capture was started
+    std::set<gl::ShaderProgramID> mDeferredLinkPrograms;
+
     gl::ContextID mWindowSurfaceContextID;
 
     std::vector<CallCapture> mShareGroupSetupCalls;
@@ -837,6 +850,16 @@ void CaptureGLCallToFrameCapture(CaptureFuncT captureFunc,
     frameCaptureShared->captureCall(context, std::move(call), isCallValid);
 }
 
+template <typename FirstT, typename... OthersT>
+egl::Display *GetEGLDisplayArg(FirstT display, OthersT... others)
+{
+    if constexpr (std::is_same<egl::Display *, FirstT>::value)
+    {
+        return display;
+    }
+    return nullptr;
+}
+
 template <typename CaptureFuncT, typename... ArgsT>
 void CaptureEGLCallToFrameCapture(CaptureFuncT captureFunc,
                                   bool isCallValid,
@@ -846,7 +869,21 @@ void CaptureEGLCallToFrameCapture(CaptureFuncT captureFunc,
     gl::Context *context = thread->getContext();
     if (!context)
     {
-        return;
+        // Get a valid context from the display argument if no context is associated with this
+        // thread
+        egl::Display *display = GetEGLDisplayArg(captureParams...);
+        if (display)
+        {
+            for (const auto &contextIter : display->getState().contextMap)
+            {
+                context = contextIter.second;
+                break;
+            }
+        }
+        if (!context)
+        {
+            return;
+        }
     }
     std::lock_guard<egl::ContextMutex> lock(context->getContextMutex());
 

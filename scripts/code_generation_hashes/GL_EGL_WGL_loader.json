@@ -1,12 +1,12 @@
 {
   "scripts/egl_angle_ext.xml":
-    "89e7586fbfed61f7b1500f2dd90c1a2e",
+    "082357171dce18d607b2f335ab6faad9",
   "scripts/generate_loader.py":
     "93c78a8d11323fa311fed5118fbcf083",
   "scripts/gl_angle_ext.xml":
-    "3d6d9529c6d0da797652c366ddaa9087",
+    "197e07a917d5bba6dfa2840fb1b58e7e",
   "scripts/registry_xml.py":
-    "279665a799ba87136c91b01b0296d565",
+    "49c3c48df34c6acb1de031090ac18075",
   "src/libEGL/egl_loader_autogen.cpp":
     "a41c368dc25edc7ceda29b17cb45b854",
   "src/libEGL/egl_loader_autogen.h":

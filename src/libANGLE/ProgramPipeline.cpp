@@ -21,11 +21,6 @@
 namespace gl
 {
 
-enum SubjectIndexes : angle::SubjectIndex
-{
-    kExecutableSubjectIndex = 0
-};
-
 ProgramPipelineState::ProgramPipelineState(rx::GLImplFactory *factory)
     : mLabel(),
       mActiveShaderProgram(nullptr),
@@ -149,8 +144,7 @@ void ProgramPipelineState::updateExecutableSpecConstUsageBits()
 ProgramPipeline::ProgramPipeline(rx::GLImplFactory *factory, ProgramPipelineID handle)
     : RefCountObject(factory->generateSerial(), handle),
       mProgramPipelineImpl(factory->createProgramPipeline(mState)),
-      mState(factory),
-      mExecutableObserverBinding(this, kExecutableSubjectIndex)
+      mState(factory)
 {
     ASSERT(mProgramPipelineImpl);
 
@@ -160,7 +154,6 @@ ProgramPipeline::ProgramPipeline(rx::GLImplFactory *factory, ProgramPipelineID h
         mProgramExecutableObserverBindings.emplace_back(
             this, static_cast<angle::SubjectIndex>(shaderType));
     }
-    mExecutableObserverBinding.bind(mState.mExecutable.get());
 }
 
 ProgramPipeline::~ProgramPipeline()
@@ -535,6 +528,12 @@ angle::Result ProgramPipeline::link(const Context *context)
     const Version &clientVersion   = context->getClientVersion();
     const bool isWebGL             = context->isWebGL();
 
+    if (mState.mExecutable->hasLinkedShaderStage(gl::ShaderType::TessControl) !=
+        mState.mExecutable->hasLinkedShaderStage(gl::ShaderType::TessEvaluation))
+    {
+        return angle::Result::Stop;
+    }
+
     if (mState.mExecutable->hasLinkedShaderStage(ShaderType::Vertex))
     {
         if (!linkVaryings())
@@ -705,6 +704,15 @@ void ProgramPipeline::validate(const Context *context)
     const Caps &caps = context->getCaps();
     mState.mValid    = true;
     mState.mInfoLog.reset();
+
+    if (mState.mExecutable->hasLinkedShaderStage(gl::ShaderType::TessControl) !=
+        mState.mExecutable->hasLinkedShaderStage(gl::ShaderType::TessEvaluation))
+    {
+        mState.mValid = false;
+        mState.mInfoLog << "Program pipeline must have both a Tessellation Control and Evaluation "
+                           "shader or neither\n";
+        return;
+    }
 
     for (const ShaderType shaderType : mState.mExecutable->getLinkedShaderStages())
     {

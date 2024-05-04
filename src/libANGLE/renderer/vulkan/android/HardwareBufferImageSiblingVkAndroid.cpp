@@ -12,9 +12,9 @@
 
 #include "libANGLE/Display.h"
 #include "libANGLE/renderer/vulkan/DisplayVk.h"
-#include "libANGLE/renderer/vulkan/RendererVk.h"
 #include "libANGLE/renderer/vulkan/android/AHBFunctions.h"
 #include "libANGLE/renderer/vulkan/android/DisplayVkAndroid.h"
+#include "libANGLE/renderer/vulkan/vk_renderer.h"
 
 namespace rx
 {
@@ -151,7 +151,7 @@ HardwareBufferImageSiblingVkAndroid::~HardwareBufferImageSiblingVkAndroid() {}
 
 // Static
 egl::Error HardwareBufferImageSiblingVkAndroid::ValidateHardwareBuffer(
-    RendererVk *renderer,
+    vk::Renderer *renderer,
     EGLClientBuffer buffer,
     const egl::AttributeMap &attribs)
 {
@@ -230,7 +230,7 @@ angle::Result HardwareBufferImageSiblingVkAndroid::initImpl(DisplayVk *displayVk
     const AHBFunctions &functions = static_cast<DisplayVkAndroid *>(displayVk)->getAHBFunctions();
     ANGLE_VK_CHECK(displayVk, functions.valid(), VK_ERROR_INITIALIZATION_FAILED);
 
-    RendererVk *renderer = displayVk->getRenderer();
+    vk::Renderer *renderer = displayVk->getRenderer();
 
     struct ANativeWindowBuffer *windowBuffer =
         angle::android::ClientBufferToANativeWindowBuffer(mBuffer);
@@ -324,14 +324,19 @@ angle::Result HardwareBufferImageSiblingVkAndroid::initImpl(DisplayVk *displayVk
         if (externalFormat.externalFormat != 0 && !externalRenderTargetSupported)
         {
             // Clear all other bits except sampled
-            usage = (renderer->getFeatures().forceSampleUsageForImageWithExternalFormat.enabled)
-                        ? VK_IMAGE_USAGE_SAMPLED_BIT
-                        : (usage & VK_IMAGE_USAGE_SAMPLED_BIT);
+            usage &= VK_IMAGE_USAGE_SAMPLED_BIT;
         }
 
         // If the pNext chain includes a VkExternalFormatANDROID structure whose externalFormat
         // member is not 0, tiling must be VK_IMAGE_TILING_OPTIMAL
         imageTilingMode = VK_IMAGE_TILING_OPTIMAL;
+    }
+
+    // If forceSampleUsageForAhbBackedImages feature is enabled force enable
+    // VK_IMAGE_USAGE_SAMPLED_BIT
+    if (renderer->getFeatures().forceSampleUsageForAhbBackedImages.enabled)
+    {
+        usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
     }
 
     VkExternalMemoryImageCreateInfo externalMemoryImageCreateInfo = {};
@@ -366,7 +371,7 @@ angle::Result HardwareBufferImageSiblingVkAndroid::initImpl(DisplayVk *displayVk
         if (externalRenderTargetSupported)
         {
             angle::FormatID externalFormatID =
-                renderer->mExternalFormatTable.getOrAllocExternalFormatID(
+                renderer->getExternalFormatTable()->getOrAllocExternalFormatID(
                     bufferFormatProperties.externalFormat,
                     bufferFormatResolveProperties.colorAttachmentFormat,
                     bufferFormatProperties.formatFeatures);
@@ -537,7 +542,7 @@ vk::ImageHelper *HardwareBufferImageSiblingVkAndroid::getImage() const
     return mImage;
 }
 
-void HardwareBufferImageSiblingVkAndroid::release(RendererVk *renderer)
+void HardwareBufferImageSiblingVkAndroid::release(vk::Renderer *renderer)
 {
     if (mImage != nullptr)
     {

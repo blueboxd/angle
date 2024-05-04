@@ -355,19 +355,15 @@ EGLDisplay EGLAPIENTRY EGL_GetCurrentDisplay()
 
     Thread *thread = egl::GetCurrentThread();
     EGLDisplay returnValue;
-    {
-        ANGLE_SCOPED_GLOBAL_LOCK();
-        EGL_EVENT(GetCurrentDisplay, "");
 
-        {
-            ANGLE_EGL_SCOPED_CONTEXT_LOCK(GetCurrentDisplay, thread);
-            ANGLE_EGL_VALIDATE(thread, GetCurrentDisplay, nullptr, EGLDisplay);
+    EGL_EVENT(GetCurrentDisplay, "");
 
-            returnValue = GetCurrentDisplay(thread);
-        }
+    ANGLE_EGL_VALIDATE(thread, GetCurrentDisplay, nullptr, EGLDisplay);
 
-        ANGLE_CAPTURE_EGL(GetCurrentDisplay, true, thread, returnValue);
-    }
+    returnValue = GetCurrentDisplay(thread);
+
+    ANGLE_CAPTURE_EGL(GetCurrentDisplay, true, thread, returnValue);
+
     ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
     return returnValue;
 }
@@ -377,19 +373,15 @@ EGLSurface EGLAPIENTRY EGL_GetCurrentSurface(EGLint readdraw)
 
     Thread *thread = egl::GetCurrentThread();
     EGLSurface returnValue;
-    {
-        ANGLE_SCOPED_GLOBAL_LOCK();
-        EGL_EVENT(GetCurrentSurface, "readdraw = %d", readdraw);
 
-        {
-            ANGLE_EGL_SCOPED_CONTEXT_LOCK(GetCurrentSurface, thread);
-            ANGLE_EGL_VALIDATE(thread, GetCurrentSurface, nullptr, EGLSurface, readdraw);
+    EGL_EVENT(GetCurrentSurface, "readdraw = %d", readdraw);
 
-            returnValue = GetCurrentSurface(thread, readdraw);
-        }
+    ANGLE_EGL_VALIDATE(thread, GetCurrentSurface, nullptr, EGLSurface, readdraw);
 
-        ANGLE_CAPTURE_EGL(GetCurrentSurface, true, thread, readdraw, returnValue);
-    }
+    returnValue = GetCurrentSurface(thread, readdraw);
+
+    ANGLE_CAPTURE_EGL(GetCurrentSurface, true, thread, readdraw, returnValue);
+
     ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
     return returnValue;
 }
@@ -636,7 +628,7 @@ EGLBoolean EGLAPIENTRY EGL_SwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
         ANGLE_CAPTURE_EGL(SwapBuffers, true, thread, dpyPacked, surfacePacked, returnValue);
     }
-    egl::Display::GetCurrentThreadUnlockedTailCall()->run(nullptr);
+    egl::Display::GetCurrentThreadUnlockedTailCall()->run(&returnValue);
     return returnValue;
 }
 
@@ -958,19 +950,15 @@ EGLContext EGLAPIENTRY EGL_GetCurrentContext()
 
     Thread *thread = egl::GetCurrentThread();
     EGLContext returnValue;
-    {
-        ANGLE_SCOPED_GLOBAL_LOCK();
-        EGL_EVENT(GetCurrentContext, "");
 
-        {
-            ANGLE_EGL_SCOPED_CONTEXT_LOCK(GetCurrentContext, thread);
-            ANGLE_EGL_VALIDATE(thread, GetCurrentContext, nullptr, EGLContext);
+    EGL_EVENT(GetCurrentContext, "");
 
-            returnValue = GetCurrentContext(thread);
-        }
+    ANGLE_EGL_VALIDATE(thread, GetCurrentContext, nullptr, EGLContext);
 
-        ANGLE_CAPTURE_EGL(GetCurrentContext, true, thread, returnValue);
-    }
+    returnValue = GetCurrentContext(thread);
+
+    ANGLE_CAPTURE_EGL(GetCurrentContext, true, thread, returnValue);
+
     ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
     return returnValue;
 }
@@ -1038,7 +1026,7 @@ EGLImage EGLAPIENTRY EGL_CreateImage(EGLDisplay dpy,
         ANGLE_CAPTURE_EGL(CreateImage, true, thread, dpyPacked, ctxPacked, target, buffer,
                           attrib_listPacked, returnValue);
     }
-    ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
+    egl::Display::GetCurrentThreadUnlockedTailCall()->run(&returnValue);
     return returnValue;
 }
 
@@ -1141,7 +1129,7 @@ EGLSync EGLAPIENTRY EGL_CreateSync(EGLDisplay dpy, EGLenum type, const EGLAttrib
         ANGLE_CAPTURE_EGL(CreateSync, true, thread, dpyPacked, type, attrib_listPacked,
                           returnValue);
     }
-    ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
+    egl::Display::GetCurrentThreadUnlockedTailCall()->run(&returnValue);
     return returnValue;
 }
 
@@ -1195,7 +1183,7 @@ EGLBoolean EGLAPIENTRY EGL_DestroySync(EGLDisplay dpy, EGLSync sync)
 
         ANGLE_CAPTURE_EGL(DestroySync, true, thread, dpyPacked, syncPacked, returnValue);
     }
-    ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
+    egl::Display::GetCurrentThreadUnlockedTailCall()->run(&returnValue);
     return returnValue;
 }
 
@@ -1286,7 +1274,7 @@ EGLBoolean EGLAPIENTRY EGL_WaitSync(EGLDisplay dpy, EGLSync sync, EGLint flags)
 
         ANGLE_CAPTURE_EGL(WaitSync, true, thread, dpyPacked, syncPacked, flags, returnValue);
     }
-    ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
+    egl::Display::GetCurrentThreadUnlockedTailCall()->run(&returnValue);
     return returnValue;
 }
 

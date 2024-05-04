@@ -1204,6 +1204,11 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         {
             skipTest("TODO: http://anglebug.com/5943 GL_INVALID_ENUM on Windows/Intel");
         }
+
+        if (isIntelLinuxNative)
+        {
+            skipTest("https://anglebug.com/8682 fails on newer OS/driver");
+        }
     }
 
     if (traceNameIs("pokemon_go"))
@@ -1335,6 +1340,11 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         {
             skipTest("http://anglebug.com/6658 Crashing in Vulkan backend");
         }
+
+        if (isIntelLinuxNative)
+        {
+            skipTest("https://anglebug.com/8682 fails on newer OS/driver");
+        }
     }
 
     if (traceNameIs("township"))
@@ -1430,6 +1440,16 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         addExtensionPrerequisite("GL_EXT_texture_cube_map_array");
     }
 
+    if (traceNameIs("pokemon_masters_ex"))
+    {
+        if (isIntelLinux)
+        {
+            skipTest(
+                "https://issuetracker.google.com/u/2/issues/326199738#comment3 Renders incorrectly "
+                "on Intel Linux");
+        }
+    }
+
     if (traceNameIs("aztec_ruins_high"))
     {
         addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
@@ -1521,6 +1541,10 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (traceNameIs("minetest"))
     {
+        if (isIntelLinuxNative)
+        {
+            skipTest("https://anglebug.com/8682 fails on newer OS/driver");
+        }
         addExtensionPrerequisite("GL_EXT_texture_format_BGRA8888");
         addIntegerPrerequisite(GL_MAX_TEXTURE_UNITS, 4);
     }
@@ -1639,6 +1663,11 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (traceNameIs("street_fighter_iv_ce"))
     {
+        if (isIntelLinuxNative)
+        {
+            skipTest("https://anglebug.com/8682 fails on newer OS/driver");
+        }
+
         if (mParams->isSwiftshader())
         {
             skipTest("https://anglebug.com/8243 Too slow on Swiftshader (large keyframe)");
@@ -1658,6 +1687,85 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         if (isNVIDIAWinANGLE)
         {
             skipTest("https://anglebug.com/8316 NVIDIA Windows flaky diffs");
+        }
+    }
+
+    if (traceNameIs("toca_life_world"))
+    {
+        addExtensionPrerequisite("GL_OES_EGL_image_external");
+    }
+
+    if (traceNameIs("poppy_playtime"))
+    {
+        addExtensionPrerequisite("GL_OES_EGL_image_external");
+        addIntegerPrerequisite(GL_MAX_TEXTURE_SIZE, 16383);
+    }
+
+    if (traceNameIs("dr_driving"))
+    {
+        if (isIntelLinuxNative)
+        {
+            skipTest("https://anglebug.com/8682 fails on newer OS/driver");
+        }
+    }
+
+    if (traceNameIs("plague_inc"))
+    {
+        if (isIntelLinuxNative)
+        {
+            skipTest("https://anglebug.com/8682 fails on newer OS/driver");
+        }
+    }
+
+    if (traceNameIs("sonic_the_hedgehog"))
+    {
+        if (isIntelLinuxNative)
+        {
+            skipTest("https://anglebug.com/8682 fails on newer OS/driver");
+        }
+    }
+
+    if (traceNameIs("wayward_souls"))
+    {
+        if (isIntelLinuxNative)
+        {
+            skipTest("https://anglebug.com/8682 fails on newer OS/driver");
+        }
+    }
+
+    if (traceNameIs("wordscapes"))
+    {
+        if (isIntelLinuxNative)
+        {
+            skipTest("https://anglebug.com/8682 fails on newer OS/driver");
+        }
+    }
+
+    if (traceNameIs("zenonia_4"))
+    {
+        if (isIntelLinuxNative)
+        {
+            skipTest("https://anglebug.com/8682 fails on newer OS/driver");
+        }
+    }
+
+    if (traceNameIs("zombie_smasher"))
+    {
+        if (isIntelLinuxNative)
+        {
+            skipTest("https://anglebug.com/8682 fails on newer OS/driver");
+        }
+    }
+
+    if (IsGalaxyS22())
+    {
+        if (traceNameIs("cod_mobile") || traceNameIs("dota_underlords") ||
+            traceNameIs("marvel_snap") || traceNameIs("nier_reincarnation") ||
+            traceNameIs("pokemon_unite") || traceNameIs("slingshot_test1") ||
+            traceNameIs("slingshot_test2") || traceNameIs("supertuxkart") ||
+            traceNameIs("the_witcher_monster_slayer") || traceNameIs("warcraft_rumble"))
+        {
+            skipTest("https://issuetracker.google.com/267953710 Trace needs triage on Galaxy S22");
         }
     }
 
@@ -1761,6 +1869,10 @@ void TracePerfTest::initializeBenchmark()
     mTraceReplay->setValidateSerializedStateCallback(ValidateSerializedState);
     mTraceReplay->setBinaryDataDir(testDataDir);
     mTraceReplay->setReplayResourceMode(gIncludeInactiveResources);
+    if (gScreenshotDir)
+    {
+        mTraceReplay->setDebugOutputDir(gScreenshotDir);
+    }
 
     if (gMinimizeGPUWork)
     {
