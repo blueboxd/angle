@@ -1528,10 +1528,10 @@ void CommandBufferHelperCommon::resetImpl(Context *context)
 
     // Clean up event garbage. Note that ImageHelper object may still holding reference count to it,
     // so the event itself will not gets destroyed until the last refCount goes away.
-    if (!mRefCountedEventGarbage.empty())
+    if (!mRefCountedEventCollector.empty())
     {
-        context->getRenderer()->collectRefCountedEventGarbage(mQueueSerial,
-                                                              std::move(mRefCountedEventGarbage));
+        context->getRenderer()->collectRefCountedEventsGarbage(
+            mQueueSerial, std::move(mRefCountedEventCollector));
     }
 }
 
@@ -1709,7 +1709,7 @@ void CommandBufferHelperCommon::updateImageLayoutAndBarrier(Context *context,
 {
     VkSemaphore semaphore = VK_NULL_HANDLE;
     image->updateLayoutAndBarrier(context, aspectFlags, imageLayout, barrierType, mQueueSerial,
-                                  &mPipelineBarriers, &mEventBarriers, &mRefCountedEventGarbage,
+                                  &mPipelineBarriers, &mEventBarriers, &mRefCountedEventCollector,
                                   &semaphore);
     // If image has an ANI semaphore, move it to command buffer so that we can wait for it in
     // next submission.
@@ -1748,7 +1748,7 @@ void CommandBufferHelperCommon::flushSetEventsImpl(Context *context, CommandBuff
         commandBuffer->setEvent(refCountedEvent.getEvent().getHandle(),
                                 GetImageLayoutDstStageMask(context, layoutData));
         // We no longer need event, so garbage collect it.
-        mRefCountedEventGarbage.add(&refCountedEvent);
+        mRefCountedEventCollector.emplace_back(std::move(refCountedEvent));
     }
     mRefCountedEvents.mask.reset();
 }
@@ -3155,7 +3155,7 @@ std::string RenderPassCommandBufferHelper::getCommandDiagnostics()
 template <typename CommandBufferHelperT>
 void CommandBufferRecycler<CommandBufferHelperT>::onDestroy()
 {
-    std::unique_lock<std::mutex> lock(mMutex);
+    std::unique_lock<angle::SimpleMutex> lock(mMutex);
     for (CommandBufferHelperT *commandBufferHelper : mCommandBufferHelperFreeList)
     {
         SafeDelete(commandBufferHelper);
@@ -3173,7 +3173,7 @@ angle::Result CommandBufferRecycler<CommandBufferHelperT>::getCommandBufferHelpe
     SecondaryCommandMemoryAllocator *commandsAllocator,
     CommandBufferHelperT **commandBufferHelperOut)
 {
-    std::unique_lock<std::mutex> lock(mMutex);
+    std::unique_lock<angle::SimpleMutex> lock(mMutex);
     if (mCommandBufferHelperFreeList.empty())
     {
         CommandBufferHelperT *commandBuffer = new CommandBufferHelperT();
@@ -3215,7 +3215,7 @@ void CommandBufferRecycler<CommandBufferHelperT>::recycleCommandBufferHelper(
     (*commandBuffer)->markOpen();
 
     {
-        std::unique_lock<std::mutex> lock(mMutex);
+        std::unique_lock<angle::SimpleMutex> lock(mMutex);
         mCommandBufferHelperFreeList.push_back(*commandBuffer);
     }
 
@@ -7102,7 +7102,7 @@ void ImageHelper::barrierImpl(Context *context,
                               VkImageAspectFlags aspectMask,
                               ImageLayout newLayout,
                               uint32_t newQueueFamilyIndex,
-                              RefCountedEventGarbageObjects *garbageObjects,
+                              RefCountedEventCollector *eventCollector,
                               CommandBufferT *commandBuffer,
                               VkSemaphore *acquireNextImageSemaphoreOut)
 {
@@ -7160,7 +7160,7 @@ void ImageHelper::barrierImpl(Context *context,
         VkPipelineStageFlags srcStageMask = GetRefCountedEventStageMask(context, mCurrentEvent);
         commandBuffer->imageWaitEvent(mCurrentEvent.getEvent().getHandle(), srcStageMask,
                                       dstStageMask, imageMemoryBarrier);
-        garbageObjects->add(&mCurrentEvent);
+        eventCollector->emplace_back(std::move(mCurrentEvent));
     }
     else
     {
@@ -7193,7 +7193,7 @@ template void ImageHelper::barrierImpl<priv::CommandBuffer>(
     VkImageAspectFlags aspectMask,
     ImageLayout newLayout,
     uint32_t newQueueFamilyIndex,
-    RefCountedEventGarbageObjects *garbageObjects,
+    RefCountedEventCollector *eventCollector,
     priv::CommandBuffer *commandBuffer,
     VkSemaphore *acquireNextImageSemaphoreOut);
 
@@ -7239,7 +7239,7 @@ void ImageHelper::recordWriteBarrier(Context *context,
         ASSERT(!mCurrentEvent.valid() || !commands->hasSetEventPendingFlush(mCurrentEvent));
         VkSemaphore acquireNextImageSemaphore;
         barrierImpl(context, aspectMask, newLayout, context->getRenderer()->getQueueFamilyIndex(),
-                    commands->getRefCountedEventGarbage(), &commands->getCommandBuffer(),
+                    commands->getRefCountedEventCollector(), &commands->getCommandBuffer(),
                     &acquireNextImageSemaphore);
 
         if (acquireNextImageSemaphore != VK_NULL_HANDLE)
@@ -7268,7 +7268,7 @@ void ImageHelper::recordReadSubresourceBarrier(Context *context,
         ASSERT(!mCurrentEvent.valid() || !commands->hasSetEventPendingFlush(mCurrentEvent));
         VkSemaphore acquireNextImageSemaphore;
         barrierImpl(context, aspectMask, newLayout, context->getRenderer()->getQueueFamilyIndex(),
-                    commands->getRefCountedEventGarbage(), &commands->getCommandBuffer(),
+                    commands->getRefCountedEventCollector(), &commands->getCommandBuffer(),
                     &acquireNextImageSemaphore);
 
         if (acquireNextImageSemaphore != VK_NULL_HANDLE)
@@ -7294,7 +7294,7 @@ void ImageHelper::recordReadBarrier(Context *context,
     ASSERT(!mCurrentEvent.valid() || !commands->hasSetEventPendingFlush(mCurrentEvent));
     VkSemaphore acquireNextImageSemaphore;
     barrierImpl(context, aspectMask, newLayout, context->getRenderer()->getQueueFamilyIndex(),
-                commands->getRefCountedEventGarbage(), &commands->getCommandBuffer(),
+                commands->getRefCountedEventCollector(), &commands->getCommandBuffer(),
                 &acquireNextImageSemaphore);
 
     if (acquireNextImageSemaphore != VK_NULL_HANDLE)
@@ -7310,7 +7310,7 @@ void ImageHelper::updateLayoutAndBarrier(Context *context,
                                          const QueueSerial &queueSerial,
                                          PipelineBarrierArray *pipelineBarriers,
                                          EventBarrierArray *eventBarriers,
-                                         RefCountedEventGarbageObjects *garbageObjects,
+                                         RefCountedEventCollector *eventCollector,
                                          VkSemaphore *semaphoreOut)
 {
     ASSERT(queueSerial.valid());
@@ -7357,7 +7357,7 @@ void ImageHelper::updateLayoutAndBarrier(Context *context,
                                           GetImageLayoutDstStageMask(context, layoutData),
                                           layoutData.dstAccessMask);
             // Garbage collect the event, which tracks GPU completion automatically.
-            garbageObjects->add(&mCurrentEvent);
+            eventCollector->emplace_back(std::move(mCurrentEvent));
         }
         else
         {
@@ -7403,7 +7403,7 @@ void ImageHelper::updateLayoutAndBarrier(Context *context,
             {
                 eventBarriers->addMemoryEvent(context, mLastNonShaderReadOnlyEvent, dstStageMask,
                                               transitionTo.dstAccessMask);
-                garbageObjects->add(mLastNonShaderReadOnlyEvent);
+                eventCollector->emplace_back(mLastNonShaderReadOnlyEvent);
             }
             else
             {
@@ -7422,7 +7422,7 @@ void ImageHelper::updateLayoutAndBarrier(Context *context,
             // event again.
             if (mCurrentEvent.valid())
             {
-                garbageObjects->add(&mCurrentEvent);
+                eventCollector->emplace_back(std::move(mCurrentEvent));
             }
 
             const ImageMemoryBarrierData &layoutData =
@@ -7505,7 +7505,7 @@ void ImageHelper::updateLayoutAndBarrier(Context *context,
                 {
                     mLastNonShaderReadOnlyEvent = mCurrentEvent;
                 }
-                garbageObjects->add(&mCurrentEvent);
+                eventCollector->emplace_back(std::move(mCurrentEvent));
             }
             else
             {
@@ -10204,6 +10204,10 @@ angle::Result ImageHelper::copySurfaceImageToBuffer(DisplayVk *displayVk,
     region.imageSubresource.layerCount     = layerCount;
     region.imageSubresource.mipLevel       = toVkLevel(sourceLevelGL).get();
 
+    // We may have a valid event here but we do not have a collector to collect it. Release the
+    // event here to force pipelineBarrier.
+    mCurrentEvent.release(displayVk->getDevice());
+
     PrimaryCommandBuffer primaryCommandBuffer;
     ANGLE_TRY(renderer->getCommandBufferOneOff(displayVk, ProtectionType::Unprotected,
                                                &primaryCommandBuffer));
@@ -10252,6 +10256,10 @@ angle::Result ImageHelper::copyBufferToSurfaceImage(DisplayVk *displayVk,
     region.imageSubresource.layerCount     = layerCount;
     region.imageSubresource.mipLevel       = toVkLevel(sourceLevelGL).get();
 
+    // We may have a valid event here but we do not have a collector to collect it. Release the
+    // event here to force pipelineBarrier.
+    mCurrentEvent.release(displayVk->getDevice());
+
     PrimaryCommandBuffer commandBuffer;
     ANGLE_TRY(
         renderer->getCommandBufferOneOff(displayVk, ProtectionType::Unprotected, &commandBuffer));
@@ -10294,13 +10302,8 @@ angle::Result ImageHelper::GetReadPixelsParams(ContextVk *contextVk,
     ANGLE_VK_CHECK_MATH(contextVk, sizedFormatInfo.computeSkipBytes(type, outputPitch, 0, packState,
                                                                     false, skipBytesOut));
 
-    *skipBytesOut += (clippedArea.x - area.x) * sizedFormatInfo.pixelBytes +
-                     (clippedArea.y - area.y) * outputPitch;
-
-    const angle::Format &angleFormat = GetFormatFromFormatType(format, type);
-
-    *paramsOut = PackPixelsParams(clippedArea, angleFormat, outputPitch, packState.reverseRowOrder,
-                                  packBuffer, 0);
+    ANGLE_TRY(GetPackPixelsParams(sizedFormatInfo, outputPitch, packState, packBuffer, area,
+                                  clippedArea, paramsOut, skipBytesOut));
     return angle::Result::Continue;
 }
 

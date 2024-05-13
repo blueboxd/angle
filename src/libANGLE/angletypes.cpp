@@ -1132,13 +1132,16 @@ bool DecompressBlob(const uint8_t *compressedData,
         return false;
     }
 
-    // Resize it to expected size.
-    if (!uncompressedData->resize(destLen))
-    {
-        return false;
-    }
+    // Trim to actual size.
+    ASSERT(destLen <= uncompressedSize);
+    uncompressedData->trim(destLen);
 
     return true;
+}
+
+uint32_t GenerateCrc(const uint8_t *data, size_t size)
+{
+    return static_cast<uint32_t>(crc32_z(0u, data, size));
 }
 
 UnlockedTailCall::UnlockedTailCall() = default;

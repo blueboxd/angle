@@ -24,6 +24,10 @@ class ContextWgpu;
 namespace webgpu
 {
 
+// WebGPU requires copy buffers bytesPerRow to be aligned to 256.
+// https://www.w3.org/TR/webgpu/#abstract-opdef-validating-gpuimagecopybuffer
+static const GLuint kCopyBufferAlignment = 256;
+
 struct QueuedDataUpload
 {
     wgpu::ImageCopyBuffer buffer;
@@ -49,8 +53,7 @@ class ImageHelper
                                                     wgpu::Extent3D size,
                                                     wgpu::TextureFormat format,
                                                     std::uint32_t mipLevelCount,
-                                                    std::uint32_t sampleCount,
-                                                    std::size_t viewFormatCount);
+                                                    std::uint32_t sampleCount);
 
     angle::Result stageTextureUpload(ContextWgpu *contextWgpu,
                                      const gl::Extents &glExtents,
@@ -66,6 +69,21 @@ class ImageHelper
 
     void resetImage();
 
+    static angle::Result getReadPixelsParams(rx::ContextWgpu *contextWgpu,
+                                             const gl::PixelPackState &packState,
+                                             gl::Buffer *packBuffer,
+                                             GLenum format,
+                                             GLenum type,
+                                             const gl::Rectangle &area,
+                                             const gl::Rectangle &clippedArea,
+                                             rx::PackPixelsParams *paramsOut,
+                                             GLuint *skipBytesOut);
+
+    angle::Result readPixels(rx::ContextWgpu *contextWgpu,
+                             const gl::Rectangle &area,
+                             const rx::PackPixelsParams &packPixelsParams,
+                             const angle::Format &aspectFormat,
+                             void *pixels);
     LevelIndex toWgpuLevel(gl::LevelIndex levelIndexGl) const;
     gl::LevelIndex toGlLevel(LevelIndex levelIndexWgpu) const;
     bool isTextureLevelInAllocatedImage(gl::LevelIndex textureLevel);
@@ -81,7 +99,8 @@ class ImageHelper
   private:
     wgpu::Texture mTexture;
     wgpu::TextureDescriptor mTextureDescriptor = {};
-    bool mInitialized                          = false;
+    std::vector<wgpu::TextureFormat> mViewFormats;
+    bool mInitialized = false;
 
     gl::LevelIndex mFirstAllocatedLevel = gl::LevelIndex(0);
 
@@ -121,6 +140,7 @@ class BufferHelper : public angle::NonCopyable
     angle::Result unmap();
 
     uint8_t *getMapWritePointer(size_t offset, size_t size) const;
+    const uint8_t *getMapReadPointer(size_t offset, size_t size) const;
 
     const std::optional<BufferMapState> &getMappedState() const;
 
