@@ -997,7 +997,7 @@ MTLStorageMode Buffer::getStorageModeForUsage(ContextMtl *contextMtl, Usage usag
         }
         return MTLStorageModeShared;
     }
-    if (contextMtl->getMetalDevice().hasUnifiedMemory() ||
+    if ((@available(macOS 10.15, iOS 13.0, *)) && contextMtl->getMetalDevice().hasUnifiedMemory() ||
         features.alwaysUseSharedStorageModeForBuffers.enabled)
     {
         return MTLStorageModeShared;
