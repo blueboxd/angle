@@ -1374,10 +1374,10 @@ void PrivateState::setEnableFeature(GLenum feature, bool enabled)
             mGLES1State.mAlphaTestEnabled = enabled;
             break;
         case GL_TEXTURE_2D:
-            mGLES1State.mTexUnitEnables[mActiveSampler].set(TextureType::_2D, enabled);
+            mGLES1State.setTextureEnabled(mActiveSampler, TextureType::_2D, enabled);
             break;
         case GL_TEXTURE_CUBE_MAP:
-            mGLES1State.mTexUnitEnables[mActiveSampler].set(TextureType::CubeMap, enabled);
+            mGLES1State.setTextureEnabled(mActiveSampler, TextureType::CubeMap, enabled);
             break;
         case GL_LIGHTING:
             mGLES1State.mLightingEnabled = enabled;
@@ -1661,8 +1661,15 @@ void PrivateState::getBooleanv(GLenum pname, GLboolean *params) const
             *params = mRasterizer.dither;
             break;
         case GL_COLOR_LOGIC_OP:
-            ASSERT(mClientVersion.major > 1);
-            *params = mLogicOpEnabled;
+            if (mClientVersion.major == 1)
+            {
+                // Handle logicOp in GLES1 through the GLES1 state management.
+                *params = getEnableFeature(pname);
+            }
+            else
+            {
+                *params = mLogicOpEnabled;
+            }
             break;
         case GL_PRIMITIVE_RESTART_FIXED_INDEX:
             *params = mPrimitiveRestart;
@@ -1737,7 +1744,14 @@ void PrivateState::getBooleanv(GLenum pname, GLboolean *params) const
             *params = mCaps.fragmentShaderFramebufferFetchMRT;
             break;
         default:
-            UNREACHABLE();
+            if (mClientVersion.major == 1)
+            {
+                *params = getEnableFeature(pname);
+            }
+            else
+            {
+                UNREACHABLE();
+            }
             break;
     }
 }
@@ -3688,10 +3702,6 @@ angle::Result State::syncProgram(const Context *context, Command command)
     {
         return mProgram->syncState(context);
     }
-    else if (mProgramPipeline.get())
-    {
-        return mProgramPipeline->syncState(context);
-    }
     return angle::Result::Continue;
 }
 
@@ -3847,6 +3857,10 @@ angle::Result State::onExecutableChange(const Context *context)
         }
     }
 
+    // Mark uniform blocks as _not_ dirty. When an executable changes, the backends should already
+    // reprocess all uniform blocks.  These dirty bits only track what's made dirty afterwards.
+    mDirtyUniformBlocks.reset();
+
     return angle::Result::Continue;
 }
 
@@ -3949,13 +3963,11 @@ void State::onImageStateChange(const Context *context, size_t unit)
 
 void State::onUniformBufferStateChange(size_t uniformBufferIndex)
 {
-    if (mProgram)
+    if (mExecutable)
     {
-        mProgram->onUniformBufferStateChange(uniformBufferIndex);
-    }
-    else if (mProgramPipeline.get())
-    {
-        mProgramPipeline->onUniformBufferStateChange(uniformBufferIndex);
+        // When a buffer at a given binding changes, set all blocks mapped to it dirty.
+        mDirtyUniformBlocks |=
+            mExecutable->getUniformBufferBlocksMappedToBinding(uniformBufferIndex);
     }
     // This could be represented by a different dirty bit. Using the same one keeps it simple.
     mDirtyBits.set(state::DIRTY_BIT_UNIFORM_BUFFER_BINDINGS);

@@ -136,12 +136,12 @@ SyncHelper::SyncHelper() {}
 
 SyncHelper::~SyncHelper() {}
 
-void SyncHelper::releaseToRenderer(RendererVk *renderer) {}
+void SyncHelper::releaseToRenderer(Renderer *renderer) {}
 
-angle::Result SyncHelper::initialize(ContextVk *contextVk, bool isEGLSyncObject)
+angle::Result SyncHelper::initialize(ContextVk *contextVk, SyncFenceScope scope)
 {
     ASSERT(!mUse.valid());
-    return contextVk->onSyncObjectInit(this, isEGLSyncObject);
+    return contextVk->onSyncObjectInit(this, scope);
 }
 
 angle::Result SyncHelper::prepareForClientWait(Context *context,
@@ -198,7 +198,7 @@ angle::Result SyncHelper::clientWait(Context *context,
         return angle::Result::Continue;
     }
 
-    RendererVk *renderer = context->getRenderer();
+    Renderer *renderer = context->getRenderer();
 
     // If we need to perform a CPU wait don't set the resultOut parameter passed into the
     // method, instead set the parameter passed into the unlocked tail call.
@@ -254,7 +254,7 @@ angle::Result SyncHelper::getStatus(Context *context, ContextVk *contextVk, bool
     // Submit commands if it was deferred on the context that issued the sync object
     ANGLE_TRY(submitSyncIfDeferred(contextVk, RenderPassClosureReason::SyncObjectClientWait));
     ASSERT(mUse.valid());
-    RendererVk *renderer = context->getRenderer();
+    Renderer *renderer = context->getRenderer();
     if (renderer->hasResourceUseFinished(mUse))
     {
         *signaledOut = true;
@@ -372,7 +372,7 @@ SyncHelperNativeFence::SyncHelperNativeFence()
 
 SyncHelperNativeFence::~SyncHelperNativeFence() {}
 
-void SyncHelperNativeFence::releaseToRenderer(RendererVk *renderer)
+void SyncHelperNativeFence::releaseToRenderer(Renderer *renderer)
 {
     mExternalFence.reset();
 }
@@ -394,8 +394,8 @@ angle::Result SyncHelperNativeFence::initializeWithFd(ContextVk *contextVk, int 
         return angle::Result::Continue;
     }
 
-    RendererVk *renderer = contextVk->getRenderer();
-    VkDevice device      = renderer->getDevice();
+    Renderer *renderer = contextVk->getRenderer();
+    VkDevice device    = renderer->getDevice();
 
     VkExportFenceCreateInfo exportCreateInfo = {};
     exportCreateInfo.sType                   = VK_STRUCTURE_TYPE_EXPORT_FENCE_CREATE_INFO;
@@ -485,7 +485,7 @@ angle::Result SyncHelperNativeFence::clientWait(Context *context,
         return angle::Result::Continue;
     }
 
-    RendererVk *renderer = context->getRenderer();
+    Renderer *renderer = context->getRenderer();
 
     auto clientWaitUnlocked = [device = renderer->getDevice(), fence = mExternalFence,
                                mappingFunction, timeout](void *resultOut) {
@@ -502,7 +502,7 @@ angle::Result SyncHelperNativeFence::clientWait(Context *context,
 
 angle::Result SyncHelperNativeFence::serverWait(ContextVk *contextVk)
 {
-    RendererVk *renderer = contextVk->getRenderer();
+    Renderer *renderer = contextVk->getRenderer();
 
     // If already signaled, no need to wait
     bool alreadySignaled = false;
@@ -574,7 +574,7 @@ angle::Result SyncVk::set(const gl::Context *context, GLenum condition, GLbitfie
     ASSERT(condition == GL_SYNC_GPU_COMMANDS_COMPLETE);
     ASSERT(flags == 0);
 
-    return mSyncHelper.initialize(vk::GetImpl(context), false);
+    return mSyncHelper.initialize(vk::GetImpl(context), SyncFenceScope::CurrentContextToShareGroup);
 }
 
 angle::Result SyncVk::clientWait(const gl::Context *context,
@@ -613,10 +613,7 @@ angle::Result SyncVk::getStatus(const gl::Context *context, GLint *outResult)
 
 EGLSyncVk::EGLSyncVk() : EGLSyncImpl(), mSyncHelper(nullptr) {}
 
-EGLSyncVk::~EGLSyncVk()
-{
-    SafeDelete(mSyncHelper);
-}
+EGLSyncVk::~EGLSyncVk() {}
 
 void EGLSyncVk::onDestroy(const egl::Display *display)
 {
@@ -633,10 +630,14 @@ egl::Error EGLSyncVk::initialize(const egl::Display *display,
     switch (type)
     {
         case EGL_SYNC_FENCE_KHR:
+        case EGL_SYNC_GLOBAL_FENCE_ANGLE:
         {
             vk::SyncHelper *syncHelper = new vk::SyncHelper();
-            mSyncHelper                = syncHelper;
-            if (syncHelper->initialize(vk::GetImpl(context), true) == angle::Result::Stop)
+            mSyncHelper.reset(syncHelper);
+            const SyncFenceScope scope = type == EGL_SYNC_GLOBAL_FENCE_ANGLE
+                                             ? SyncFenceScope::AllContextsToAllContexts
+                                             : SyncFenceScope::CurrentContextToAllContexts;
+            if (syncHelper->initialize(vk::GetImpl(context), scope) == angle::Result::Stop)
             {
                 return egl::Error(EGL_BAD_ALLOC, "eglCreateSyncKHR failed to create sync object");
             }
@@ -645,7 +646,7 @@ egl::Error EGLSyncVk::initialize(const egl::Display *display,
         case EGL_SYNC_NATIVE_FENCE_ANDROID:
         {
             vk::SyncHelperNativeFence *syncHelper = new vk::SyncHelperNativeFence();
-            mSyncHelper                           = syncHelper;
+            mSyncHelper.reset(syncHelper);
             EGLint nativeFenceFd =
                 attribs.getAsInt(EGL_SYNC_NATIVE_FENCE_FD_ANDROID, EGL_NO_NATIVE_FENCE_FD_ANDROID);
             return angle::ToEGL(syncHelper->initializeWithFd(vk::GetImpl(context), nativeFenceFd),

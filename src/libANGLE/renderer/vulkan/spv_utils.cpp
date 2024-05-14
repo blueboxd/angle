@@ -30,15 +30,6 @@ namespace rx
 {
 namespace
 {
-template <size_t N>
-constexpr size_t ConstStrLen(const char (&)[N])
-{
-    static_assert(N > 0, "C++ shouldn't allow N to be zero");
-
-    // The length of a string defined as a char array is the size of the array minus 1 (the
-    // terminating '\0').
-    return N - 1;
-}
 
 // Test if there are non-zero indices in the uniform name, returning false in that case.  This
 // happens for multi-dimensional arrays, where a uniform is created for every possible index of the
@@ -682,27 +673,25 @@ void AssignInputAttachmentBindings(const SpvSourceOptions &options,
                                    ShaderInterfaceVariableInfoMap *variableInfoMapOut)
 {
     if (!programExecutable.hasLinkedShaderStage(gl::ShaderType::Fragment) ||
-        programExecutable.getFragmentInoutRange().empty())
+        !programExecutable.usesFramebufferFetch())
     {
         return;
     }
 
-    const std::vector<gl::LinkedUniform> &uniforms = programExecutable.getUniforms();
     const uint32_t baseInputAttachmentBindingIndex =
         programInterfaceInfo->currentShaderResourceBindingIndex;
     const gl::ShaderBitSet activeShaders{gl::ShaderType::Fragment};
 
-    for (unsigned int uniformIndex : programExecutable.getFragmentInoutRange())
-    {
-        const gl::LinkedUniform &inputAttachmentUniform = uniforms[uniformIndex];
-        ASSERT(inputAttachmentUniform.isActive(gl::ShaderType::Fragment));
+    static_assert(gl::IMPLEMENTATION_MAX_DRAW_BUFFERS <= 8,
+                  "sh::vk::spirv::ReservedIds supports max 8 draw buffers");
 
+    for (size_t index : programExecutable.getFragmentInoutIndices())
+    {
         const uint32_t inputAttachmentBindingIndex =
-            baseInputAttachmentBindingIndex + inputAttachmentUniform.getLocation();
+            baseInputAttachmentBindingIndex + static_cast<uint32_t>(index);
 
         AddResourceInfo(variableInfoMapOut, activeShaders, gl::ShaderType::Fragment,
-
-                        inputAttachmentUniform.getIds()[gl::ShaderType::Fragment],
+                        sh::vk::spirv::kIdInputAttachment0 + static_cast<uint32_t>(index),
                         ToUnderlying(DescriptorSetIndex::ShaderResource),
                         inputAttachmentBindingIndex);
     }
@@ -3755,10 +3744,10 @@ TransformationState SpirvTransformer::transformDecorate(const uint32_t *instruct
         case spv::DecorationBlock:
             // If this is the Block decoration of a shader I/O block, add the transform feedback
             // decorations to its members right away.
-            if (mOptions.isTransformFeedbackStage && mVariableInfoById[id]->hasTransformFeedback)
+            if (mOptions.isTransformFeedbackStage && info->hasTransformFeedback)
             {
                 const XFBInterfaceVariableInfo &xfbInfo =
-                    mVariableInfoMap.getXFBDataForVariableInfo(mVariableInfoById[id]);
+                    mVariableInfoMap.getXFBDataForVariableInfo(info);
                 mXfbCodeGenerator.addMemberDecorate(xfbInfo, id, mSpirvBlobOut);
             }
             break;
@@ -3809,10 +3798,9 @@ TransformationState SpirvTransformer::transformDecorate(const uint32_t *instruct
     }
 
     // Add Xfb decorations, if any.
-    if (mOptions.isTransformFeedbackStage && mVariableInfoById[id]->hasTransformFeedback)
+    if (mOptions.isTransformFeedbackStage && info->hasTransformFeedback)
     {
-        const XFBInterfaceVariableInfo &xfbInfo =
-            mVariableInfoMap.getXFBDataForVariableInfo(mVariableInfoById[id]);
+        const XFBInterfaceVariableInfo &xfbInfo = mVariableInfoMap.getXFBDataForVariableInfo(info);
         mXfbCodeGenerator.addDecorate(xfbInfo, id, mSpirvBlobOut);
     }
 
@@ -3892,15 +3880,16 @@ TransformationState SpirvTransformer::transformEntryPoint(const uint32_t *instru
 
     mInactiveVaryingRemover.modifyEntryPointInterfaceList(mVariableInfoById, mOptions.shaderType,
                                                           &interfaceList);
-    if (mOptions.useSpirvVaryingPrecisionFixer)
-    {
-        mVaryingPrecisionFixer.modifyEntryPointInterfaceList(&interfaceList);
-    }
 
     if (mOptions.shaderType == gl::ShaderType::Fragment)
     {
         mSecondaryOutputTransformer.modifyEntryPointInterfaceList(mVariableInfoById, &interfaceList,
                                                                   mSpirvBlobOut);
+    }
+
+    if (mOptions.useSpirvVaryingPrecisionFixer)
+    {
+        mVaryingPrecisionFixer.modifyEntryPointInterfaceList(&interfaceList);
     }
 
     mMultisampleTransformer.modifyEntryPointInterfaceList(mNonSemanticInstructions, &interfaceList,

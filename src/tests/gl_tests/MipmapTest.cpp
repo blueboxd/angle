@@ -978,7 +978,7 @@ TEST_P(MipmapTest, MipMapGenerationD3D9Bug)
     const GLColor mip1Color = GLColor(127, 127, 0, 255);
 
     GLTexture texture;
-    glBindTexture(GL_TEXTURE_2D, texture.get());
+    glBindTexture(GL_TEXTURE_2D, texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_USAGE_ANGLE, GL_FRAMEBUFFER_ATTACHMENT_ANGLE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
     glTexStorage2DEXT(GL_TEXTURE_2D, 2, GL_RGBA8_OES, 2, 2);
@@ -1978,7 +1978,7 @@ TEST_P(MipmapTestES3, BaseLevelTextureBug)
     // Regression in 10.12.4 needing workaround -- crbug.com/705865.
     // Seems to be passing on AMD GPUs. Definitely not NVIDIA.
     // Probably not Intel.
-    ANGLE_SKIP_TEST_IF(IsMac() && (IsNVIDIA() || IsIntel()));
+    ANGLE_SKIP_TEST_IF(IsMac() && IsNVIDIA());
 
     // TODO(anglebug.com/5360): Failing on ARM-based Apple DTKs.
     ANGLE_SKIP_TEST_IF(IsMac() && IsARM64() && IsDesktopOpenGL());
@@ -2047,7 +2047,7 @@ void main()
     glGenerateMipmap(GL_TEXTURE_2D);
     ASSERT_GL_NO_ERROR();
     // level 2 is red
-    clearAndDrawQuad(m2DProgram.get(), getWindowWidth() / 4, getWindowHeight() / 4);
+    clearAndDrawQuad(m2DProgram, getWindowWidth() / 4, getWindowHeight() / 4);
     EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 8, getWindowHeight() / 8, GLColor::red);
 
     // Clear the level 1 to green
@@ -2061,10 +2061,10 @@ void main()
     glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
     // level 0 is red
-    clearAndDrawQuad(m2DProgram.get(), getWindowWidth(), getWindowHeight());
+    clearAndDrawQuad(m2DProgram, getWindowWidth(), getWindowHeight());
     EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2, getWindowHeight() / 2, GLColor::red);
     // Draw using level 2. It should be set to green by GenerateMipmap.
-    clearAndDrawQuad(m2DProgram.get(), getWindowWidth() / 4, getWindowHeight() / 4);
+    clearAndDrawQuad(m2DProgram, getWindowWidth() / 4, getWindowHeight() / 4);
     EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 8, getWindowHeight() / 8, GLColor::green);
 }
 
@@ -2398,7 +2398,9 @@ ANGLE_INSTANTIATE_TEST_ES2_AND_ES3(MipmapTest);
 
 namespace extraPlatforms
 {
-ANGLE_INSTANTIATE_TEST(MipmapTest, ES2_METAL().disable(Feature::AllowGenMultipleMipsPerPass));
+ANGLE_INSTANTIATE_TEST(MipmapTest,
+                       ES2_METAL().disable(Feature::AllowGenMultipleMipsPerPass),
+                       ES2_OPENGLES().enable(Feature::UseIntermediateTextureForGenerateMipmap));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(Mipmap3DBoxFilterTest);
 ANGLE_INSTANTIATE_TEST(Mipmap3DBoxFilterTest,

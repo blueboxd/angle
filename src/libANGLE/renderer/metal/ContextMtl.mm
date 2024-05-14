@@ -227,7 +227,7 @@ ContextMtl::ContextMtl(const gl::State &state,
 
 ContextMtl::~ContextMtl() {}
 
-angle::Result ContextMtl::initialize()
+angle::Result ContextMtl::initialize(const angle::ImageLoadContext &imageLoadContext)
 {
     for (mtl::BlendDesc &blendDesc : mBlendDescArray)
     {
@@ -247,6 +247,8 @@ angle::Result ContextMtl::initialize()
                                                kMaxTriFanLineLoopBuffersPerFrame);
 
     mContextDevice.set(mDisplay->getMetalDevice());
+
+    mImageLoadContext = imageLoadContext;
 
     return angle::Result::Continue;
 }
@@ -559,7 +561,7 @@ angle::Result ContextMtl::drawTriFanElements(const gl::Context *context,
         bool isNoOp = false;
         ANGLE_TRY(setupDraw(context, gl::PrimitiveMode::TriangleFan, 0, count, instances, type,
                             indices, false, &isNoOp));
-        if (!isNoOp)
+        if (!isNoOp && genIndicesCount > 0)
         {
             if (baseVertex == 0 && baseInstance == 0)
             {
@@ -638,7 +640,7 @@ angle::Result ContextMtl::drawLineLoopElements(const gl::Context *context,
         bool isNoOp = false;
         ANGLE_TRY(setupDraw(context, gl::PrimitiveMode::LineLoop, 0, count, instances, type,
                             indices, false, &isNoOp));
-        if (!isNoOp)
+        if (!isNoOp && genIndicesCount > 0)
         {
             if (baseVertex == 0 && baseInstance == 0)
             {
@@ -1822,6 +1824,12 @@ void ContextMtl::endEncoding(bool forceSaveRenderPassContent)
 
         endRenderEncoding(&mRenderEncoder);
     }
+    // End blit encoder after render encoder, as endRenderEncoding() might create a
+    // blit encoder to resolve the visibility results.
+    if (mBlitEncoder.valid())
+    {
+        mBlitEncoder.endEncoding();
+    }
 }
 
 void ContextMtl::flushCommandBuffer(mtl::CommandBufferFinishOperation operation)
@@ -2349,13 +2357,18 @@ void ContextMtl::onTransformFeedbackInactive(const gl::Context *context, Transfo
     endEncoding(true);
 }
 
-void ContextMtl::queueEventSignal(const mtl::SharedEventRef &event, uint64_t value)
+#if ANGLE_MTL_EVENT_AVAILABLE
+uint64_t ContextMtl::queueEventSignal(id<MTLEvent> event, uint64_t value)
 {
     ensureCommandBufferReady();
-    mCmdBuffer.queueEventSignal(event, value);
+    // Event is queued to be signaled after current render pass. If we have helper blit or
+    // compute encoders, avoid queueing by stopping them immediately so we get to insert the event
+    // right away.
+    endBlitAndComputeEncoding();
+    return mCmdBuffer.queueEventSignal(event, value);
 }
 
-void ContextMtl::serverWaitEvent(const mtl::SharedEventRef &event, uint64_t value)
+void ContextMtl::serverWaitEvent(id<MTLEvent> event, uint64_t value)
 {
     ensureCommandBufferReady();
 
@@ -2364,6 +2377,7 @@ void ContextMtl::serverWaitEvent(const mtl::SharedEventRef &event, uint64_t valu
 
     mCmdBuffer.serverWaitEvent(event, value);
 }
+#endif
 
 void ContextMtl::updateProgramExecutable(const gl::Context *context)
 {
@@ -2982,10 +2996,5 @@ angle::Result ContextMtl::copyTextureSliceLevelToWorkBuffer(
                                                     mWorkBuffer));
 
     return angle::Result::Continue;
-}
-
-angle::ImageLoadContext ContextMtl::getImageLoadContext() const
-{
-    return getDisplay()->getDisplay()->getImageLoadContext();
 }
 }  // namespace rx

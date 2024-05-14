@@ -20,7 +20,6 @@
 
 namespace rx
 {
-class RendererVk;
 enum class MemoryAllocationType;
 
 namespace vk
@@ -35,7 +34,7 @@ class BufferBlock final : angle::NonCopyable
     BufferBlock(BufferBlock &&other);
     ~BufferBlock();
 
-    void destroy(RendererVk *renderer);
+    void destroy(Renderer *renderer);
     VkResult init(Context *context,
                   Buffer &buffer,
                   uint32_t memoryTypeIndex,
@@ -72,6 +71,7 @@ class BufferBlock final : angle::NonCopyable
     bool hasVirtualBlock() const { return mVirtualBlock.valid(); }
     bool isHostVisible() const;
     bool isCoherent() const;
+    bool isCached() const;
     bool isMapped() const;
     VkResult map(const VkDevice device);
     void unmap(const VkDevice device);
@@ -86,7 +86,7 @@ class BufferBlock final : angle::NonCopyable
     {
         mDescriptorSetCacheManager.addKey(sharedCacheKey);
     }
-    void releaseAllCachedDescriptorSetCacheKeys(RendererVk *renderer)
+    void releaseAllCachedDescriptorSetCacheKeys(Renderer *renderer)
     {
         if (!mDescriptorSetCacheManager.empty())
         {
@@ -140,7 +140,7 @@ class BufferBlockGarbageList final : angle::NonCopyable
         mBufferBlockQueue.push(bufferBlock);
     }
 
-    void pruneEmptyBufferBlocks(RendererVk *renderer)
+    void pruneEmptyBufferBlocks(Renderer *renderer)
     {
         if (!mBufferBlockQueue.empty())
         {
@@ -179,7 +179,7 @@ class BufferSuballocation final : angle::NonCopyable
     BufferSuballocation(BufferSuballocation &&other);
     BufferSuballocation &operator=(BufferSuballocation &&other);
 
-    void destroy(RendererVk *renderer);
+    void destroy(Renderer *renderer);
 
     void init(BufferBlock *block,
               VmaVirtualAllocation allocation,
@@ -200,6 +200,7 @@ class BufferSuballocation final : angle::NonCopyable
     VkMemoryMapFlags getMemoryPropertyFlags() const;
     bool isHostVisible() const;
     bool isCoherent() const;
+    bool isCached() const;
     bool isMapped() const;
     uint8_t *getMappedMemory() const;
     void flush(const VkDevice &device);
@@ -250,8 +251,8 @@ class BufferSuballocationGarbage
     {}
     ~BufferSuballocationGarbage() = default;
 
-    bool destroyIfComplete(RendererVk *renderer);
-    bool hasResourceUseSubmitted(RendererVk *renderer) const;
+    bool destroyIfComplete(Renderer *renderer);
+    bool hasResourceUseSubmitted(Renderer *renderer) const;
     VkDeviceSize getSize() const { return mSuballocation.getSize(); }
     bool isSuballocated() const { return mSuballocation.isSuballocated(); }
 
@@ -286,6 +287,11 @@ ANGLE_INLINE bool BufferBlock::isHostVisible() const
 ANGLE_INLINE bool BufferBlock::isCoherent() const
 {
     return (mMemoryPropertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+}
+
+ANGLE_INLINE bool BufferBlock::isCached() const
+{
+    return (mMemoryPropertyFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0;
 }
 
 ANGLE_INLINE bool BufferBlock::isMapped() const
@@ -324,7 +330,7 @@ ANGLE_INLINE bool BufferSuballocation::valid() const
     return mBufferBlock != nullptr;
 }
 
-ANGLE_INLINE void BufferSuballocation::destroy(RendererVk *renderer)
+ANGLE_INLINE void BufferSuballocation::destroy(Renderer *renderer)
 {
     if (valid())
     {
@@ -355,9 +361,7 @@ ANGLE_INLINE void BufferSuballocation::init(BufferBlock *block,
 {
     ASSERT(!valid());
     ASSERT(block != nullptr);
-#if ANGLE_VMA_VERSION >= 3000000
     ASSERT(allocation != VK_NULL_HANDLE);
-#endif  // ANGLE_VMA_VERSION >= 3000000
     ASSERT(offset != VK_WHOLE_SIZE);
     mBufferBlock = block;
     mAllocation  = allocation;
@@ -414,6 +418,10 @@ ANGLE_INLINE bool BufferSuballocation::isHostVisible() const
 ANGLE_INLINE bool BufferSuballocation::isCoherent() const
 {
     return mBufferBlock->isCoherent();
+}
+ANGLE_INLINE bool BufferSuballocation::isCached() const
+{
+    return mBufferBlock->isCached();
 }
 ANGLE_INLINE bool BufferSuballocation::isMapped() const
 {

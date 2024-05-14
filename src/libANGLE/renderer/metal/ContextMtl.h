@@ -14,6 +14,7 @@
 #import <mach/mach_types.h>
 
 #include "common/Optional.h"
+#include "image_util/loadimage.h"
 #include "libANGLE/Context.h"
 #include "libANGLE/renderer/ContextImpl.h"
 #include "libANGLE/renderer/metal/ProvokingVertexHelper.h"
@@ -46,7 +47,7 @@ class ContextMtl : public ContextImpl, public mtl::Context
                DisplayMtl *display);
     ~ContextMtl() override;
 
-    angle::Result initialize() override;
+    angle::Result initialize(const angle::ImageLoadContext &imageLoadContext) override;
 
     void onDestroy(const gl::Context *context) override;
 
@@ -317,9 +318,12 @@ class ContextMtl : public ContextImpl, public mtl::Context
     void onTransformFeedbackActive(const gl::Context *context, TransformFeedbackMtl *xfb);
     void onTransformFeedbackInactive(const gl::Context *context, TransformFeedbackMtl *xfb);
 
-    // Invoke by mtl::Sync
-    void queueEventSignal(const mtl::SharedEventRef &event, uint64_t value);
-    void serverWaitEvent(const mtl::SharedEventRef &event, uint64_t value);
+    // Invoked by multiple classes in SyncMtl.mm
+#if ANGLE_MTL_EVENT_AVAILABLE
+    // Enqueue an event and return the command queue serial that the event was or will be placed in.
+    uint64_t queueEventSignal(id<MTLEvent> event, uint64_t value);
+    void serverWaitEvent(id<MTLEvent> event, uint64_t value);
+#endif
 
     const mtl::ClearColorValue &getClearColorValue() const;
     const mtl::WriteMaskArray &getWriteMaskArray() const;
@@ -405,7 +409,7 @@ class ContextMtl : public ContextImpl, public mtl::Context
 
     mtl::PipelineCache &getPipelineCache() { return mPipelineCache; }
 
-    angle::ImageLoadContext getImageLoadContext() const;
+    const angle::ImageLoadContext &getImageLoadContext() const { return mImageLoadContext; }
 
   private:
     void ensureCommandBufferReady();
@@ -581,6 +585,8 @@ class ContextMtl : public ContextImpl, public mtl::Context
     {
         uint8_t values[sizeof(float) * 4];
     };
+
+    angle::ImageLoadContext mImageLoadContext;
 
     mtl::OcclusionQueryPool mOcclusionQueryPool;
 

@@ -58,6 +58,7 @@ function generate_Android_bp_file() {
             "angle_enable_d3d11 = false"
             "angle_enable_null = false"
             "angle_enable_metal = false"
+            "angle_enable_wgpu = false"
 
             # SwiftShader is loaded as the system Vulkan driver on Android, not compiled by ANGLE
             "angle_enable_swiftshader = false"
@@ -96,7 +97,7 @@ function generate_Android_bp_file() {
         --gn_json_arm64=${GN_OUTPUT_DIRECTORY}/desc.arm64.json \
         --gn_json_x86=${GN_OUTPUT_DIRECTORY}/desc.x86.json \
         --gn_json_x64=${GN_OUTPUT_DIRECTORY}/desc.x64.json \
-        > Android.bp
+        --output=Android.bp
 }
 
 
@@ -148,7 +149,7 @@ done
 
 # Sync all of ANGLE's deps so that 'gn gen' works
 python scripts/bootstrap.py
-gclient sync --reset --force
+gclient sync --reset --force --delete_unversioned_trees
 
 # Delete outdir to ensure a clean gn run.
 rm -rf ${GN_OUTPUT_DIRECTORY}

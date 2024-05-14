@@ -992,7 +992,7 @@ TestSuite::TestSuite(int *argc, char **argv, std::function<void()> registerTests
 #endif
 
 #if defined(ANGLE_PLATFORM_WINDOWS)
-    testing::GTEST_FLAG(catch_exceptions) = false;
+    GTEST_FLAG_SET(catch_exceptions, false);
 #endif
 
     if (*argc <= 0)
@@ -1959,7 +1959,7 @@ bool TestSuite::logAnyUnusedTestExpectations()
     }
     if (anyUnused)
     {
-        std::cerr << "Failed to validate test expectations." << unusedMsgStream.str() << std::endl;
+        std::cerr << "Found unused test expectations:" << unusedMsgStream.str() << std::endl;
         return true;
     }
     return false;

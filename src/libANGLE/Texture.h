@@ -191,6 +191,8 @@ class TextureState final : private angle::NonCopyable
 
     bool isInternalIncompleteTexture() const { return mIsInternalIncompleteTexture; }
 
+    const FoveationState &getFoveationState() const { return mFoveationState; }
+
   private:
     // Texture needs access to the ImageDesc functions.
     friend class Texture;
@@ -274,6 +276,9 @@ class TextureState final : private angle::NonCopyable
     mutable GLenum mCachedSamplerCompareMode;
     mutable bool mCachedSamplerFormatValid;
     std::string mLabel;
+
+    // GL_QCOM_texture_foveated
+    FoveationState mFoveationState;
 };
 
 bool operator==(const TextureState &a, const TextureState &b);
@@ -375,6 +380,8 @@ class Texture final : public RefCountObject<TextureID>,
 
     void setProtectedContent(Context *context, bool hasProtectedContent);
     bool hasProtectedContent() const override;
+    bool hasFoveatedRendering() const override { return isFoveationEnabled(); }
+    const gl::FoveationState *getFoveationState() const override { return &mState.mFoveationState; }
 
     void setRenderabilityValidation(Context *context, bool renderabilityValidation);
 
@@ -410,6 +417,23 @@ class Texture final : public RefCountObject<TextureID>,
     GLuint getMipmapMaxLevel() const;
 
     bool isMipmapComplete() const;
+
+    void setFoveatedFeatureBits(const GLuint features);
+    GLuint getFoveatedFeatureBits() const;
+    bool isFoveationEnabled() const;
+    GLuint getSupportedFoveationFeatures() const;
+
+    GLuint getNumFocalPoints() const { return mState.mFoveationState.getMaxNumFocalPoints(); }
+    void setMinPixelDensity(const GLfloat density);
+    GLfloat getMinPixelDensity() const;
+    void setFocalPoint(uint32_t layer,
+                       uint32_t focalPointIndex,
+                       float focalX,
+                       float focalY,
+                       float gainX,
+                       float gainY,
+                       float foveaArea);
+    const FocalPoint &getFocalPoint(uint32_t layer, uint32_t focalPoint) const;
 
     angle::Result setImage(Context *context,
                            const PixelUnpackState &unpackState,
@@ -567,10 +591,6 @@ class Texture final : public RefCountObject<TextureID>,
 
     GLenum getImplementationColorReadFormat(const Context *context) const;
     GLenum getImplementationColorReadType(const Context *context) const;
-
-    bool isCompressedFormatEmulated(const Context *context,
-                                    TextureTarget target,
-                                    GLint level) const;
 
     // We pass the pack buffer and state explicitly so they can be overridden during capture.
     angle::Result getTexImage(const Context *context,

@@ -18,12 +18,13 @@
 namespace egl
 {
 
-Sync::Sync(rx::EGLImplFactory *factory, const egl::SyncID &id, EGLenum type)
-    : mLabel(nullptr), mId(id), mType(type), mCondition(0), mNativeFenceFD(0)
+Sync::Sync(rx::EGLImplFactory *factory, EGLenum type)
+    : mLabel(nullptr), mId({0}), mType(type), mCondition(0), mNativeFenceFD(0)
 {
     switch (mType)
     {
         case EGL_SYNC_FENCE:
+        case EGL_SYNC_GLOBAL_FENCE_ANGLE:
         case EGL_SYNC_NATIVE_FENCE_ANDROID:
         case EGL_SYNC_METAL_SHARED_EVENT_ANGLE:
             mFence = std::unique_ptr<rx::EGLSyncImpl>(factory->createSync());
@@ -42,17 +43,17 @@ void Sync::onDestroy(const Display *display)
 {
     ASSERT(mFence);
     mFence->onDestroy(display);
-    mFence.reset();
 }
 
 Sync::~Sync() {}
 
 Error Sync::initialize(const Display *display,
                        const gl::Context *context,
+                       const SyncID &id,
                        const AttributeMap &attribs)
 {
+    mId           = id;
     mAttributeMap = attribs;
-
     mNativeFenceFD =
         attribs.getAsInt(EGL_SYNC_NATIVE_FENCE_FD_ANDROID, EGL_NO_NATIVE_FENCE_FD_ANDROID);
     mCondition = EGL_SYNC_PRIOR_COMMANDS_COMPLETE_KHR;

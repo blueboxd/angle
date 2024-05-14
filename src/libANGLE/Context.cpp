@@ -763,7 +763,7 @@ void Context::initializeDefaultResources()
 
     mState.initializeZeroTextures(this, mZeroTextures);
 
-    ANGLE_CONTEXT_TRY(mImplementation->initialize());
+    ANGLE_CONTEXT_TRY(mImplementation->initialize(mDisplay->getImageLoadContext()));
 
     // Add context into the share group
     mState.getShareGroup()->addSharedContext(this);
@@ -4002,14 +4002,15 @@ void Context::initCaps()
         ANGLE_LIMIT_CAP(caps->maxVertexAttribBindings, MAX_VERTEX_ATTRIB_BINDINGS);
     }
 
-    if (mWebGLContext && getLimitations().limitWebglMaxTextureSizeTo4096)
+    const Limitations &limitations = getLimitations();
+
+    if (mWebGLContext && limitations.webGLTextureSizeLimit > 0)
     {
-        constexpr GLint kMaxTextureSize = 4096;
-        ANGLE_LIMIT_CAP(caps->max2DTextureSize, kMaxTextureSize);
-        ANGLE_LIMIT_CAP(caps->max3DTextureSize, kMaxTextureSize);
-        ANGLE_LIMIT_CAP(caps->maxCubeMapTextureSize, kMaxTextureSize);
-        ANGLE_LIMIT_CAP(caps->maxArrayTextureLayers, kMaxTextureSize);
-        ANGLE_LIMIT_CAP(caps->maxRectangleTextureSize, kMaxTextureSize);
+        ANGLE_LIMIT_CAP(caps->max2DTextureSize, limitations.webGLTextureSizeLimit);
+        ANGLE_LIMIT_CAP(caps->max3DTextureSize, limitations.webGLTextureSizeLimit);
+        ANGLE_LIMIT_CAP(caps->maxCubeMapTextureSize, limitations.webGLTextureSizeLimit);
+        ANGLE_LIMIT_CAP(caps->maxArrayTextureLayers, limitations.webGLTextureSizeLimit);
+        ANGLE_LIMIT_CAP(caps->maxRectangleTextureSize, limitations.webGLTextureSizeLimit);
     }
 
     ANGLE_LIMIT_CAP(caps->max2DTextureSize, IMPLEMENTATION_MAX_2D_TEXTURE_SIZE);
@@ -4111,13 +4112,13 @@ void Context::initCaps()
     }
 
     // Hide emulated ETC1 extension from WebGL contexts.
-    if (mWebGLContext && getLimitations().emulatedEtc1)
+    if (mWebGLContext && limitations.emulatedEtc1)
     {
         mSupportedExtensions.compressedETC1RGB8SubTextureEXT = false;
         mSupportedExtensions.compressedETC1RGB8TextureOES    = false;
     }
 
-    if (getLimitations().emulatedAstc)
+    if (limitations.emulatedAstc)
     {
         // Hide emulated ASTC extension from WebGL contexts.
         if (mWebGLContext)
@@ -4245,6 +4246,11 @@ void Context::initCaps()
         constexpr GLint maxSamples = 4;
         INFO() << "Limiting GL_MAX_SAMPLES to " << maxSamples;
         ANGLE_LIMIT_CAP(caps->maxSamples, maxSamples);
+
+        // Pixel 4/5 only supports GL_MAX_VERTEX_UNIFORM_VECTORS of 256
+        constexpr GLint maxVertexUniformVectors = 256;
+        INFO() << "Limiting GL_MAX_VERTEX_UNIFORM_VECTORS to " << maxVertexUniformVectors;
+        ANGLE_LIMIT_CAP(caps->maxVertexUniformVectors, maxVertexUniformVectors);
 
         // Test if we require shadow memory for coherent buffer tracking
         getShareGroup()->getFrameCaptureShared()->determineMemoryProtectionSupport(this);
@@ -6141,6 +6147,7 @@ void Context::bindBufferRange(BufferBinding target,
     if (target == BufferBinding::Uniform)
     {
         mUniformBufferObserverBindings[index].bind(object);
+        mState.onUniformBufferStateChange(index);
         mStateCache.onUniformBufferStateChange(this);
     }
     else if (target == BufferBinding::AtomicCounter)
@@ -6156,6 +6163,11 @@ void Context::bindBufferRange(BufferBinding target,
     else
     {
         mStateCache.onBufferBindingChange(this);
+    }
+
+    if (object)
+    {
+        object->onBind(this, target);
     }
 }
 
@@ -7847,13 +7859,6 @@ void Context::uniformBlockBinding(ShaderProgramID program,
 {
     Program *programObject = getProgramResolveLink(program);
     programObject->bindUniformBlock(uniformBlockIndex, uniformBlockBinding);
-
-    // Note: If the Program is shared between Contexts we would be better using Observer/Subject.
-    if (programObject->isInUse())
-    {
-        mState.setObjectDirty(GL_PROGRAM);
-        mStateCache.onUniformBufferStateChange(this);
-    }
 }
 
 GLsync Context::fenceSync(GLenum condition, GLbitfield flags)
@@ -8546,8 +8551,9 @@ void Context::texStorageMem2D(TextureType target,
                               MemoryObjectID memory,
                               GLuint64 offset)
 {
-    texStorageMemFlags2D(target, levels, internalFormat, width, height, memory, offset, 0,
-                         std::numeric_limits<uint32_t>::max(), nullptr);
+    texStorageMemFlags2D(target, levels, internalFormat, width, height, memory, offset,
+                         std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max(),
+                         nullptr);
 }
 
 void Context::texStorageMem2DMultisample(TextureType target,
@@ -9300,6 +9306,13 @@ std::shared_ptr<angle::WorkerThreadPool> Context::getWorkerThreadPool() const
     return mDisplay->getMultiThreadPool();
 }
 
+void Context::onUniformBlockBindingUpdated(GLuint uniformBlockIndex)
+{
+    mState.mDirtyBits.set(state::DIRTY_BIT_UNIFORM_BUFFER_BINDINGS);
+    mState.mDirtyUniformBlocks.set(uniformBlockIndex);
+    mStateCache.onUniformBufferStateChange(this);
+}
+
 void Context::onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMessage message)
 {
     switch (index)
@@ -9367,6 +9380,12 @@ void Context::onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMess
                     break;
                 }
                 default:
+                    if (angle::IsProgramUniformBlockBindingUpdatedMessage(message))
+                    {
+                        onUniformBlockBindingUpdated(
+                            angle::ProgramUniformBlockBindingUpdatedMessageToIndex(message));
+                        break;
+                    }
                     // Ignore all the other notifications
                     break;
             }
@@ -9383,6 +9402,17 @@ void Context::onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMess
                     mStateCache.onProgramExecutableChange(this);
                     break;
                 default:
+                    if (angle::IsProgramUniformBlockBindingUpdatedMessage(message))
+                    {
+                        // Note: if there's a program bound, its executable is used (and not the
+                        // PPO's)
+                        if (mState.getProgram() == nullptr)
+                        {
+                            onUniformBlockBindingUpdated(
+                                angle::ProgramUniformBlockBindingUpdatedMessageToIndex(message));
+                        }
+                        break;
+                    }
                     UNREACHABLE();
                     break;
             }
@@ -9819,6 +9849,57 @@ void Context::drawPixelLocalStorageEXTDisable(const PixelLocalStoragePlane plane
     ANGLE_CONTEXT_TRY(mImplementation->drawPixelLocalStorageEXTDisable(this, planes, storeops));
 }
 
+void Context::framebufferFoveationConfig(FramebufferID framebufferPacked,
+                                         GLuint numLayers,
+                                         GLuint focalPointsPerLayer,
+                                         GLuint requestedFeatures,
+                                         GLuint *providedFeatures)
+{
+    ASSERT(numLayers <= gl::IMPLEMENTATION_MAX_NUM_LAYERS);
+    ASSERT(focalPointsPerLayer <= gl::IMPLEMENTATION_MAX_FOCAL_POINTS);
+    ASSERT(providedFeatures);
+
+    Framebuffer *framebuffer = getFramebuffer(framebufferPacked);
+    ASSERT(!framebuffer->isFoveationConfigured());
+
+    *providedFeatures = 0;
+    // We only support GL_FOVEATION_ENABLE_BIT_QCOM feature, for now.
+    // If requestedFeatures == 0 return without configuring the framebuffer.
+    if (requestedFeatures != 0)
+    {
+        framebuffer->configureFoveation();
+        *providedFeatures = framebuffer->getSupportedFoveationFeatures();
+    }
+}
+
+void Context::framebufferFoveationParameters(FramebufferID framebufferPacked,
+                                             GLuint layer,
+                                             GLuint focalPoint,
+                                             GLfloat focalX,
+                                             GLfloat focalY,
+                                             GLfloat gainX,
+                                             GLfloat gainY,
+                                             GLfloat foveaArea)
+{
+    Framebuffer *framebuffer = getFramebuffer(framebufferPacked);
+    ASSERT(framebuffer);
+    framebuffer->setFocalPoint(layer, focalPoint, focalX, focalY, gainX, gainY, foveaArea);
+}
+
+void Context::textureFoveationParameters(TextureID texturePacked,
+                                         GLuint layer,
+                                         GLuint focalPoint,
+                                         GLfloat focalX,
+                                         GLfloat focalY,
+                                         GLfloat gainX,
+                                         GLfloat gainY,
+                                         GLfloat foveaArea)
+{
+    Texture *texture = getTexture(texturePacked);
+    ASSERT(texture);
+    texture->setFocalPoint(layer, focalPoint, focalX, focalY, gainX, gainY, foveaArea);
+}
+
 // ErrorSet implementation.
 ErrorSet::ErrorSet(Debug *debug,
                    const angle::FrontendFeatures &frontendFeatures,
@@ -10002,13 +10083,13 @@ GLenum ErrorSet::getGraphicsResetStatus(rx::ContextImpl *contextImpl)
 
 // StateCache implementation.
 StateCache::StateCache()
-    : mCachedHasAnyEnabledClientAttrib(false),
-      mCachedNonInstancedVertexElementLimit(0),
+    : mCachedNonInstancedVertexElementLimit(0),
       mCachedInstancedVertexElementLimit(0),
       mCachedBasicDrawStatesErrorString(kInvalidPointer),
       mCachedBasicDrawStatesErrorCode(GL_NO_ERROR),
       mCachedBasicDrawElementsError(kInvalidPointer),
       mCachedProgramPipelineError(kInvalidPointer),
+      mCachedHasAnyEnabledClientAttrib(false),
       mCachedTransformFeedbackActiveUnpaused(false),
       mCachedCanDraw(false)
 {
@@ -10096,8 +10177,14 @@ void StateCache::updateVertexElementLimitsImpl(Context *context)
         GLint64 limit = attrib.getCachedElementLimit();
         if (binding.getDivisor() > 0)
         {
+            // For instanced draw calls, |divisor| times this limit is the limit for instance count
+            // (because every |divisor| instances accesses the same attribute)
+            angle::CheckedNumeric<GLint64> checkedLimit = limit;
+            checkedLimit *= binding.getDivisor();
+
             mCachedInstancedVertexElementLimit =
-                std::min(mCachedInstancedVertexElementLimit, limit);
+                std::min<GLint64>(mCachedInstancedVertexElementLimit,
+                                  checkedLimit.ValueOrDefault(VertexAttribute::kIntegerOverflow));
         }
         else
         {
@@ -10207,6 +10294,11 @@ void StateCache::onVertexArrayBufferStateChange(Context *context)
 }
 
 void StateCache::onGLES1ClientStateChange(Context *context)
+{
+    updateActiveAttribsMask(context);
+}
+
+void StateCache::onGLES1TextureStateChange(Context *context)
 {
     updateActiveAttribsMask(context);
 }
@@ -10423,9 +10515,11 @@ void StateCache::updateActiveShaderStorageBufferIndices(Context *context)
     const ProgramExecutable *executable = context->getState().getProgramExecutable();
     if (executable)
     {
-        for (const InterfaceBlock &block : executable->getShaderStorageBlocks())
+        const std::vector<InterfaceBlock> &blocks = executable->getShaderStorageBlocks();
+        for (size_t blockIndex = 0; blockIndex < blocks.size(); ++blockIndex)
         {
-            mCachedActiveShaderStorageBufferIndices.set(block.pod.binding);
+            const GLuint binding = executable->getShaderStorageBlockBinding(blockIndex);
+            mCachedActiveShaderStorageBufferIndices.set(binding);
         }
     }
 }

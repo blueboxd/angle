@@ -34,6 +34,7 @@ bool IsPixel2XL();
 bool IsPixel4();
 bool IsPixel4XL();
 bool IsPixel6();
+bool IsGalaxyS22();
 bool IsNVIDIAShield();
 
 // GPU vendors.
@@ -296,6 +297,14 @@ struct CombinedPrintToStringParamName
                                                                              ##__VA_ARGS__}; \
     INSTANTIATE_TEST_SUITE_P(                                                                \
         , testName, testing::Combine(ANGLE_INSTANTIATE_TEST_PLATFORMS(testName), combine1), print)
+#define ANGLE_INSTANTIATE_TEST_COMBINE_3(testName, print, combine1, combine2, combine3, first, \
+                                         ...)                                                  \
+    const std::remove_reference<decltype(first)>::type testName##params[] = {first,            \
+                                                                             ##__VA_ARGS__};   \
+    INSTANTIATE_TEST_SUITE_P(, testName,                                                       \
+                             testing::Combine(ANGLE_INSTANTIATE_TEST_PLATFORMS(testName),      \
+                                              combine1, combine2, combine3),                   \
+                             print)
 #define ANGLE_INSTANTIATE_TEST_COMBINE_4(testName, print, combine1, combine2, combine3, combine4, \
                                          first, ...)                                              \
     const std::remove_reference<decltype(first)>::type testName##params[] = {first,               \

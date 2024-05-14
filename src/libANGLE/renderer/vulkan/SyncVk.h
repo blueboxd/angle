@@ -59,7 +59,7 @@ class SyncHelperInterface : angle::NonCopyable
   public:
     virtual ~SyncHelperInterface() = default;
 
-    virtual void releaseToRenderer(RendererVk *renderer) = 0;
+    virtual void releaseToRenderer(Renderer *renderer) = 0;
 
     virtual angle::Result clientWait(Context *context,
                                      ContextVk *contextVk,
@@ -81,11 +81,11 @@ class SyncHelper final : public vk::Resource, public SyncHelperInterface
     SyncHelper();
     ~SyncHelper() override;
 
-    angle::Result initialize(ContextVk *contextVk, bool isEGLSyncObject);
+    angle::Result initialize(ContextVk *contextVk, SyncFenceScope scope);
 
     // SyncHelperInterface
 
-    void releaseToRenderer(RendererVk *renderer) override;
+    void releaseToRenderer(Renderer *renderer) override;
 
     angle::Result clientWait(Context *context,
                              ContextVk *contextVk,
@@ -124,7 +124,7 @@ class SyncHelperNativeFence final : public SyncHelperInterface
 
     // SyncHelperInterface
 
-    void releaseToRenderer(RendererVk *renderer) override;
+    void releaseToRenderer(Renderer *renderer) override;
 
     angle::Result clientWait(Context *context,
                              ContextVk *contextVk,
@@ -198,7 +198,7 @@ class EGLSyncVk final : public EGLSyncImpl
 
   private:
     // SyncHelper or SyncHelperNativeFence decided at run-time.
-    vk::SyncHelperInterface *mSyncHelper;
+    std::unique_ptr<vk::SyncHelperInterface> mSyncHelper;
 };
 }  // namespace rx
 
