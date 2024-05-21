@@ -175,6 +175,8 @@ struct ImageLayoutEventMaps
     // loop of map
     angle::PackedEnumMap<ImageLayout, RefCountedEvent> map;
     angle::PackedEnumBitSet<ImageLayout, uint64_t> mask;
+    // Only used by RenderPassCommandBufferHelper
+    angle::PackedEnumMap<ImageLayout, VkEvent> vkEvents;
 };
 
 // A dynamic buffer is conceptually an infinitely long buffer. Each time you write to the buffer,
@@ -1349,8 +1351,6 @@ class CommandBufferHelperCommon : angle::NonCopyable
     template <typename CommandBufferT>
     void flushSetEventsImpl(Context *context, CommandBufferT *commandBuffer);
 
-    RefCountedEventCollector *getRefCountedEventCollector() { return &mRefCountedEventCollector; }
-
     const QueueSerial &getQueueSerial() const { return mQueueSerial; }
 
     void setAcquireNextImageSemaphore(VkSemaphore semaphore)
@@ -1523,8 +1523,13 @@ class OutsideRenderPassCommandBufferHelper final : public CommandBufferHelperCom
     void trackImagesWithEvent(Context *context, ImageHelper *srcImage, ImageHelper *dstImage);
     void trackImagesWithEvent(Context *context, const ImageHelperPtr *images, size_t count);
 
-    // Issues VkCmdSetEvent calls.
+    // Issues SetEvent calls to the command buffer.
     void flushSetEvents(Context *context) { flushSetEventsImpl(context, &mCommandBuffer); }
+    // Clean up event garbage. Note that ImageHelper object may still holding reference count to it,
+    // so the event itself will not gets destroyed until the last refCount goes away.
+    void collectRefCountedEventsGarbage(RefCountedEventsGarbageRecycler *garbageRecycler);
+
+    RefCountedEventCollector *getRefCountedEventCollector() { return &mRefCountedEventCollector; }
 
     angle::Result flushToPrimary(Context *context, CommandsState *commandsState);
 
@@ -1874,6 +1879,8 @@ class RenderPassCommandBufferHelper final : public CommandBufferHelperCommon
     void updateDepthStencilReadOnlyMode(RenderPassUsageFlags dsUsageFlags,
                                         VkImageAspectFlags dsAspectFlags);
 
+    void collectRefCountedEventsGarbage(RefCountedEventsGarbageRecycler *garbageRecycler);
+
   private:
     uint32_t getSubpassCommandBufferCount() const { return mCurrentSubpassCommandBufferIndex + 1; }
 
@@ -1911,6 +1918,7 @@ class RenderPassCommandBufferHelper final : public CommandBufferHelperCommon
     void finalizeFragmentShadingRateImageLayout(Context *context);
 
     void trackImagesWithEvent(Context *context, const ImageHelperPtr *images, size_t count);
+    void executeSetEvents(Context *context, PrimaryCommandBuffer *primary);
 
     // When using Vulkan secondary command buffers, each subpass must be recorded in a separate
     // command buffer.  Currently ANGLE produces render passes with at most 2 subpasses.

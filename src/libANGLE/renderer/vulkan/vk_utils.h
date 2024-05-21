@@ -278,6 +278,7 @@ class [[nodiscard]] ScopedQueueSerialIndex final : angle::NonCopyable
     QueueSerialIndexAllocator *mIndexAllocator;
 };
 
+class RefCountedEventsGarbageRecycler;
 // Abstracts error handling. Implemented by ContextVk for GL, DisplayVk for EGL, worker threads,
 // CLContextVk etc.
 class Context : angle::NonCopyable
@@ -296,9 +297,15 @@ class Context : angle::NonCopyable
 
     const angle::VulkanPerfCounters &getPerfCounters() const { return mPerfCounters; }
     angle::VulkanPerfCounters &getPerfCounters() { return mPerfCounters; }
+    RefCountedEventsGarbageRecycler *getRefCountedEventsGarbageRecycler()
+    {
+        return mShareGroupRefCountedEventsGarbageRecycler;
+    }
 
   protected:
     Renderer *const mRenderer;
+    // Stash the ShareGroupVk's RefCountedEventRecycler here ImageHelper to conveniently access
+    RefCountedEventsGarbageRecycler *mShareGroupRefCountedEventsGarbageRecycler;
     angle::VulkanPerfCounters mPerfCounters;
 };
 
@@ -664,6 +671,12 @@ class RefCounted : angle::NonCopyable
         mRefCount--;
     }
 
+    uint32_t getAndReleaseRef()
+    {
+        ASSERT(isReferenced());
+        return mRefCount--;
+    }
+
     bool isReferenced() const { return mRefCount != 0; }
 
     T &get() { return mObject; }
@@ -702,9 +715,7 @@ class AtomicRefCounted : angle::NonCopyable
     unsigned int getAndReleaseRef()
     {
         ASSERT(isReferenced());
-        // This is used by RefCountedEvent which will decrement in clean up thread, so
-        // memory_order_acq_rel is needed.
-        return mRefCount.fetch_sub(1, std::memory_order_acq_rel);
+        return mRefCount.fetch_sub(1, std::memory_order_relaxed);
     }
 
     bool isReferenced() const { return mRefCount.load(std::memory_order_relaxed) != 0; }
@@ -907,7 +918,7 @@ class Recycler final : angle::NonCopyable
     bool empty() const { return mObjectFreeList.empty(); }
 
   private:
-    std::vector<T> mObjectFreeList;
+    std::deque<T> mObjectFreeList;
 };
 
 ANGLE_ENABLE_STRUCT_PADDING_WARNINGS
