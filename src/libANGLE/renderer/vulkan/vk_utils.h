@@ -132,6 +132,65 @@ class Renderer;
 // Used for memory allocation tracking.
 enum class MemoryAllocationType;
 
+// Encapsulate the graphics family index and VkQueue index (as seen in vkGetDeviceQueue API
+// arguments) into one integer so that we can easily pass around without introduce extra overhead..
+class DeviceQueueIndex final
+{
+  public:
+    constexpr DeviceQueueIndex()
+        : mFamilyIndex(kInvalidQueueFamilyIndex), mQueueIndex(kInvalidQueueIndex)
+    {}
+    constexpr DeviceQueueIndex(uint32_t familyIndex)
+        : mFamilyIndex((int8_t)familyIndex), mQueueIndex(kInvalidQueueIndex)
+    {
+        ASSERT(static_cast<uint32_t>(mFamilyIndex) == familyIndex);
+    }
+    DeviceQueueIndex(uint32_t familyIndex, uint32_t queueIndex)
+        : mFamilyIndex((int8_t)familyIndex), mQueueIndex((int8_t)queueIndex)
+    {
+        // Ensure the value we actually don't truncate the useful bits.
+        ASSERT(static_cast<uint32_t>(mFamilyIndex) == familyIndex);
+        ASSERT(static_cast<uint32_t>(mQueueIndex) == queueIndex);
+    }
+    DeviceQueueIndex(const DeviceQueueIndex &other) { *this = other; }
+
+    DeviceQueueIndex &operator=(const DeviceQueueIndex &other)
+    {
+        mValue = other.mValue;
+        return *this;
+    }
+
+    constexpr uint32_t familyIndex() const { return mFamilyIndex; }
+    constexpr uint32_t queueIndex() const { return mQueueIndex; }
+
+    bool operator==(const DeviceQueueIndex &other) const { return mValue == other.mValue; }
+    bool operator!=(const DeviceQueueIndex &other) const { return mValue != other.mValue; }
+
+  private:
+    static constexpr int8_t kInvalidQueueFamilyIndex = -1;
+    static constexpr int8_t kInvalidQueueIndex       = -1;
+    // The expectation is that these indices are small numbers that could easily fit into int8_t.
+    // int8_t is used instead of uint8_t because we need to handle VK_QUEUE_FAMILY_FOREIGN_EXT and
+    // VK_QUEUE_FAMILY_EXTERNAL properly which are essentially are negative values.
+    union
+    {
+        struct
+        {
+            int8_t mFamilyIndex;
+            int8_t mQueueIndex;
+        };
+        uint16_t mValue;
+    };
+};
+static constexpr DeviceQueueIndex kInvalidDeviceQueueIndex = DeviceQueueIndex();
+static constexpr DeviceQueueIndex kForeignDeviceQueueIndex =
+    DeviceQueueIndex(VK_QUEUE_FAMILY_FOREIGN_EXT);
+static constexpr DeviceQueueIndex kExternalDeviceQueueIndex =
+    DeviceQueueIndex(VK_QUEUE_FAMILY_EXTERNAL);
+static_assert(kForeignDeviceQueueIndex.familyIndex() == VK_QUEUE_FAMILY_FOREIGN_EXT);
+static_assert(kExternalDeviceQueueIndex.familyIndex() == VK_QUEUE_FAMILY_EXTERNAL);
+static_assert(kInvalidDeviceQueueIndex.familyIndex() == VK_QUEUE_FAMILY_IGNORED);
+
 // A packed attachment index interface with vulkan API
 class PackedAttachmentIndex final
 {
@@ -301,11 +360,13 @@ class Context : angle::NonCopyable
     {
         return mShareGroupRefCountedEventsGarbageRecycler;
     }
+    const DeviceQueueIndex &getDeviceQueueIndex() const { return mDeviceQueueIndex; }
 
   protected:
     Renderer *const mRenderer;
     // Stash the ShareGroupVk's RefCountedEventRecycler here ImageHelper to conveniently access
     RefCountedEventsGarbageRecycler *mShareGroupRefCountedEventsGarbageRecycler;
+    DeviceQueueIndex mDeviceQueueIndex;
     angle::VulkanPerfCounters mPerfCounters;
 };
 
@@ -706,18 +767,26 @@ class AtomicRefCounted : angle::NonCopyable
         mRefCount.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Warning: method does not perform any synchronization, therefore can not be used along with
+    // following `!isReferenced()` call to check if object is not longer accessed by other threads.
+    // Use `getAndReleaseRef()` instead, when synchronization is required.
     void releaseRef()
     {
         ASSERT(isReferenced());
         mRefCount.fetch_sub(1, std::memory_order_relaxed);
     }
 
+    // Performs acquire-release memory synchronization. When result is "1", the object is
+    // guaranteed to be no longer in use by other threads, and may be safely destroyed or updated.
+    // Warning: do not mix this method and the unsynchronized `releaseRef()` call.
     unsigned int getAndReleaseRef()
     {
         ASSERT(isReferenced());
-        return mRefCount.fetch_sub(1, std::memory_order_relaxed);
+        return mRefCount.fetch_sub(1, std::memory_order_acq_rel);
     }
 
+    // Warning: method does not perform any synchronization.  See `releaseRef()` for details.
+    // Method may be only used after external synchronization.
     bool isReferenced() const { return mRefCount.load(std::memory_order_relaxed) != 0; }
 
     T &get() { return mObject; }

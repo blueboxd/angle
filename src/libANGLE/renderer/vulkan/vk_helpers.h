@@ -973,16 +973,17 @@ class BufferHelper : public ReadWriteResource
     angle::Result invalidate(Renderer *renderer);
     angle::Result invalidate(Renderer *renderer, VkDeviceSize offset, VkDeviceSize size);
 
-    void changeQueue(uint32_t newQueueFamilyIndex, OutsideRenderPassCommandBuffer *commandBuffer);
+    void changeQueueFamily(uint32_t srcQueueFamilyIndex,
+                           uint32_t dstQueueFamilyIndex,
+                           OutsideRenderPassCommandBuffer *commandBuffer);
 
     // Performs an ownership transfer from an external instance or API.
-    void acquireFromExternal(uint32_t externalQueueFamilyIndex,
-                             uint32_t rendererQueueFamilyIndex,
+    void acquireFromExternal(DeviceQueueIndex externalQueueIndex,
+                             DeviceQueueIndex newDeviceQueueIndex,
                              OutsideRenderPassCommandBuffer *commandBuffer);
 
     // Performs an ownership transfer to an external instance or API.
-    void releaseToExternal(uint32_t rendererQueueFamilyIndex,
-                           uint32_t externalQueueFamilyIndex,
+    void releaseToExternal(DeviceQueueIndex externalQueueIndex,
                            OutsideRenderPassCommandBuffer *commandBuffer);
 
     // Returns true if the image is owned by an external API or instance.
@@ -1043,7 +1044,7 @@ class BufferHelper : public ReadWriteResource
     Buffer mBufferWithUserSize;
 
     // For memory barriers.
-    uint32_t mCurrentQueueFamilyIndex;
+    DeviceQueueIndex mCurrentDeviceQueueIndex;
     VkFlags mCurrentWriteAccess;
     VkFlags mCurrentReadAccess;
     VkPipelineStageFlags mCurrentWriteStages;
@@ -2100,7 +2101,7 @@ class ImageHelper final : public Resource, public angle::Subject
                                      const VkMemoryRequirements &memoryRequirements,
                                      uint32_t extraAllocationInfoCount,
                                      const void **extraAllocationInfo,
-                                     uint32_t currentQueueFamilyIndex,
+                                     DeviceQueueIndex currentDeviceQueueIndex,
                                      VkMemoryPropertyFlags flags);
 
     static constexpr VkImageUsageFlags kDefaultImageViewUsageFlags = 0;
@@ -2526,7 +2527,7 @@ class ImageHelper final : public Resource, public angle::Subject
         // Since we are doing an out of order one off submission, there shouldn't be any pending
         // setEvent.
         ASSERT(!mCurrentEvent.valid());
-        barrierImpl(context, getAspectFlags(), newLayout, mCurrentQueueFamilyIndex, nullptr,
+        barrierImpl(context, getAspectFlags(), newLayout, mCurrentDeviceQueueIndex, nullptr,
                     commandBuffer, acquireNextImageSemaphoreOut);
     }
 
@@ -2548,15 +2549,15 @@ class ImageHelper final : public Resource, public angle::Subject
                            ImageLayout newLayout,
                            OutsideRenderPassCommandBufferHelper *commands);
 
-    bool isQueueChangeNeccesary(uint32_t newQueueFamilyIndex) const
+    bool isQueueFamilyChangeNeccesary(DeviceQueueIndex newDeviceQueueIndex) const
     {
-        return mCurrentQueueFamilyIndex != newQueueFamilyIndex;
+        return mCurrentDeviceQueueIndex.familyIndex() != newDeviceQueueIndex.familyIndex();
     }
 
     void changeLayoutAndQueue(Context *context,
                               VkImageAspectFlags aspectMask,
                               ImageLayout newLayout,
-                              uint32_t newQueueFamilyIndex,
+                              DeviceQueueIndex newDeviceQueueIndex,
                               OutsideRenderPassCommandBuffer *commandBuffer);
 
     // Returns true if barrier has been generated
@@ -2572,15 +2573,14 @@ class ImageHelper final : public Resource, public angle::Subject
 
     // Performs an ownership transfer from an external instance or API.
     void acquireFromExternal(Context *context,
-                             uint32_t externalQueueFamilyIndex,
-                             uint32_t rendererQueueFamilyIndex,
+                             DeviceQueueIndex externalQueueIndex,
+                             DeviceQueueIndex newDeviceQueueIndex,
                              ImageLayout currentLayout,
                              OutsideRenderPassCommandBuffer *commandBuffer);
 
     // Performs an ownership transfer to an external instance or API.
     void releaseToExternal(Context *context,
-                           uint32_t rendererQueueFamilyIndex,
-                           uint32_t externalQueueFamilyIndex,
+                           DeviceQueueIndex externalQueueIndex,
                            ImageLayout desiredLayout,
                            OutsideRenderPassCommandBuffer *commandBuffer);
 
@@ -2862,7 +2862,7 @@ class ImageHelper final : public Resource, public angle::Subject
     void barrierImpl(Context *context,
                      VkImageAspectFlags aspectMask,
                      ImageLayout newLayout,
-                     uint32_t newQueueFamilyIndex,
+                     DeviceQueueIndex newDeviceQueueIndex,
                      RefCountedEventCollector *eventCollector,
                      CommandBufferT *commandBuffer,
                      VkSemaphore *acquireNextImageSemaphoreOut);
@@ -3086,7 +3086,7 @@ class ImageHelper final : public Resource, public angle::Subject
 
     // Current state.
     ImageLayout mCurrentLayout;
-    uint32_t mCurrentQueueFamilyIndex;
+    DeviceQueueIndex mCurrentDeviceQueueIndex;
     // For optimizing transition between different shader readonly layouts
     ImageLayout mLastNonShaderReadOnlyLayout;
     VkPipelineStageFlags mCurrentShaderReadStageMask;

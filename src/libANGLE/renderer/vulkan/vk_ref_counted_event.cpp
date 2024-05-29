@@ -95,7 +95,9 @@ void RefCountedEvent::releaseImpl(Renderer *renderer, RecyclerT *recycler)
         // collector should have one reference count and will never release that reference count
         // until GPU finished.
         ASSERT(recycler != nullptr);
-        recycler->recycle(std::move(*this));
+        // TODO: Disable recycler and immediately destroy the event for now until I figure out
+        // SYNC-vkCmdSetEvent-missingbarrier-reset.
+        destroy(renderer->getDevice());
         ASSERT(mHandle == nullptr);
     }
     else
@@ -227,29 +229,31 @@ void EventBarrier::execute(PrimaryCommandBuffer *primary)
 }
 
 // EventBarrierArray implementation.
-void EventBarrierArray::addMemoryEvent(Context *context,
-                                       const RefCountedEvent &waitEvent,
-                                       VkPipelineStageFlags dstStageMask,
-                                       VkAccessFlags dstAccess)
+void EventBarrierArray::addAdditionalStageAccess(const RefCountedEvent &waitEvent,
+                                                 VkPipelineStageFlags dstStageMask,
+                                                 VkAccessFlags dstAccess)
 {
-    ASSERT(waitEvent.valid());
-
     for (EventBarrier &barrier : mBarriers)
     {
-        // If the event is already in the waiting list, just add the new stageMask to the
-        // dstStageMask. Otherwise we will end up with two waitEvent calls that wait for the same
-        // VkEvent but for different dstStage and confuses VVL.
         if (barrier.hasEvent(waitEvent.getEvent().getHandle()))
         {
             barrier.addAdditionalStageAccess(dstStageMask, dstAccess);
             return;
         }
     }
+    UNREACHABLE();
+}
 
+void EventBarrierArray::addMemoryEvent(Context *context,
+                                       const RefCountedEvent &waitEvent,
+                                       VkPipelineStageFlags dstStageMask,
+                                       VkAccessFlags dstAccess)
+{
+    ASSERT(waitEvent.valid());
     VkAccessFlags accessMask;
     VkPipelineStageFlags stageFlags = GetRefCountedEventStageMask(context, waitEvent, &accessMask);
-    // Since this is used with WAW without layout change, dstStageMask should be the same as event's
-    // stageMask. Otherwise you should get into addImageEvent.
+    // This should come down as WAW without layout change, dstStageMask should be the same as
+    // event's stageMask. Otherwise you should get into addImageEvent.
     ASSERT(stageFlags == dstStageMask && accessMask == dstAccess);
     mBarriers.emplace_back(stageFlags, dstStageMask, accessMask, dstAccess,
                            waitEvent.getEvent().getHandle());
